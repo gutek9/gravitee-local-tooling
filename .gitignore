@@ -1,8 +1,14 @@
 .env
+.env copy
+.env.bak*
 .local-tooling/
 manifests/generated/
 reports/
 *.bak
+*.bak.*
 __pycache__/
 *.pyc
 node_modules/
+
+# macOS
+.DS_Store

@@ -73,5 +73,18 @@ services:
         condition: service_started
     stdin_open: true
 
+  grafana-mcp-adapter:
+    build:
+      context: ./services/grafana-mcp-adapter
+    container_name: local-tooling-grafana-mcp-adapter
+    environment:
+      GRAFANA_ENABLED: ${GRAFANA_ENABLED:-false}
+      GRAFANA_BASE_URL: ${GRAFANA_BASE_URL:-}
+      GRAFANA_TOKEN: ${GRAFANA_TOKEN:-}
+      GRAFANA_TIMEOUT_SECONDS: ${GRAFANA_TIMEOUT_SECONDS:-15}
+      GRAFANA_DEFAULT_LIMIT: ${GRAFANA_DEFAULT_LIMIT:-50}
+      GRAFANA_LOGS_DATASOURCE_UID: ${GRAFANA_LOGS_DATASOURCE_UID:-}
+    stdin_open: true
+
 volumes:
   vectordb_pgdata:
