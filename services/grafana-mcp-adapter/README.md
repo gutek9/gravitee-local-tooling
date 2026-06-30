@@ -31,7 +31,7 @@ not chained to one another.
 | `grafana_get_dashboard` | Full dashboard JSON by `uid`. |
 | `grafana_list_datasources` | List configured datasources (uid, name, type). |
 | `grafana_query` | Run a PromQL/LogQL/etc. query against a datasource uid over a time range. Returns a per-series digest by default. |
-| `grafana_logs_link` | Build a permanent Grafana Explore (Loki) deep link for a customer's logs and return a preview of recent lines. |
+| `grafana_logs_link` | Build a shareable Grafana logs link for a customer's logs and return a preview of recent lines. Defaults to Logs Drilldown links (per-namespace); pass `link_style="explore"` for a raw LogQL Explore link. |
 
 ### `grafana_query` response shape
 
@@ -61,11 +61,33 @@ Pass `raw=true` to get the full (potentially very large) frames instead.
 Identify a customer/component with free text (`client='april'`,
 `component='gateway'`); it matches case-insensitively against the `service_name`
 label, which on this instance encodes both (e.g.
-`graviteeio-ae-april-rec-engine`). Returns `{ query, explore_url, range,
-preview_count, preview }` — `explore_url` is a permanent Grafana 11+ Explore
-link you can share. The default range is the last hour; widen with
+`graviteeio-ae-april-rec-engine`). Returns `{ query, link_style, links, range,
+preview_count, preview }`. The default range is the last hour; widen with
 `from`/`to`. When nothing matches, it returns close `service_name` values as
 `suggestions` so typos like `aprl → april` surface.
+
+#### `link_style`: Logs Drilldown (default) vs Explore
+
+`link_style` chooses the link format in `links`:
+
+- **`drilldown`** (default) — links into Grafana's **Logs Drilldown** app (the
+  "Logs" menu, plugin `grafana-lokiexplore-app`). This app navigates
+  **per-namespace** (`/explore/namespace/{ns}/logs`), so `links` carries **one
+  link per namespace** the query matched (a customer's logs can span several
+  namespaces — e.g. `april-prod`, `april-rec`). Each link pins the namespace and
+  adds a `service_name` regex filter, dropping you in already scoped so you can
+  filter/drill (levels, fields, patterns) by hand in the UI.
+- **`explore`** — a single raw **Explore** deep link carrying the LogQL `query`
+  (Grafana 11+ `panes` form). Use this when you want the raw query view.
+
+Each entry in `links` is `{ url }` (explore) or `{ namespace, url }`
+(drilldown). The newest matching lines are always returned in `preview`
+regardless of `link_style`.
+
+> **Multitenant note.** On the multitenant Cockpit instance the customer name is
+> *not* in `service_name`/`namespace` (it uses a tenant id, e.g. `ba813`), so a
+> free-text `client` won't find those tenants. Resolving customer → tenant id is
+> a planned improvement; for now pass the tenant's namespace/id you were given.
 
 #### Examples (how a user asks for it)
 
@@ -92,8 +114,9 @@ inside `service_name`, so just fold it into `client` as another word. Both
 `client` and `component` are matched as case-insensitive substrings with `.*`
 between them, so `northwind prod` matches `…-northwind-prod-…`.)
 
-Each call returns `explore_url` — a permanent link you can share — plus a capped
-`preview` of the newest matching lines.
+Each call returns `links` — shareable Grafana links (Logs Drilldown per namespace
+by default; see `link_style` above) — plus a capped `preview` of the newest
+matching lines.
 
 ## Setup
 

@@ -52,8 +52,22 @@ export function escapeRegex(s = "") {
 // `lineFilter` becomes a `|= "..."` line filter on top.
 export function buildLogsQuery({ client, component, lineFilter } = {}) {
   if (!client) throw new Error("client is required");
-  const parts = [escapeRegex(client)];
-  if (component) parts.push(escapeRegex(component));
+  // Whitespace inside a fragment means "these words, in order, with anything in
+  // between" — `service_name` is dash-separated, so a literal space would never
+  // match (e.g. "april prod" must become `april.*prod`, not `april prod`). Split
+  // each fragment on whitespace and join the (escaped) words with `.*`.
+  const toPattern = (s) =>
+    String(s)
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map(escapeRegex)
+      .join(".*");
+  const parts = [toPattern(client)].filter(Boolean);
+  if (component) {
+    const c = toPattern(component);
+    if (c) parts.push(c);
+  }
   // (?i) = case-insensitive; .* between parts so order/extra segments are fine.
   const selector = `{service_name=~"(?i).*${parts.join(".*")}.*"}`;
   return lineFilter ? `${selector} |= \`${lineFilter.replace(/`/g, "")}\`` : selector;
@@ -71,6 +85,48 @@ export function buildExploreUrl({ datasourceUid, query, from, to }) {
   };
   const panes = encodeURIComponent(JSON.stringify({ logs: pane }));
   return `${BASE_URL}/explore?schemaVersion=1&orgId=1&panes=${panes}`;
+}
+
+// Build a deep link into the Grafana Logs Drilldown app (plugin
+// `grafana-lokiexplore-app`, the "Logs" menu) instead of raw Explore. The app
+// navigates per-namespace (`/explore/namespace/{ns}/logs`) and filters by
+// individual labels via repeated `var-filters` (`label|operator|value`). We pin
+// the namespace and optionally add a `service_name` regex filter so the user
+// lands already scoped, then drills down by hand in the UI. Params mirror a link
+// produced by the app itself so it opens cleanly.
+export function buildDrilldownUrl({ namespace, serviceNameRegex, datasourceUid = "grafanacloud-logs", from, to } = {}) {
+  if (!namespace) throw new Error("namespace is required");
+  const p = new URLSearchParams();
+  p.set("patterns", "[]");
+  p.set("from", from);
+  p.set("to", to);
+  p.set("var-lineFormat", "");
+  p.set("var-ds", datasourceUid);
+  // First filter pins the namespace (matches the route). `|=|` is an exact match.
+  p.append("var-filters", `namespace|=|${namespace}`);
+  // `|=~` is a regex match in this app; only add when we have a service_name fragment.
+  if (serviceNameRegex) p.append("var-filters", `service_name|=~|${serviceNameRegex}`);
+  for (const k of [
+    "var-fields",
+    "var-levels",
+    "var-metadata",
+    "var-jsonFields",
+    "var-patterns",
+    "var-lineFilterV2",
+    "var-lineFilters",
+    "var-all-fields",
+  ]) {
+    p.set(k, "");
+  }
+  p.set("timezone", "browser");
+  p.set("urlColumns", "[]");
+  p.set("visualizationType", '"logs"');
+  p.set("displayedFields", "[]");
+  p.set("userDisplayedFields", "false");
+  p.set("sortOrder", '"Descending"');
+  p.set("wrapLogMessage", "false");
+  p.set("prettifyLogMessage", "false");
+  return `${BASE_URL}/a/grafana-lokiexplore-app/explore/namespace/${encodeURIComponent(namespace)}/logs?${p.toString()}`;
 }
 
 // Resolve Grafana-style relative ranges ("now-15m") to ns epoch for Loki's

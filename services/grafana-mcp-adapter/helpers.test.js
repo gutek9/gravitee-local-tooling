@@ -11,6 +11,7 @@ const {
   escapeRegex,
   buildLogsQuery,
   buildExploreUrl,
+  buildDrilldownUrl,
   toLokiNs,
   editDistance,
   rankClientSuggestions,
@@ -101,6 +102,19 @@ test("buildLogsQuery: client + component join with .*", () => {
   );
 });
 
+test("buildLogsQuery: multi-word fragment joins words with .* (not a literal space)", () => {
+  // `service_name` is dash-separated, so "april prod" must become april.*prod —
+  // a literal space would never match `…-april-prod-…`.
+  assert.equal(
+    buildLogsQuery({ client: "april prod", component: "gateway" }),
+    '{service_name=~"(?i).*april.*prod.*gateway.*"}',
+  );
+});
+
+test("buildLogsQuery: collapses extra/leading/trailing whitespace in a fragment", () => {
+  assert.equal(buildLogsQuery({ client: "  am   prod  " }), '{service_name=~"(?i).*am.*prod.*"}');
+});
+
 test("buildLogsQuery: escapes regex metachars in client/component", () => {
   assert.equal(buildLogsQuery({ client: "a.b" }), '{service_name=~"(?i).*a\\.b.*"}');
 });
@@ -135,6 +149,40 @@ test("buildExploreUrl: builds a Grafana 11+ panes deep link", () => {
   assert.equal(panes.logs.datasource, "grafanacloud-logs");
   assert.equal(panes.logs.queries[0].datasource.type, "loki");
   assert.equal(panes.logs.queries[0].expr, '{service_name=~"(?i).*april.*"}');
+});
+
+// ---------------------------------------------------------------------------
+// buildDrilldownUrl
+// ---------------------------------------------------------------------------
+
+test("buildDrilldownUrl: builds a Logs Drilldown app link pinned to a namespace", () => {
+  const url = buildDrilldownUrl({
+    namespace: "apim-dp-ba813-a200c4",
+    serviceNameRegex: "(?i).*april.*gateway.*",
+    from: "now-1h",
+    to: "now",
+  });
+  assert.ok(
+    url.startsWith("https://g.example.com/a/grafana-lokiexplore-app/explore/namespace/apim-dp-ba813-a200c4/logs?"),
+  );
+  const params = new URL(url).searchParams;
+  assert.equal(params.get("var-ds"), "grafanacloud-logs");
+  assert.equal(params.get("from"), "now-1h");
+  assert.equal(params.get("to"), "now");
+  assert.equal(params.get("visualizationType"), '"logs"');
+  // Both filters present: namespace pin (exact) + service_name regex match.
+  const filters = params.getAll("var-filters");
+  assert.deepEqual(filters, ["namespace|=|apim-dp-ba813-a200c4", "service_name|=~|(?i).*april.*gateway.*"]);
+});
+
+test("buildDrilldownUrl: omits the service_name filter when no regex given", () => {
+  const url = buildDrilldownUrl({ namespace: "apim-cp-ba813", from: "now-15m", to: "now" });
+  const filters = new URL(url).searchParams.getAll("var-filters");
+  assert.deepEqual(filters, ["namespace|=|apim-cp-ba813"]);
+});
+
+test("buildDrilldownUrl: throws when namespace missing", () => {
+  assert.throws(() => buildDrilldownUrl({ from: "now-1h", to: "now" }), /namespace is required/);
 });
 
 // ---------------------------------------------------------------------------

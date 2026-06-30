@@ -14,6 +14,7 @@ import {
   summarizeQueryResult,
   buildLogsQuery,
   buildExploreUrl,
+  buildDrilldownUrl,
   toLokiNs,
   rankClientSuggestions,
 } from "./helpers.js";
@@ -230,36 +231,61 @@ server.tool(
 
 server.tool(
   "grafana_logs_link",
-  "Read-only: build a permanent Grafana Explore (Loki) link for a customer's logs " +
-    "AND return a preview of the most recent lines. Identify the customer/component " +
-    "with free text (e.g. client='april', component='gateway') — it matches " +
-    "case-insensitively against the `service_name` label, which encodes both. " +
-    "Optionally narrow with line_filter (substring that must appear in the log line). " +
-    "Default range is the last 1 hour; widen with from/to (e.g. from='now-6h'). " +
-    "Returns { query, explore_url, range, preview_count, preview }. Paste explore_url " +
-    "into the ticket; ask the user before widening the range since logs are large.",
+  "Read-only: build a shareable Grafana logs link for a customer's logs AND return a " +
+    "preview of the most recent lines. Identify the customer/component with free text " +
+    "(e.g. client='april', component='gateway') — it matches case-insensitively against " +
+    "the `service_name` label, which encodes both. Optionally narrow with line_filter " +
+    "(substring that must appear in the log line). Default range is the last 1 hour; " +
+    "widen with from/to (e.g. from='now-6h'). " +
+    "link_style controls the link format: 'drilldown' (default) builds Grafana's Logs " +
+    "Drilldown app links (the 'Logs' menu), navigated per-namespace, so the user can " +
+    "filter/drill by hand; 'explore' builds a raw Explore (LogQL) deep link instead. " +
+    "Returns { query, links, range, preview_count, preview }; `links` is per-namespace " +
+    "for drilldown (multitenant customers can span several). Paste a link into the " +
+    "ticket; ask the user before widening the range since logs are large.",
   {
     client: z.string().describe("Customer name fragment, e.g. 'april', 'alliander', 'apim-cloudgate'."),
     component: z.string().optional().describe("Component fragment, e.g. 'gateway', 'engine', 'ui'."),
     line_filter: z.string().optional().describe("Only lines containing this substring."),
+    link_style: z
+      .enum(["drilldown", "explore"])
+      .default("drilldown")
+      .describe("Link format: 'drilldown' (Logs Drilldown app, per-namespace; default) or 'explore' (raw LogQL Explore)."),
     from: z.string().default("now-1h").describe("Range start, e.g. 'now-1h', 'now-6h', or epoch ms."),
     to: z.string().default("now").describe("Range end, e.g. 'now' or epoch ms."),
     limit: z.number().int().min(1).max(500).default(50).describe("Max preview lines (newest first)."),
   },
-  async ({ client, component, line_filter, from = "now-1h", to = "now", limit = 50 }) =>
-    withToolLogging("grafana_logs_link", { client, component, from, to }, async () => {
+  async ({ client, component, line_filter, link_style = "drilldown", from = "now-1h", to = "now", limit = 50 }) =>
+    withToolLogging("grafana_logs_link", { client, component, link_style, from, to }, async () => {
       const query = buildLogsQuery({ client, component, lineFilter: line_filter });
-      const explore_url = buildExploreUrl({ datasourceUid: LOGS_DATASOURCE_UID, query, from, to });
       const preview = await fetchLogPreview({ query, from, to, limit });
       const result = {
         query,
-        explore_url,
+        link_style,
         range: { from, to },
         preview_count: preview.length,
         preview,
       };
+
+      if (link_style === "explore") {
+        // Single raw Explore (LogQL) deep link.
+        result.links = [{ url: buildExploreUrl({ datasourceUid: LOGS_DATASOURCE_UID, query, from, to }) }];
+      } else {
+        // Logs Drilldown navigates per-namespace. Derive the namespaces from the
+        // matched streams (a multitenant customer can span several, e.g. two data
+        // plane gateways) and emit one link each, scoped by service_name regex.
+        const serviceNameRegex = buildLogsQuery({ client, component }).match(/service_name=~"([^"]*)"/)?.[1] ?? null;
+        const namespaces = [...new Set(preview.map((p) => p.namespace).filter(Boolean))];
+        result.links = namespaces.map((namespace) => ({
+          namespace,
+          url: buildDrilldownUrl({ namespace, serviceNameRegex, datasourceUid: LOGS_DATASOURCE_UID, from, to }),
+        }));
+      }
+
       // No lines usually means the client/component text didn't match any
-      // service_name. Offer close matches (the link is still valid regardless).
+      // service_name (common for multitenant customers, whose name isn't in the
+      // label at all). Offer close matches so the caller can correct it. For
+      // drilldown there is also no namespace to build a link from when empty.
       if (preview.length === 0) {
         const suggestions = await suggestClients(client, { from });
         if (suggestions.length) {
