@@ -1,7 +1,7 @@
 # grafana-mcp-adapter
 
-Read-only MCP server that exposes Grafana dashboards, datasources and metric/log
-queries as tools.
+Read-only MCP server that exposes Grafana datasources and metric/log queries as
+tools.
 
 ## Architecture
 
@@ -14,11 +14,12 @@ not chained to one another.
   account is provisioned by Gravitee personnel — request it via a change
   management request, scoped to a read-only role (Viewer). Put the token in
   `GRAFANA_TOKEN` in your `.env`.
-- Most tools return **raw** payloads (dashboard JSON, datasource lists). The
-  exceptions are the high-volume ones: `grafana_query` returns a compact
-  per-series digest by default (a full `up` query is ~8 MB of frames, far past
-  what an MCP context wants), and `grafana_logs_link` returns a capped preview.
-  Both can be pushed back toward raw (`raw=true` / a higher `limit`).
+- Most tools return **raw** payloads (e.g. datasource lists). The exception is
+  the high-volume one: `grafana_query` returns a compact per-series digest by
+  default (a full `up` query is ~8 MB of frames, far past what an MCP context
+  wants); pass `raw=true` for the full frames. `grafana_logs_link` never returns
+  log bodies at all — it discovers matching streams via Loki's `/series` (label
+  sets only) and returns links plus those stream labels.
 - Read-only by design. Note that `grafana_query` is a `POST` (Grafana's
   `/api/ds/query` is POST-shaped) but only **reads** metrics/logs.
 
@@ -27,11 +28,9 @@ not chained to one another.
 | Tool | Purpose |
 | --- | --- |
 | `grafana_health` | Config/connectivity check (makes one authenticated call). |
-| `grafana_search_dashboards` | Search dashboards by title substring and/or tags. |
-| `grafana_get_dashboard` | Full dashboard JSON by `uid`. |
 | `grafana_list_datasources` | List configured datasources (uid, name, type). |
 | `grafana_query` | Run a PromQL/LogQL/etc. query against a datasource uid over a time range. Returns a per-series digest by default. |
-| `grafana_logs_link` | Build a shareable Grafana logs link for a customer's logs and return a preview of recent lines. Defaults to Logs Drilldown links (per-namespace); pass `link_style="explore"` for a raw LogQL Explore link. |
+| `grafana_logs_link` | Build a shareable Grafana logs link for a customer's logs. Discovers matching streams via Loki's `/series` (label sets only, no log lines) to scope the link. Defaults to Logs Drilldown links (per-namespace); pass `link_style="explore"` for a raw LogQL Explore link. |
 
 ### `grafana_query` response shape
 
@@ -62,9 +61,11 @@ Identify a customer/component with free text (`client='april'`,
 `component='gateway'`); it matches case-insensitively against the `service_name`
 label, which on this instance encodes both (e.g.
 `graviteeio-ae-april-rec-engine`). Returns `{ query, link_style, links, range,
-preview_count, preview }`. The default range is the last hour; widen with
-`from`/`to`. When nothing matches, it returns close `service_name` values as
-`suggestions` so typos like `aprl → april` surface.
+matched_count, matched_streams }`, where `matched_streams` is the list of
+`{ namespace, service_name }` label sets the selector matched (discovered via
+Loki's `/series` — no log lines are fetched). The default range is the last hour;
+widen with `from`/`to`. When nothing matches, it returns close `service_name`
+values as `suggestions` so typos like `aprl → april` surface.
 
 #### `link_style`: Logs Drilldown (default) vs Explore
 
@@ -83,9 +84,9 @@ preview_count, preview }`. The default range is the last hour; widen with
 - **`explore`** — a single raw **Explore** deep link carrying the LogQL `query`
   (Grafana 11+ `panes` form). Use this when you want the raw query view.
 
-Each entry in `links` is `{ url }` (explore) or `{ namespace, url }`
-(drilldown). The newest matching lines are always returned in `preview`
-regardless of `link_style`.
+Each entry in `links` is `{ url }` (explore) or `{ namespace, service_names, url }`
+(drilldown). The matching stream label sets are always returned in
+`matched_streams` regardless of `link_style` — no log lines are fetched.
 
 > **Multitenant note.** On the multitenant Cockpit instance the customer name is
 > *not* in `service_name`/`namespace` (it uses a tenant id, e.g. `ba813`), so a
@@ -103,8 +104,8 @@ Just ask in plain language — the agent maps it to the `client` / `component` /
 > "Show me the engine logs for **Contoso** over the last 6 hours."
 > → `{ "client": "contoso", "component": "engine", "from": "now-6h" }`
 
-> "Find the gateway errors for **Globex** in the last 3 hours, give me up to 200 lines."
-> → `{ "client": "globex", "component": "gateway", "line_filter": "error", "from": "now-3h", "limit": 200 }`
+> "Find the gateway errors for **Globex** in the last 3 hours."
+> → `{ "client": "globex", "component": "gateway", "line_filter": "error", "from": "now-3h" }`
 
 > "I need the UI logs for **Initech** during yesterday's incident between 10:00 and 11:00."
 > → `{ "client": "initech", "component": "ui", "from": "<epoch ms 10:00>", "to": "<epoch ms 11:00>" }`
@@ -122,8 +123,9 @@ whole `service_name` segment, so `prod` matches `…-prod-…` but **not** the
 partial customer name like `arcelor` still matches `arcelor-mittal`.)
 
 Each call returns `links` — shareable Grafana links (Logs Drilldown per namespace
-by default; see `link_style` above) — plus a capped `preview` of the newest
-matching lines.
+by default; see `link_style` above) — plus `matched_streams`, the
+`{ namespace, service_name }` label sets the selector matched. No log lines are
+fetched; open a link to read the logs in Grafana.
 
 ## Setup
 

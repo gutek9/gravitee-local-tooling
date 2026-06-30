@@ -21,7 +21,6 @@ import {
   matchNamespaces,
 } from "./helpers.js";
 
-const DEFAULT_LIMIT = Number.parseInt(process.env.GRAFANA_DEFAULT_LIMIT || "20", 10);
 // Loki datasource uid for the logs tools. Override per-instance via env.
 const LOGS_DATASOURCE_UID = process.env.GRAFANA_LOGS_DATASOURCE_UID || "grafanacloud-logs";
 
@@ -33,39 +32,6 @@ function textResult(value) {
   return {
     content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }],
   };
-}
-
-// Normalize one search hit down to the fields a skill actually needs to pick a
-// dashboard (by title/tags) and then fetch it (by uid).
-function summarizeDashboard(d = {}) {
-  return {
-    uid: d.uid ?? null,
-    title: d.title || null,
-    type: d.type || null,
-    folder_title: d.folderTitle || null,
-    tags: d.tags || [],
-    url: d.url || null,
-  };
-}
-
-async function searchDashboards({ query, tags, limit } = {}) {
-  // /search returns dashboards + folders. type=dash-db restricts to dashboards.
-  const hits = await grafanaGet("/search", {
-    query,
-    tag: tags,
-    type: "dash-db",
-    limit,
-  });
-  const items = Array.isArray(hits) ? hits : [];
-  const dashboards = items.map(summarizeDashboard);
-  const sliced = typeof limit === "number" ? dashboards.slice(0, limit) : dashboards;
-  return { count: sliced.length, dashboards: sliced };
-}
-
-async function getDashboard(uid) {
-  // Returns { dashboard: {...}, meta: {...} }. We hand back the raw payload; the
-  // skill decides what to read out of the (potentially large) panel JSON.
-  return grafanaGet(`/dashboards/uid/${encodeURIComponent(uid)}`);
 }
 
 async function listDatasources() {
@@ -82,31 +48,24 @@ async function listDatasources() {
   };
 }
 
-async function fetchLogPreview({ query, from, to, limit }) {
-  const data = await grafanaDatasourceProxyGet(LOGS_DATASOURCE_UID, "loki/api/v1/query_range", {
-    query,
+// Discover which log streams match a selector WITHOUT pulling any log lines.
+// Loki's /series returns just the label sets of the matching streams (one object
+// per stream, e.g. {namespace, service_name, pod, ...}); we only need namespace
+// and service_name to build the link, so this is far cheaper than query_range
+// (no log bodies, no timestamps). The `|= "..."` line filter is dropped from the
+// selector here — /series matches on the stream selector only, and the
+// service_name we need for the link doesn't depend on the line filter anyway.
+async function fetchMatchingStreams({ query, from, to }) {
+  const data = await grafanaDatasourceProxyGet(LOGS_DATASOURCE_UID, "loki/api/v1/series", {
+    "match[]": query,
     start: toLokiNs(from, 60 * 60),
     end: toLokiNs(to, 0),
-    limit,
-    direction: "backward",
   });
-  const streams = data?.data?.result || [];
-  const lines = [];
-  for (const s of streams) {
-    for (const [tsNs, line] of s.values || []) {
-      lines.push({
-        ts: new Date(Number(tsNs) / 1e6).toISOString(),
-        namespace: s.stream?.namespace || null,
-        service_name: s.stream?.service_name || null,
-        pod: s.stream?.pod || null,
-        level: s.stream?.detected_level || null,
-        line,
-      });
-    }
-  }
-  // Streams come grouped; sort newest-first and cap to `limit`.
-  lines.sort((a, b) => (a.ts < b.ts ? 1 : -1));
-  return lines.slice(0, limit);
+  const series = data?.data || [];
+  return series.map((s) => ({
+    namespace: s.namespace || null,
+    service_name: s.service_name || null,
+  }));
 }
 
 // Resolve a free-text `client` to the customer's own namespace(s). Many
@@ -179,40 +138,15 @@ server.tool("grafana_health", "Read-only Grafana health/config check.", {}, asyn
   withToolLogging("grafana_health", {}, async () => {
     requireConfig();
     // A cheap authenticated call confirms the token works.
-    const probe = await searchDashboards({ limit: 1 });
+    const probe = await listDatasources();
     return textResult({
       status: "ok",
       enabled: ENABLED,
       base_url: BASE_URL,
       reachable: true,
-      sample_dashboard_count: probe.count,
+      datasource_count: probe.count,
     });
   }),
-);
-
-server.tool(
-  "grafana_search_dashboards",
-  "Read-only search of Grafana dashboards (by title substring and/or tags). " +
-    "Returns uid, title, folder, tags and url for each. Use the uid with " +
-    "grafana_get_dashboard to fetch the full dashboard JSON.",
-  {
-    query: z.string().optional().describe("Title substring to match."),
-    tags: z.array(z.string()).optional().describe("Filter by dashboard tags."),
-    limit: z.number().int().min(1).max(100).default(DEFAULT_LIMIT),
-  },
-  async ({ query, tags, limit = DEFAULT_LIMIT }) =>
-    withToolLogging("grafana_search_dashboards", { query, limit }, async () =>
-      textResult(await searchDashboards({ query, tags, limit })),
-    ),
-);
-
-server.tool(
-  "grafana_get_dashboard",
-  "Read-only fetch of a Grafana dashboard's full JSON by uid (panels, variables, " +
-    "queries, meta). Get the uid from grafana_search_dashboards.",
-  { uid: z.string() },
-  async ({ uid }) =>
-    withToolLogging("grafana_get_dashboard", { uid }, async () => textResult(await getDashboard(uid))),
 );
 
 server.tool(
@@ -258,31 +192,31 @@ server.tool(
 
 server.tool(
   "grafana_logs_link",
-  "Read-only: build a shareable Grafana logs link for a customer's logs AND return a " +
-    "preview of the most recent lines. Identify the customer/component with free text " +
-    "(e.g. client='april', component='gateway') — it matches case-insensitively against " +
-    "the `service_name` label, which encodes both. Optionally narrow with line_filter " +
-    "(substring that must appear in the log line). Default range is the last 1 hour; " +
-    "widen with from/to (e.g. from='now-6h'). " +
+  "Read-only: build a shareable Grafana logs link for a customer's logs. Discovers " +
+    "which log streams match (via Loki's /series — label sets only, no log lines) so " +
+    "the link is scoped to the exact service_name values that exist. Identify the " +
+    "customer/component with free text (e.g. client='april', component='gateway') — it " +
+    "matches case-insensitively against the `service_name` label, which encodes both. " +
+    "Optionally pre-fill the link's line filter with line_filter. Default range is the " +
+    "last 1 hour; widen with from/to (e.g. from='now-6h'). " +
     "link_style controls the link format: 'drilldown' (default) builds Grafana's Logs " +
     "Drilldown app links (the 'Logs' menu), navigated per-namespace, so the user can " +
     "filter/drill by hand; 'explore' builds a raw Explore (LogQL) deep link instead. " +
-    "Returns { query, links, range, preview_count, preview }; `links` is per-namespace " +
-    "for drilldown (multitenant customers can span several). Paste a link into the " +
-    "ticket; ask the user before widening the range since logs are large.",
+    "Returns { query, links, range, matched_count, matched_streams }; `links` is " +
+    "per-namespace for drilldown (multitenant customers can span several). Paste a link " +
+    "into the ticket; ask the user before widening the range since logs are large.",
   {
     client: z.string().describe("Customer name fragment, e.g. 'april', 'alliander', 'apim-cloudgate'."),
     component: z.string().optional().describe("Component fragment, e.g. 'gateway', 'engine', 'ui'."),
-    line_filter: z.string().optional().describe("Only lines containing this substring."),
+    line_filter: z.string().optional().describe("Pre-fill the link's line filter with this substring (lines containing it)."),
     link_style: z
       .enum(["drilldown", "explore"])
       .default("drilldown")
       .describe("Link format: 'drilldown' (Logs Drilldown app, per-namespace; default) or 'explore' (raw LogQL Explore)."),
     from: z.string().default("now-1h").describe("Range start, e.g. 'now-1h', 'now-6h', or epoch ms."),
     to: z.string().default("now").describe("Range end, e.g. 'now' or epoch ms."),
-    limit: z.number().int().min(1).max(500).default(50).describe("Max preview lines (newest first)."),
   },
-  async ({ client, component, line_filter, link_style = "drilldown", from = "now-1h", to = "now", limit = 50 }) =>
+  async ({ client, component, line_filter, link_style = "drilldown", from = "now-1h", to = "now" }) =>
     withToolLogging("grafana_logs_link", { client, component, link_style, from, to }, async () => {
       // Prefer the customer's own namespace when it has one (`april-prod`,
       // `blueyonder-plt-live`): the namespace names the customer reliably,
@@ -291,8 +225,11 @@ server.tool(
       // plain service_name match.
       const namespaces = await resolveNamespaces(client, { from });
       const pinned = namespaces.length ? namespaces : undefined;
-      let query = buildLogsQuery({ client, component, lineFilter: line_filter, namespaces: pinned });
-      let preview = await fetchLogPreview({ query, from, to, limit });
+      // The selector we discover streams with carries no line filter — /series
+      // matches on the stream selector only, and the line_filter is applied in
+      // the generated link itself, not here.
+      let query = buildLogsQuery({ client, component, namespaces: pinned });
+      let streams = await fetchMatchingStreams({ query, from, to });
 
       // Env tokens (prod, stage, …) aren't reliably in the service_name either —
       // some customers name their prod `plt-live`/`multitenant`. So if we pinned
@@ -301,29 +238,37 @@ server.tool(
       // which beats a misleading empty result. (We can't be perfect against
       // legacy/inconsistent labels; this just maximizes useful hits.)
       let env_filter_dropped = false;
-      if (preview.length === 0 && pinned && splitClientEnv(client).envs.length) {
-        const retryQuery = buildLogsQuery({ client: splitClientEnv(client).core, component, lineFilter: line_filter, namespaces: pinned });
-        const retryPreview = await fetchLogPreview({ query: retryQuery, from, to, limit });
-        if (retryPreview.length) {
+      if (streams.length === 0 && pinned && splitClientEnv(client).envs.length) {
+        const retryQuery = buildLogsQuery({ client: splitClientEnv(client).core, component, namespaces: pinned });
+        const retryStreams = await fetchMatchingStreams({ query: retryQuery, from, to });
+        if (retryStreams.length) {
           query = retryQuery;
-          preview = retryPreview;
+          streams = retryStreams;
           env_filter_dropped = true;
         }
       }
 
+      // Re-attach the line filter to the reported query so the caller sees the
+      // full LogQL (the discovery query above intentionally omitted it). Only
+      // rebuild when there's actually a line filter to add — otherwise `query`
+      // (already env-adjusted by the retry) is exactly what we'd produce.
+      const reportedQuery = line_filter
+        ? buildLogsQuery({ client: env_filter_dropped ? splitClientEnv(client).core : client, component, lineFilter: line_filter, namespaces: pinned })
+        : query;
+
       const result = {
-        query,
+        query: reportedQuery,
         link_style,
         resolved_namespaces: namespaces,
         ...(env_filter_dropped ? { env_filter_dropped: true } : {}),
         range: { from, to },
-        preview_count: preview.length,
-        preview,
+        matched_count: streams.length,
+        matched_streams: streams,
       };
 
       if (link_style === "explore") {
         // Single raw Explore (LogQL) deep link.
-        result.links = [{ url: buildExploreUrl({ datasourceUid: LOGS_DATASOURCE_UID, query, from, to }) }];
+        result.links = [{ url: buildExploreUrl({ datasourceUid: LOGS_DATASOURCE_UID, query: reportedQuery, from, to }) }];
       } else {
         // Logs Drilldown navigates per-namespace. Group the matched streams by
         // namespace (a multitenant customer can span several, e.g. two data plane
@@ -331,10 +276,10 @@ server.tool(
         // values seen in that namespace — the app treats a raw regex value as a
         // literal, so we can't reuse the LogQL selector here.
         const byNamespace = new Map();
-        for (const p of preview) {
-          if (!p.namespace) continue;
-          if (!byNamespace.has(p.namespace)) byNamespace.set(p.namespace, new Set());
-          if (p.service_name) byNamespace.get(p.namespace).add(p.service_name);
+        for (const s of streams) {
+          if (!s.namespace) continue;
+          if (!byNamespace.has(s.namespace)) byNamespace.set(s.namespace, new Set());
+          if (s.service_name) byNamespace.get(s.namespace).add(s.service_name);
         }
         result.links = [...byNamespace.entries()].map(([namespace, names]) => ({
           namespace,
@@ -350,20 +295,20 @@ server.tool(
         }));
       }
 
-      // No lines: if we resolved the customer's namespace(s) but they were
-      // quiet, the customer is right — it's just a quiet range (or the
+      // No streams: if we resolved the customer's namespace(s) but nothing
+      // matched, the customer is right — it's just a quiet range (or the
       // component/env narrowed too far). Otherwise the `client` text likely
       // didn't match any service_name; offer close matches to correct it.
-      if (preview.length === 0) {
+      if (streams.length === 0) {
         if (namespaces.length) {
-          result.note = `No log lines in this range for namespace(s) ${namespaces.join(", ")}. Try widening from/to or relaxing component/env.`;
+          result.note = `No log streams in this range for namespace(s) ${namespaces.join(", ")}. Try widening from/to or relaxing component/env.`;
         } else {
           const suggestions = await suggestClients(client, { from });
           if (suggestions.length) {
-            result.note = `No log lines matched in this range. Did you mean one of these service_name values? Re-run with a closer 'client'.`;
+            result.note = `No log streams matched in this range. Did you mean one of these service_name values? Re-run with a closer 'client'.`;
             result.suggestions = suggestions;
           } else {
-            result.note = `No log lines matched in this range. Try widening from/to or adjusting client/component.`;
+            result.note = `No log streams matched in this range. Try widening from/to or adjusting client/component.`;
           }
         }
       }
