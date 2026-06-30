@@ -155,30 +155,52 @@ test("buildExploreUrl: builds a Grafana 11+ panes deep link", () => {
 // buildDrilldownUrl
 // ---------------------------------------------------------------------------
 
-test("buildDrilldownUrl: builds a Logs Drilldown app link pinned to a namespace", () => {
+test("buildDrilldownUrl: single service_name -> exact (=) filter", () => {
   const url = buildDrilldownUrl({
-    namespace: "apim-dp-ba813-a200c4",
-    serviceNameRegex: "(?i).*april.*gateway.*",
+    namespace: "april-prod",
+    serviceNames: ["graviteeio-apim-april-prod-gateway"],
     from: "now-1h",
     to: "now",
   });
-  assert.ok(
-    url.startsWith("https://g.example.com/a/grafana-lokiexplore-app/explore/namespace/apim-dp-ba813-a200c4/logs?"),
-  );
+  assert.ok(url.startsWith("https://g.example.com/a/grafana-lokiexplore-app/explore/namespace/april-prod/logs?"));
   const params = new URL(url).searchParams;
   assert.equal(params.get("var-ds"), "grafanacloud-logs");
-  assert.equal(params.get("from"), "now-1h");
-  assert.equal(params.get("to"), "now");
   assert.equal(params.get("visualizationType"), '"logs"');
-  // Both filters present: namespace pin (exact) + service_name regex match.
-  const filters = params.getAll("var-filters");
-  assert.deepEqual(filters, ["namespace|=|apim-dp-ba813-a200c4", "service_name|=~|(?i).*april.*gateway.*"]);
+  // namespace pin + exact service_name match (NOT a raw LogQL regex, which the
+  // app treats as a literal).
+  assert.deepEqual(params.getAll("var-filters"), [
+    "namespace|=|april-prod",
+    "service_name|=|graviteeio-apim-april-prod-gateway",
+  ]);
 });
 
-test("buildDrilldownUrl: omits the service_name filter when no regex given", () => {
+test("buildDrilldownUrl: multiple service_names -> escaped =~ alternation", () => {
+  const url = buildDrilldownUrl({
+    namespace: "apim-dp-ba813-a200c4",
+    serviceNames: ["prod-apim-dp-ba813-a200c4-gateway", "prod-apim-dp-ba813-8123e2-gateway"],
+    from: "now-1h",
+    to: "now",
+  });
+  // Hyphens aren't regex metachars (outside a char class), so they're left as-is.
+  assert.deepEqual(new URL(url).searchParams.getAll("var-filters"), [
+    "namespace|=|apim-dp-ba813-a200c4",
+    "service_name|=~|prod-apim-dp-ba813-a200c4-gateway|prod-apim-dp-ba813-8123e2-gateway",
+  ]);
+});
+
+test("buildDrilldownUrl: omits the service_name filter when none given", () => {
   const url = buildDrilldownUrl({ namespace: "apim-cp-ba813", from: "now-15m", to: "now" });
-  const filters = new URL(url).searchParams.getAll("var-filters");
-  assert.deepEqual(filters, ["namespace|=|apim-cp-ba813"]);
+  assert.deepEqual(new URL(url).searchParams.getAll("var-filters"), ["namespace|=|apim-cp-ba813"]);
+});
+
+test("buildDrilldownUrl: de-duplicates service_names", () => {
+  const url = buildDrilldownUrl({
+    namespace: "april-prod",
+    serviceNames: ["svc-a", "svc-a"],
+    from: "now-1h",
+    to: "now",
+  });
+  assert.deepEqual(new URL(url).searchParams.getAll("var-filters"), ["namespace|=|april-prod", "service_name|=|svc-a"]);
 });
 
 test("buildDrilldownUrl: throws when namespace missing", () => {

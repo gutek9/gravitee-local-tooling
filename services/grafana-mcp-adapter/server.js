@@ -95,6 +95,7 @@ async function fetchLogPreview({ query, from, to, limit }) {
       lines.push({
         ts: new Date(Number(tsNs) / 1e6).toISOString(),
         namespace: s.stream?.namespace || null,
+        service_name: s.stream?.service_name || null,
         pod: s.stream?.pod || null,
         level: s.stream?.detected_level || null,
         line,
@@ -271,14 +272,27 @@ server.tool(
         // Single raw Explore (LogQL) deep link.
         result.links = [{ url: buildExploreUrl({ datasourceUid: LOGS_DATASOURCE_UID, query, from, to }) }];
       } else {
-        // Logs Drilldown navigates per-namespace. Derive the namespaces from the
-        // matched streams (a multitenant customer can span several, e.g. two data
-        // plane gateways) and emit one link each, scoped by service_name regex.
-        const serviceNameRegex = buildLogsQuery({ client, component }).match(/service_name=~"([^"]*)"/)?.[1] ?? null;
-        const namespaces = [...new Set(preview.map((p) => p.namespace).filter(Boolean))];
-        result.links = namespaces.map((namespace) => ({
+        // Logs Drilldown navigates per-namespace. Group the matched streams by
+        // namespace (a multitenant customer can span several, e.g. two data plane
+        // gateways) and emit one link each, scoped to the EXACT service_name
+        // values seen in that namespace — the app treats a raw regex value as a
+        // literal, so we can't reuse the LogQL selector here.
+        const byNamespace = new Map();
+        for (const p of preview) {
+          if (!p.namespace) continue;
+          if (!byNamespace.has(p.namespace)) byNamespace.set(p.namespace, new Set());
+          if (p.service_name) byNamespace.get(p.namespace).add(p.service_name);
+        }
+        result.links = [...byNamespace.entries()].map(([namespace, names]) => ({
           namespace,
-          url: buildDrilldownUrl({ namespace, serviceNameRegex, datasourceUid: LOGS_DATASOURCE_UID, from, to }),
+          service_names: [...names],
+          url: buildDrilldownUrl({
+            namespace,
+            serviceNames: [...names],
+            datasourceUid: LOGS_DATASOURCE_UID,
+            from,
+            to,
+          }),
         }));
       }
 

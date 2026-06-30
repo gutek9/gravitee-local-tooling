@@ -91,11 +91,17 @@ export function buildExploreUrl({ datasourceUid, query, from, to }) {
 // `grafana-lokiexplore-app`, the "Logs" menu) instead of raw Explore. The app
 // navigates per-namespace (`/explore/namespace/{ns}/logs`) and filters by
 // individual labels via repeated `var-filters` (`label|operator|value`). We pin
-// the namespace and optionally add a `service_name` regex filter so the user
-// lands already scoped, then drills down by hand in the UI. Params mirror a link
-// produced by the app itself so it opens cleanly.
-export function buildDrilldownUrl({ namespace, serviceNameRegex, datasourceUid = "grafanacloud-logs", from, to } = {}) {
+// the namespace and add a `service_name` filter built from the EXACT service
+// names matched in that namespace, so the user lands already scoped, then drills
+// down by hand in the UI. Params mirror a link produced by the app itself.
+//
+// Note: this app does NOT evaluate a raw LogQL regex like `(?i).*x.*` in a
+// filter value — it treats it as a literal and matches nothing. So we pass exact
+// service_name values: one `=` filter for a single value, or a `=~` alternation
+// (`a|b`, values regex-escaped) for several.
+export function buildDrilldownUrl({ namespace, serviceNames = [], datasourceUid = "grafanacloud-logs", from, to } = {}) {
   if (!namespace) throw new Error("namespace is required");
+  const names = [...new Set((serviceNames || []).filter(Boolean))];
   const p = new URLSearchParams();
   p.set("patterns", "[]");
   p.set("from", from);
@@ -104,8 +110,12 @@ export function buildDrilldownUrl({ namespace, serviceNameRegex, datasourceUid =
   p.set("var-ds", datasourceUid);
   // First filter pins the namespace (matches the route). `|=|` is an exact match.
   p.append("var-filters", `namespace|=|${namespace}`);
-  // `|=~` is a regex match in this app; only add when we have a service_name fragment.
-  if (serviceNameRegex) p.append("var-filters", `service_name|=~|${serviceNameRegex}`);
+  // Exact service_name match: `=` for one value, `=~` alternation for several.
+  if (names.length === 1) {
+    p.append("var-filters", `service_name|=|${names[0]}`);
+  } else if (names.length > 1) {
+    p.append("var-filters", `service_name|=~|${names.map(escapeRegex).join("|")}`);
+  }
   for (const k of [
     "var-fields",
     "var-levels",

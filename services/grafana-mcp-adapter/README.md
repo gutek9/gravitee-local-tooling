@@ -75,8 +75,11 @@ preview_count, preview }`. The default range is the last hour; widen with
   **per-namespace** (`/explore/namespace/{ns}/logs`), so `links` carries **one
   link per namespace** the query matched (a customer's logs can span several
   namespaces — e.g. `april-prod`, `april-rec`). Each link pins the namespace and
-  adds a `service_name` regex filter, dropping you in already scoped so you can
-  filter/drill (levels, fields, patterns) by hand in the UI.
+  adds a `service_name` filter built from the **exact** service names seen in
+  that namespace (the app treats a raw LogQL regex value as a literal and matches
+  nothing, so we use `=` for one value or a `=~` alternation for several),
+  dropping you in already scoped so you can filter/drill (levels, fields,
+  patterns) by hand in the UI.
 - **`explore`** — a single raw **Explore** deep link carrying the LogQL `query`
   (Grafana 11+ `panes` form). Use this when you want the raw query view.
 
