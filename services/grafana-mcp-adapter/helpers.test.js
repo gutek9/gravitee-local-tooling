@@ -104,15 +104,35 @@ test("buildLogsQuery: client + component join with .*", () => {
 
 test("buildLogsQuery: multi-word fragment joins words with .* (not a literal space)", () => {
   // `service_name` is dash-separated, so "april prod" must become april.*prod —
-  // a literal space would never match `…-april-prod-…`.
+  // a literal space would never match `…-april-prod-…`. Note "prod" is an env
+  // token, so it is anchored to a whole segment (see env-token test below).
   assert.equal(
     buildLogsQuery({ client: "april prod", component: "gateway" }),
-    '{service_name=~"(?i).*april.*prod.*gateway.*"}',
+    '{service_name=~"(?i).*april.*(?:^|[-_.])prod(?:[-_.]|$).*gateway.*"}',
   );
 });
 
+test("buildLogsQuery: anchors env tokens so 'prod' doesn't match 'nonprod'/'preprod'", () => {
+  // 'prod' is anchored to a whole segment; a non-env word like 'april' stays a
+  // plain substring (so partial customer names keep matching).
+  const q = buildLogsQuery({ client: "april prod" });
+  assert.equal(q, '{service_name=~"(?i).*april.*(?:^|[-_.])prod(?:[-_.]|$).*"}');
+  // (?i) is Loki/Go inline-flag syntax; JS RegExp needs the literal stripped and
+  // the "i" flag passed instead.
+  const re = new RegExp(q.match(/service_name=~"(?:\(\?i\))?([^"]*)"/)[1], "i");
+  assert.ok(re.test("graviteeio-am-april-prod-gateway"));
+  assert.equal(re.test("graviteeio-am-april-nonprod-gateway"), false);
+  assert.equal(re.test("graviteeio-am-april-preprod-gateway"), false);
+});
+
+test("buildLogsQuery: non-env partial words stay substrings (arcelor matches arcelor-mittal)", () => {
+  const q = buildLogsQuery({ client: "arcelor" });
+  const re = new RegExp(q.match(/service_name=~"(?:\(\?i\))?([^"]*)"/)[1], "i");
+  assert.ok(re.test("graviteeio-apim-arcelor-mittal-prod-gateway"));
+});
+
 test("buildLogsQuery: collapses extra/leading/trailing whitespace in a fragment", () => {
-  assert.equal(buildLogsQuery({ client: "  am   prod  " }), '{service_name=~"(?i).*am.*prod.*"}');
+  assert.equal(buildLogsQuery({ client: "  am   prod  " }), '{service_name=~"(?i).*am.*(?:^|[-_.])prod(?:[-_.]|$).*"}');
 });
 
 test("buildLogsQuery: escapes regex metachars in client/component", () => {

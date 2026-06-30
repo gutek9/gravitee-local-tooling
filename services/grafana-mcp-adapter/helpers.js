@@ -45,6 +45,36 @@ export function escapeRegex(s = "") {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Environment tokens that name a deployment stage. These are matched as whole
+// `service_name` segments, not substrings, so "prod" doesn't also match the
+// "prod" inside `nonprod`/`preprod` (a real source of false positives). Any word
+// not in this set stays a plain substring (so partial customer names like
+// "arcelor" still match "arcelor-mittal").
+const ENV_TOKENS = new Set([
+  "prod",
+  "nonprod",
+  "preprod",
+  "rec",
+  "dev",
+  "int",
+  "ppr",
+  "sandbox",
+  "val",
+  "qc",
+  "qa",
+  "test",
+  "demo",
+  "stage",
+  "uat",
+  "plt",
+]);
+
+// Segment boundary in `service_name` (dash/underscore/dot, or start/end). Used to
+// anchor an env token so it matches a whole segment, e.g. `prod` -> `prod-` /
+// `-prod-` / `-prod` but not the `prod` inside `nonprod`.
+const SEG_START = "(?:^|[-_.])";
+const SEG_END = "(?:[-_.]|$)";
+
 // Build a LogQL selector from free-text client/component. Both are matched
 // case-insensitively as substrings of `service_name` (which in this instance
 // encodes both the customer and the component, e.g.
@@ -55,13 +85,16 @@ export function buildLogsQuery({ client, component, lineFilter } = {}) {
   // Whitespace inside a fragment means "these words, in order, with anything in
   // between" — `service_name` is dash-separated, so a literal space would never
   // match (e.g. "april prod" must become `april.*prod`, not `april prod`). Split
-  // each fragment on whitespace and join the (escaped) words with `.*`.
+  // each fragment on whitespace; known env words are anchored to a whole segment,
+  // everything else stays a plain (escaped) substring, joined with `.*`.
+  const toWord = (w) =>
+    ENV_TOKENS.has(w.toLowerCase()) ? `${SEG_START}${escapeRegex(w)}${SEG_END}` : escapeRegex(w);
   const toPattern = (s) =>
     String(s)
       .trim()
       .split(/\s+/)
       .filter(Boolean)
-      .map(escapeRegex)
+      .map(toWord)
       .join(".*");
   const parts = [toPattern(client)].filter(Boolean);
   if (component) {

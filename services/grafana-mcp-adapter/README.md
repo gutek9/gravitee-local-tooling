@@ -113,9 +113,13 @@ Just ask in plain language — the agent maps it to the `client` / `component` /
 > → `{ "client": "northwind prod", "component": "gateway" }`
 
 (The environment — `prod`, `rec`, `dev` — isn't a separate argument: it lives
-inside `service_name`, so just fold it into `client` as another word. Both
-`client` and `component` are matched as case-insensitive substrings with `.*`
-between them, so `northwind prod` matches `…-northwind-prod-…`.)
+inside `service_name`, so just fold it into `client` as another word. Words are
+matched as case-insensitive substrings with `.*` between them, so `northwind
+prod` matches `…-northwind-prod-…`. Known environment words (`prod`, `rec`,
+`dev`, `nonprod`, `preprod`, `qa`, `int`, `ppr`, `sandbox`, …) are anchored to a
+whole `service_name` segment, so `prod` matches `…-prod-…` but **not** the
+`prod` inside `nonprod`/`preprod`. Non-env words stay plain substrings, so a
+partial customer name like `arcelor` still matches `arcelor-mittal`.)
 
 Each call returns `links` — shareable Grafana links (Logs Drilldown per namespace
 by default; see `link_style` above) — plus a capped `preview` of the newest
