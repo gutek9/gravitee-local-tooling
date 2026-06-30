@@ -17,6 +17,8 @@ import {
   buildDrilldownUrl,
   toLokiNs,
   rankClientSuggestions,
+  splitClientEnv,
+  matchNamespaces,
 } from "./helpers.js";
 
 const DEFAULT_LIMIT = Number.parseInt(process.env.GRAFANA_DEFAULT_LIMIT || "20", 10);
@@ -105,6 +107,30 @@ async function fetchLogPreview({ query, from, to, limit }) {
   // Streams come grouped; sort newest-first and cap to `limit`.
   lines.sort((a, b) => (a.ts < b.ts ? 1 : -1));
   return lines.slice(0, limit);
+}
+
+// Resolve a free-text `client` to the customer's own namespace(s). Many
+// customers have a dedicated namespace that names them (`april-prod`,
+// `blueyonder-plt-live`) — that namespace is the most reliable customer
+// identifier, more so than `service_name` (which for some tenants carries an
+// opaque id, not the name). We fetch the `namespace` label values and keep the
+// ones whose name contains the customer "core" (env tokens excluded — they
+// aren't reliably in the namespace). Returns [] for customers that only live in
+// a shared namespace (e.g. `prod`), which tells the caller to fall back to a
+// plain `service_name` match.
+async function resolveNamespaces(client, { from } = {}) {
+  const { core } = splitClientEnv(client);
+  if (!core) return [];
+  let values = [];
+  try {
+    const data = await grafanaDatasourceProxyGet(LOGS_DATASOURCE_UID, "loki/api/v1/label/namespace/values", {
+      start: toLokiNs(from, 60 * 60),
+    });
+    values = data?.data || [];
+  } catch {
+    return [];
+  }
+  return matchNamespaces(values, core);
 }
 
 // When a logs query returns nothing, the `client` text often just doesn't match
@@ -258,11 +284,38 @@ server.tool(
   },
   async ({ client, component, line_filter, link_style = "drilldown", from = "now-1h", to = "now", limit = 50 }) =>
     withToolLogging("grafana_logs_link", { client, component, link_style, from, to }, async () => {
-      const query = buildLogsQuery({ client, component, lineFilter: line_filter });
-      const preview = await fetchLogPreview({ query, from, to, limit });
+      // Prefer the customer's own namespace when it has one (`april-prod`,
+      // `blueyonder-plt-live`): the namespace names the customer reliably,
+      // whereas `service_name` doesn't for every tenant. Customers that only
+      // live in a shared namespace (`prod`) resolve to [] and fall back to the
+      // plain service_name match.
+      const namespaces = await resolveNamespaces(client, { from });
+      const pinned = namespaces.length ? namespaces : undefined;
+      let query = buildLogsQuery({ client, component, lineFilter: line_filter, namespaces: pinned });
+      let preview = await fetchLogPreview({ query, from, to, limit });
+
+      // Env tokens (prod, stage, …) aren't reliably in the service_name either —
+      // some customers name their prod `plt-live`/`multitenant`. So if we pinned
+      // the customer's namespace, asked for an env, and got nothing, drop the env
+      // filter and retry once: the namespace pin still scopes us to the customer,
+      // which beats a misleading empty result. (We can't be perfect against
+      // legacy/inconsistent labels; this just maximizes useful hits.)
+      let env_filter_dropped = false;
+      if (preview.length === 0 && pinned && splitClientEnv(client).envs.length) {
+        const retryQuery = buildLogsQuery({ client: splitClientEnv(client).core, component, lineFilter: line_filter, namespaces: pinned });
+        const retryPreview = await fetchLogPreview({ query: retryQuery, from, to, limit });
+        if (retryPreview.length) {
+          query = retryQuery;
+          preview = retryPreview;
+          env_filter_dropped = true;
+        }
+      }
+
       const result = {
         query,
         link_style,
+        resolved_namespaces: namespaces,
+        ...(env_filter_dropped ? { env_filter_dropped: true } : {}),
         range: { from, to },
         preview_count: preview.length,
         preview,
@@ -297,17 +350,21 @@ server.tool(
         }));
       }
 
-      // No lines usually means the client/component text didn't match any
-      // service_name (common for multitenant customers, whose name isn't in the
-      // label at all). Offer close matches so the caller can correct it. For
-      // drilldown there is also no namespace to build a link from when empty.
+      // No lines: if we resolved the customer's namespace(s) but they were
+      // quiet, the customer is right — it's just a quiet range (or the
+      // component/env narrowed too far). Otherwise the `client` text likely
+      // didn't match any service_name; offer close matches to correct it.
       if (preview.length === 0) {
-        const suggestions = await suggestClients(client, { from });
-        if (suggestions.length) {
-          result.note = `No log lines matched in this range. Did you mean one of these service_name values? Re-run with a closer 'client'.`;
-          result.suggestions = suggestions;
+        if (namespaces.length) {
+          result.note = `No log lines in this range for namespace(s) ${namespaces.join(", ")}. Try widening from/to or relaxing component/env.`;
         } else {
-          result.note = `No log lines matched in this range. Try widening from/to or adjusting client/component.`;
+          const suggestions = await suggestClients(client, { from });
+          if (suggestions.length) {
+            result.note = `No log lines matched in this range. Did you mean one of these service_name values? Re-run with a closer 'client'.`;
+            result.suggestions = suggestions;
+          } else {
+            result.note = `No log lines matched in this range. Try widening from/to or adjusting client/component.`;
+          }
         }
       }
       return textResult(result);

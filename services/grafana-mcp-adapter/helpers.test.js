@@ -16,6 +16,8 @@ const {
   toLokiNs,
   editDistance,
   rankClientSuggestions,
+  splitClientEnv,
+  matchNamespaces,
 } = await import("./helpers.js");
 
 // ---------------------------------------------------------------------------
@@ -149,6 +151,70 @@ test("buildLogsQuery: line_filter appends a backtick line filter, stripping back
 
 test("buildLogsQuery: throws when client missing", () => {
   assert.throws(() => buildLogsQuery({}), /client is required/);
+});
+
+test("buildLogsQuery: namespaces pin the selector and drop client from service_name", () => {
+  // Customer resolved to its own namespace: the namespace isolates the customer,
+  // so service_name only carries env/component (not the client core).
+  // Hyphens aren't regex metachars (outside a char class) so escapeRegex leaves
+  // them as-is — same convention as the drilldown alternation test.
+  assert.equal(
+    buildLogsQuery({ client: "blueyonder prod", component: "gateway", namespaces: ["blueyonder-plt-live"] }),
+    '{namespace=~"^blueyonder-plt-live$", service_name=~"(?i).*(?:^|[-_.])prod(?:[-_.]|$).*gateway.*"}',
+  );
+});
+
+test("buildLogsQuery: multiple namespaces -> anchored alternation", () => {
+  assert.equal(
+    buildLogsQuery({ client: "april", namespaces: ["april-prod", "april-rec"] }),
+    '{namespace=~"^april-prod$|^april-rec$"}',
+  );
+});
+
+test("buildLogsQuery: namespace-pinned, no component/env -> service_name matcher omitted", () => {
+  // Nothing left to narrow by inside the namespace: emit only the namespace pin,
+  // not an empty `service_name=~"(?i).*.*"`.
+  assert.equal(buildLogsQuery({ client: "april", namespaces: ["april-prod"] }), '{namespace=~"^april-prod$"}');
+});
+
+// ---------------------------------------------------------------------------
+// splitClientEnv
+// ---------------------------------------------------------------------------
+
+test("splitClientEnv: separates customer core from env tokens", () => {
+  assert.deepEqual(splitClientEnv("blueyonder prod"), { core: "blueyonder", envs: ["prod"] });
+  assert.deepEqual(splitClientEnv("equigy"), { core: "equigy", envs: [] });
+  assert.deepEqual(splitClientEnv("  arcelor  nonprod "), { core: "arcelor", envs: ["nonprod"] });
+  assert.deepEqual(splitClientEnv(""), { core: "", envs: [] });
+});
+
+// ---------------------------------------------------------------------------
+// matchNamespaces
+// ---------------------------------------------------------------------------
+
+const NAMESPACES = [
+  "prod",
+  "nonprod",
+  "april-prod",
+  "april-rec",
+  "blueyonder-plt-live",
+  "blueyonder-multitenant",
+  "lyonaeroports-prod",
+];
+
+test("matchNamespaces: returns the customer's own namespaces", () => {
+  assert.deepEqual(matchNamespaces(NAMESPACES, "april"), ["april-prod", "april-rec"]);
+  assert.deepEqual(matchNamespaces(NAMESPACES, "blueyonder"), ["blueyonder-plt-live", "blueyonder-multitenant"]);
+});
+
+test("matchNamespaces: customer with no dedicated namespace -> [] (fall back to service_name)", () => {
+  // 'equigy' lives only in the shared `prod`/`nonprod` namespaces.
+  assert.deepEqual(matchNamespaces(NAMESPACES, "equigy"), []);
+});
+
+test("matchNamespaces: empty core matches nothing (avoids matching every namespace)", () => {
+  assert.deepEqual(matchNamespaces(NAMESPACES, ""), []);
+  assert.deepEqual(matchNamespaces(NAMESPACES, "   "), []);
 });
 
 // ---------------------------------------------------------------------------

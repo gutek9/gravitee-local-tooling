@@ -75,12 +75,45 @@ const ENV_TOKENS = new Set([
 const SEG_START = "(?:^|[-_.])";
 const SEG_END = "(?:[-_.]|$)";
 
+// Split a free-text client fragment into the customer "core" (the words that
+// name the customer) and the env tokens (prod, stage, ...). The customer core
+// is what we match against the `namespace` label — env tokens don't reliably
+// live in the namespace (e.g. a customer whose prod namespace is `…-plt-live`),
+// so they only ever narrow `service_name`, never the namespace.
+//   splitClientEnv("blueyonder prod") -> { core: "blueyonder", envs: ["prod"] }
+//   splitClientEnv("equigy")          -> { core: "equigy",     envs: [] }
+export function splitClientEnv(client = "") {
+  const words = String(client || "").trim().split(/\s+/).filter(Boolean);
+  const core = [];
+  const envs = [];
+  for (const w of words) (ENV_TOKENS.has(w.toLowerCase()) ? envs : core).push(w);
+  return { core: core.join(" "), envs };
+}
+
+// From the full list of `namespace` label values, pick the ones that belong to
+// the customer named by `core`: every (non-env) word of `core` must appear as a
+// substring (case-insensitive). Generic, name-agnostic — works for any customer
+// that has its own namespace (`april-prod`, `blueyonder-plt-live`, …) and
+// returns [] for customers that only live in a shared namespace (`prod`), which
+// is the signal to fall back to a `service_name` match.
+export function matchNamespaces(namespaceValues = [], core = "") {
+  const words = String(core || "").toLowerCase().trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  return [...new Set(namespaceValues.filter(Boolean))].filter((ns) => {
+    const l = ns.toLowerCase();
+    return words.every((w) => l.includes(w));
+  });
+}
+
 // Build a LogQL selector from free-text client/component. Both are matched
 // case-insensitively as substrings of `service_name` (which in this instance
 // encodes both the customer and the component, e.g.
 // `graviteeio-ae-april-rec-engine`, `dev-apim-cloudgate-1ca08d-gateway`).
-// `lineFilter` becomes a `|= "..."` line filter on top.
-export function buildLogsQuery({ client, component, lineFilter } = {}) {
+// `lineFilter` becomes a `|= "..."` line filter on top. When `namespaces` is
+// given, the selector is pinned to those namespaces (`namespace=~"a|b"`) — used
+// when we've resolved the customer to its own namespace(s) and only need
+// `service_name` to narrow by component/env within them.
+export function buildLogsQuery({ client, component, lineFilter, namespaces } = {}) {
   if (!client) throw new Error("client is required");
   // Whitespace inside a fragment means "these words, in order, with anything in
   // between" — `service_name` is dash-separated, so a literal space would never
@@ -96,13 +129,31 @@ export function buildLogsQuery({ client, component, lineFilter } = {}) {
       .filter(Boolean)
       .map(toWord)
       .join(".*");
-  const parts = [toPattern(client)].filter(Boolean);
+  const ns = [...new Set((namespaces || []).filter(Boolean))];
+  // When the customer is pinned to its own namespace(s), the namespace label
+  // already isolates the customer — so `service_name` only needs the env/
+  // component words, not the client core (which often isn't even in the
+  // service_name for namespace-named customers). Without namespaces we keep the
+  // original behaviour: match the client (+component) against service_name.
+  const svcSource = ns.length ? splitClientEnv(client).envs.join(" ") : client;
+  const parts = [toPattern(svcSource)].filter(Boolean);
   if (component) {
     const c = toPattern(component);
     if (c) parts.push(c);
   }
+  const matchers = [];
+  if (ns.length) {
+    // Pin to the resolved customer namespace(s). Values are exact label values,
+    // so anchor each and join with `|` (regex-escaped) for an exact alternation.
+    matchers.push(`namespace=~"${ns.map((n) => `^${escapeRegex(n)}$`).join("|")}"`);
+  }
   // (?i) = case-insensitive; .* between parts so order/extra segments are fine.
-  const selector = `{service_name=~"(?i).*${parts.join(".*")}.*"}`;
+  // Omit the service_name matcher entirely when there's nothing left to narrow
+  // by (namespace-pinned with no component/env) — an empty `.*.*` is noise.
+  if (parts.length || !ns.length) {
+    matchers.push(`service_name=~"(?i).*${parts.join(".*")}.*"`);
+  }
+  const selector = `{${matchers.join(", ")}}`;
   return lineFilter ? `${selector} |= \`${lineFilter.replace(/`/g, "")}\`` : selector;
 }
 
