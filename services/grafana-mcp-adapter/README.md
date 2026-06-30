@@ -1,22 +1,19 @@
 # grafana-mcp-adapter
 
 Read-only MCP server that exposes Grafana dashboards, datasources and metric/log
-queries as tools, for use by skills in the TICKETS workspace.
-
-This is a **private, standalone** adapter: its own git repo, its own `.env`. It is
-**not** part of `ia-tooling` and does not depend on its stack — it only makes HTTPS
-calls out to the Grafana HTTP API (`${GRAFANA_BASE_URL}/api`). It was scaffolded by
-cloning the structure of `fathom-mcp-adapter`.
+queries as tools.
 
 ## Architecture
 
 The adapter *is* the MCP server. Internally it calls the **Grafana HTTP API**
-directly (just as the Fathom adapter calls Fathom's REST API). MCP servers are
+directly. MCP servers are
 not chained to one another.
 
-- Auth: a Grafana **service account token** sent as a Bearer token in the
-  `Authorization` header. Scope it to a read-only role (Viewer). Create the
-  service account + token in Grafana → Administration → Service accounts.
+- Auth (required): this adapter needs a Grafana **service account** and its
+  **token**, sent as a Bearer token in the `Authorization` header. The service
+  account is provisioned by Gravitee personnel — request it via a change
+  management request, scoped to a read-only role (Viewer). Put the token in
+  `GRAFANA_TOKEN` in your `.env`.
 - Most tools return **raw** payloads (dashboard JSON, datasource lists). The
   exceptions are the high-volume ones: `grafana_query` returns a compact
   per-series digest by default (a full `up` query is ~8 MB of frames, far past
@@ -65,8 +62,8 @@ Identify a customer/component with free text (`client='april'`,
 `component='gateway'`); it matches case-insensitively against the `service_name`
 label, which on this instance encodes both (e.g.
 `graviteeio-ae-april-rec-engine`). Returns `{ query, explore_url, range,
-preview_count, preview }` — paste `explore_url` (a permanent Grafana 11+ Explore
-link) into the ticket. The default range is the last hour; widen with
+preview_count, preview }` — `explore_url` is a permanent Grafana 11+ Explore
+link you can share. The default range is the last hour; widen with
 `from`/`to`. When nothing matches, it returns close `service_name` values as
 `suggestions` so typos like `aprl → april` surface.
 
@@ -95,37 +92,28 @@ inside `service_name`, so just fold it into `client` as another word. Both
 `client` and `component` are matched as case-insensitive substrings with `.*`
 between them, so `northwind prod` matches `…-northwind-prod-…`.)
 
-Each call returns `explore_url` — paste it into the ticket as a permanent link —
-plus a capped `preview` of the newest matching lines.
+Each call returns `explore_url` — a permanent link you can share — plus a capped
+`preview` of the newest matching lines.
 
 ## Setup
 
-```bash
-npm install
-cp .env.example .env   # then fill in GRAFANA_BASE_URL and GRAFANA_TOKEN
-npm test
-npm start              # speaks MCP over stdio
-```
+This service ships as part of `ia-tooling`. It is **opt-in** and disabled by
+default, so teams that don't use Grafana are unaffected.
 
-`GRAFANA_TOKEN` must come from `.env` (which is git-ignored) — never hardcode it.
-
-## Wiring into the TICKETS MCP session
-
-Build the image and add a `grafana` entry to the TICKETS `.mcp.json`, alongside
-`fathom` / `zendesk` / `vectordb` / `github`. It only needs HTTPS egress.
+To enable it, set the following in your `ia-tooling` `.env` (which is
+git-ignored — never hardcode the token):
 
 ```bash
-docker build -t grafana-mcp-adapter .
+GRAFANA_ENABLED=true
+GRAFANA_BASE_URL=https://your-grafana-host   # e.g. https://gravitee.grafana.net
+GRAFANA_TOKEN=...                            # service account token (see Auth above)
 ```
 
-```jsonc
-// .mcp.json (TICKETS)
-{
-  "mcpServers": {
-    "grafana": {
-      "command": "docker",
-      "args": ["run", "--rm", "-i", "--env-file", "/ABSOLUTE/PATH/TO/.env", "grafana-mcp-adapter"]
-    }
-  }
-}
-```
+Then build and start the stack as usual (`bin/local-tooling start`). Once
+`GRAFANA_ENABLED=true`, `bin/local-tooling` exposes the `grafana` MCP server
+automatically — it is added to your agent config (`.mcp.json` / Codex) just like
+`zendesk` / `vectordb` / `github`, with no manual wiring. It only needs HTTPS
+egress to the Grafana instance.
+
+`GRAFANA_LOGS_DATASOURCE_UID` is optional; it defaults to `grafanacloud-logs`,
+which is the Loki datasource uid on the Gravitee Grafana instance.

@@ -34,6 +34,11 @@ from local_tooling.docker_runtime import (
 )
 from local_tooling.env import load_env
 from local_tooling.manifest import default_profile, generate_manifest, index_repo
+from local_tooling.grafana import (
+    grafana_config_errors,
+    grafana_enabled,
+    require_grafana_config,
+)
 from local_tooling.zendesk import (
     require_zendesk_config,
     zendesk_auth_headers,
@@ -112,11 +117,20 @@ def doctor(env: dict[str, str]) -> None:
             user = me.get("user") if isinstance(me, dict) else None
             user_id = user.get("id") if isinstance(user, dict) else None
             print(f"zendesk health: ok user_id={user_id}")
+    if not grafana_enabled(env):
+        print("grafana: disabled")
+    else:
+        print("grafana: enabled")
+        grafana_errors = grafana_config_errors(env)
+        if grafana_errors:
+            warnings.extend(grafana_errors)
     if warnings:
         print("Warnings:")
         for warning in warnings:
             print(f"- {warning}")
         if zendesk_enabled(env) and zendesk_config_errors(env):
+            raise SystemExit(1)
+        if grafana_enabled(env) and grafana_config_errors(env):
             raise SystemExit(1)
 
 
@@ -163,6 +177,9 @@ def exec_mcp(name: str, env: dict[str, str]) -> None:
     elif name == "zendesk":
         require_zendesk_config(env)
         cmd = compose_cmd("run", "--rm", "-T", "zendesk-mcp-adapter")
+    elif name == "grafana":
+        require_grafana_config(env)
+        cmd = compose_cmd("run", "--rm", "-T", "grafana-mcp-adapter")
     else:
         raise SystemExit(f"Unknown MCP server: {name}")
 
@@ -248,7 +265,9 @@ def build_parser() -> argparse.ArgumentParser:
     print_parser.add_argument("--agent", required=True, choices=["codex", "cursor", "claude"])
 
     mcp_parser = sub.add_parser("mcp")
-    mcp_parser.add_argument("name", choices=["vectordb", "github", "atlassian", "kapa", "zendesk"])
+    mcp_parser.add_argument(
+        "name", choices=["vectordb", "github", "atlassian", "kapa", "zendesk", "grafana"]
+    )
 
     zendesk_search_parser = sub.add_parser("zendesk-search")
     zendesk_search_parser.add_argument("--query", required=True)

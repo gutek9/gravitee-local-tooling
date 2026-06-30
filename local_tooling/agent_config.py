@@ -7,7 +7,8 @@ import tomllib
 from pathlib import Path
 
 from .files import atomic_write, backup_file
-from .paths import ENV_FILE, ROOT
+from .grafana import grafana_enabled
+from .paths import ROOT
 from .zendesk import zendesk_enabled
 
 CODEX_MARKER_START = "# >>> local-tooling managed"
@@ -92,6 +93,15 @@ command = "{cmd}"
 args = ["mcp", "zendesk"]
 enabled = true
 """.rstrip()
+    grafana_block = ""
+    if env is not None and grafana_enabled(env):
+        grafana_block = f"""
+
+[mcp_servers.grafana]
+command = "{cmd}"
+args = ["mcp", "grafana"]
+enabled = true
+""".rstrip()
     return f"""
 {CODEX_MARKER_START}
 
@@ -116,7 +126,7 @@ enabled = true
 command = "{cmd}"
 args = ["mcp", "kapa"]
 enabled = true
-{zendesk_block}
+{zendesk_block}{grafana_block}
 
 [mcp_servers.vectordb.tools.rag_health]
 approval_mode = "approve"
@@ -272,6 +282,8 @@ def mcp_json(env: dict[str, str] | None = None) -> dict[str, object]:
     }
     if env is not None and zendesk_enabled(env):
         servers["zendesk"] = {"command": cmd, "args": ["mcp", "zendesk"]}
+    if env is not None and grafana_enabled(env):
+        servers["grafana"] = {"command": cmd, "args": ["mcp", "grafana"]}
     return servers
 
 
@@ -294,6 +306,8 @@ def patch_json_mcp(path: Path, env: dict[str, str] | None = None) -> Path:
     servers.update(mcp_json(env))
     if env is not None and not zendesk_enabled(env):
         servers.pop("zendesk", None)
+    if env is not None and not grafana_enabled(env):
+        servers.pop("grafana", None)
     updated = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
     if updated != existing:
