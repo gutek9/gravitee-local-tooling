@@ -12,6 +12,7 @@ const {
   buildLogsQuery,
   buildExploreUrl,
   buildDrilldownUrl,
+  buildLineFilterToken,
   toLokiNs,
   editDistance,
   rankClientSuggestions,
@@ -225,6 +226,49 @@ test("buildDrilldownUrl: de-duplicates service_names", () => {
 
 test("buildDrilldownUrl: throws when namespace missing", () => {
   assert.throws(() => buildDrilldownUrl({ from: "now-1h", to: "now" }), /namespace is required/);
+});
+
+test("buildDrilldownUrl: line filter populates var-lineFilters, V2 stays empty", () => {
+  const url = buildDrilldownUrl({
+    namespace: "sedex-prod",
+    serviceNames: ["sedex-prod-gateway"],
+    from: "now-7d",
+    to: "now",
+    lineFilter: "An error occurs during user authentication",
+  });
+  const params = new URL(url).searchParams;
+  // key|operator|value, app's exact format: caseSensitive,0 + escaped `|=`.
+  assert.equal(
+    params.get("var-lineFilters"),
+    "caseSensitive,0|__gfp__=|An error occurs during user authentication"
+  );
+  // The in-progress single-filter var stays empty (matches the app's own links).
+  assert.equal(params.get("var-lineFilterV2"), "");
+  // Spaces must be percent/plus-encoded in the raw URL, never literal.
+  assert.ok(!/var-lineFilters=[^&]* /.test(url));
+});
+
+test("buildDrilldownUrl: no line filter leaves var-lineFilters empty", () => {
+  const url = buildDrilldownUrl({ namespace: "sedex-prod", from: "now-1h", to: "now" });
+  assert.equal(new URL(url).searchParams.get("var-lineFilters"), "");
+});
+
+// ---------------------------------------------------------------------------
+// buildLineFilterToken
+// ---------------------------------------------------------------------------
+
+test("buildLineFilterToken: empty -> empty string", () => {
+  assert.equal(buildLineFilterToken(""), "");
+  assert.equal(buildLineFilterToken(undefined), "");
+});
+
+test("buildLineFilterToken: plain substring", () => {
+  assert.equal(buildLineFilterToken("boom"), "caseSensitive,0|__gfp__=|boom");
+});
+
+test("buildLineFilterToken: escapes structural delimiters in the value", () => {
+  // A `|` or `,` in the text would otherwise be read as a part/filter separator.
+  assert.equal(buildLineFilterToken("a|b,c"), "caseSensitive,0|__gfp__=|a__gfp__b__gfc__c");
 });
 
 // ---------------------------------------------------------------------------

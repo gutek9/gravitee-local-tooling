@@ -132,7 +132,25 @@ export function buildExploreUrl({ datasourceUid, query, from, to }) {
 // filter value — it treats it as a literal and matches nothing. So we pass exact
 // service_name values: one `=` filter for a single value, or a `=~` alternation
 // (`a|b`, values regex-escaped) for several.
-export function buildDrilldownUrl({ namespace, serviceNames = [], datasourceUid = "grafanacloud-logs", from, to } = {}) {
+// The Logs Drilldown app stores committed line filters in the `var-lineFilters`
+// ad-hoc variable as `key|operator|value`, NOT as the LogQL `|= "..."`. The app
+// escapes the structural delimiters inside each part — `|` -> `__gfp__` and
+// `,` -> `__gfc__` — because it uses `|` to separate parts and `,` to separate
+// filters/labels (see grafana/logs-drilldown src/services/extensions/links.ts).
+//   key      = `caseSensitive,<index>` (or `caseInsensitive` for a `(?i)` regex)
+//   operator = the LogQL line-filter op with its pipe escaped: `|=` -> `__gfp__=`
+//   value    = the raw substring, delimiters escaped
+// We emit a single case-sensitive `|=` (contains) filter at index 0. Returning
+// the literal `caseSensitive,0,match,<text>` form (a guess) leaves the field
+// empty — this is the format the app itself round-trips.
+const GFP = (s) => String(s).replace(/\|/g, "__gfp__").replace(/,/g, "__gfc__");
+export function buildLineFilterToken(text) {
+  if (!text) return "";
+  // key | operator(`|=`) | value, each part delimiter-escaped.
+  return `caseSensitive,0|${GFP("|=")}|${GFP(text)}`;
+}
+
+export function buildDrilldownUrl({ namespace, serviceNames = [], datasourceUid = "grafanacloud-logs", from, to, lineFilter } = {}) {
   if (!namespace) throw new Error("namespace is required");
   const names = [...new Set((serviceNames || []).filter(Boolean))];
   const p = new URLSearchParams();
@@ -161,6 +179,10 @@ export function buildDrilldownUrl({ namespace, serviceNames = [], datasourceUid 
   ]) {
     p.set(k, "");
   }
+  // Apply the line filter to the committed filters var. The in-progress single
+  // filter (`var-lineFilterV2`) stays empty — that's what the app's own deep
+  // links do; committed filters live in `var-lineFilters`.
+  if (lineFilter) p.set("var-lineFilters", buildLineFilterToken(lineFilter));
   p.set("timezone", "browser");
   p.set("urlColumns", "[]");
   p.set("visualizationType", '"logs"');

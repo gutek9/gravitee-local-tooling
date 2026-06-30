@@ -292,6 +292,7 @@ server.tool(
             datasourceUid: LOGS_DATASOURCE_UID,
             from,
             to,
+            lineFilter: line_filter,
           }),
         }));
       }
