@@ -149,3 +149,21 @@ egress to the Grafana instance.
 
 `GRAFANA_LOGS_DATASOURCE_UID` is optional; it defaults to `grafanacloud-logs`,
 which is the Loki datasource uid on the Gravitee Grafana instance.
+
+## Testing
+
+Tests use Node's built-in runner — no extra framework. Run them with:
+
+```bash
+npm test          # node --test
+npm run check     # syntax-check the source files
+```
+
+The pure helpers (`helpers.js`) and the HTTP client (`grafanaClient.js`) are
+covered by `helpers.test.js` / `grafanaClient.test.js`.
+
+**Not yet covered (TODO):** the `server.js` orchestration that talks to Loki —
+`resolveNamespaces`, `suggestClients`, and the `grafana_logs_link` handler logic
+(the env auto-retry, per-namespace link grouping, and the empty-result
+`note`/`suggestions` branches). These need the Loki calls mocked; add them when
+touching that logic.
