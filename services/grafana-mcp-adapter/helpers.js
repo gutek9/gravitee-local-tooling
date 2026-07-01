@@ -6,7 +6,9 @@ import { BASE_URL } from "./grafanaClient.js";
 // and `up` alone can be thousands of series). For MCP use we collapse each series
 // to its labels + a numeric digest (count, first/last/min/max/avg). The caller can
 // always re-query a narrower expression if it needs the full time arrays.
-// TODO(enrique): tune what we keep here once the real use case is pinned down.
+// TODO: grafana_logs_search — wrap /ds/query over buildLogsQuery once real usage
+// confirms the shape (e.g. "any SSO errors in the last 10m?"). Until then,
+// grafana_query stays the generic escape hatch for reading logs/metrics.
 export function summarizeQueryResult(payload = {}, { maxSeries = 50 } = {}) {
   const out = { results: {} };
   for (const [refId, res] of Object.entries(payload.results || {})) {
