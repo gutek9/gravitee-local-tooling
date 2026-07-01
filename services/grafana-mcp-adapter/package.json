@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
-    "check": "node --check server.js grafanaClient.js helpers.js"
+    "check": "node --check server.js grafanaClient.js helpers.js server.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.5",

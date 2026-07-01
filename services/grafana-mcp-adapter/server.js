@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -135,7 +136,15 @@ const server = new McpServer({
   version: "0.1.0",
 });
 
-server.tool("grafana_health", "Read-only Grafana health/config check.", {}, async () =>
+// Registered tool handlers, keyed by tool name, so tests can invoke the tool
+// orchestration directly (with fetch stubbed) without going through the stdio
+// transport. `server.tool()` returns a registration object carrying `.handler`.
+export const tools = {};
+function registerTool(name, ...rest) {
+  tools[name] = server.tool(name, ...rest).handler;
+}
+
+registerTool("grafana_health", "Read-only Grafana health/config check.", {}, async () =>
   withToolLogging("grafana_health", {}, async () => {
     requireConfig();
     // A cheap authenticated call confirms the token works.
@@ -150,7 +159,7 @@ server.tool("grafana_health", "Read-only Grafana health/config check.", {}, asyn
   }),
 );
 
-server.tool(
+registerTool(
   "grafana_list_datasources",
   "Read-only list of configured Grafana datasources. Returns uid, name, type and " +
     "is_default. Use a datasource uid with grafana_query.",
@@ -158,7 +167,7 @@ server.tool(
   async () => withToolLogging("grafana_list_datasources", {}, async () => textResult(await listDatasources())),
 );
 
-server.tool(
+registerTool(
   "grafana_query",
   "Read-only metric/log query via Grafana's /api/ds/query. Provide the datasource " +
     "uid (from grafana_list_datasources), a raw expression (PromQL for Prometheus, " +
@@ -191,7 +200,7 @@ server.tool(
     }),
 );
 
-server.tool(
+registerTool(
   "grafana_logs_link",
   "Read-only: build a shareable Grafana logs link for a customer's logs. Discovers " +
     "which log streams match (via Loki's /series — label sets only, no log lines) so " +
@@ -348,7 +357,12 @@ async function main() {
   log("info", "MCP adapter connected", { transport: "stdio" });
 }
 
-main().catch((err) => {
-  log("error", "MCP adapter failed to start", { error: err.message, stack: err.stack });
-  process.exit(1);
-});
+// Only start the stdio transport when run as the entrypoint (`node server.js`).
+// Tests import this module to exercise the tool handlers directly, and must not
+// spin up a transport.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    log("error", "MCP adapter failed to start", { error: err.message, stack: err.stack });
+    process.exit(1);
+  });
+}

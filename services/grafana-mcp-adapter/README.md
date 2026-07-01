@@ -60,12 +60,26 @@ Pass `raw=true` to get the full (potentially very large) frames instead.
 Identify a customer/component with free text (`client='april'`,
 `component='gateway'`); it matches case-insensitively against the `service_name`
 label, which on this instance encodes both (e.g.
-`graviteeio-ae-april-rec-engine`). Returns `{ query, link_style, links, range,
-matched_count, matched_streams }`, where `matched_streams` is the list of
-`{ namespace, service_name }` label sets the selector matched (discovered via
-Loki's `/series` — no log lines are fetched). The default range is the last hour;
-widen with `from`/`to`. When nothing matches, it returns close `service_name`
-values as `suggestions` so typos like `aprl → april` surface.
+`graviteeio-ae-april-rec-engine`). Returns `{ query, link_style,
+resolved_namespaces, links, range, matched_count, matched_streams }`, where
+`matched_streams` is the list of `{ namespace, service_name }` label sets the
+selector matched (discovered via Loki's `/series` — no log lines are fetched) and
+`resolved_namespaces` is the customer's own namespace(s) the `client` resolved to
+(empty when the customer only lives in a shared namespace — see the drilldown
+section). The default range is the last hour; widen with `from`/`to`. When nothing
+matches, it returns close `service_name` values as `suggestions` so typos like
+`aprl → april` surface.
+
+Two conditional fields also appear:
+
+- `env_filter_dropped: true` — set when the query pinned the customer's namespace,
+  the `client` asked for an env (e.g. `prod`), the first `/series` discovery
+  returned nothing, and dropping the env token and retrying *did* find streams.
+  Env tokens aren't reliably in `service_name` for every tenant (some name prod
+  `plt-live`/`multitenant`), so this flags that the reported streams are the
+  customer's namespace-wide results, not env-narrowed ones.
+- `suggestions` — close `service_name` values (see above), only when the `client`
+  matched no namespace **and** no streams.
 
 #### `link_style`: Logs Drilldown (default) vs Explore
 
@@ -159,11 +173,15 @@ npm test          # node --test
 npm run check     # syntax-check the source files
 ```
 
-The pure helpers (`helpers.js`) and the HTTP client (`grafanaClient.js`) are
-covered by `helpers.test.js` / `grafanaClient.test.js`.
+Coverage:
 
-**Not yet covered (TODO):** the `server.js` orchestration that talks to Loki —
-`resolveNamespaces`, `suggestClients`, and the `grafana_logs_link` handler logic
-(the env auto-retry, per-namespace link grouping, and the empty-result
-`note`/`suggestions` branches). These need the Loki calls mocked; add them when
-touching that logic.
+- `helpers.test.js` — the pure helpers (`helpers.js`).
+- `grafanaClient.test.js` — the HTTP client (`grafanaClient.js`): config
+  validation, auth headers, param handling.
+- `server.test.js` — the `server.js` orchestration that talks to Loki, with
+  `fetch` stubbed per Loki endpoint: `grafana_logs_link`'s namespace resolution,
+  per-namespace drilldown grouping, the `explore_url` fallback, the env
+  auto-retry, and the empty-result `note`/`suggestions` branches, plus
+  `grafana_query`'s digest-vs-`raw` output. `server.js` only starts the stdio
+  transport when run as the entrypoint, so tests import it and invoke the
+  registered tool handlers directly (via the exported `tools` map).
