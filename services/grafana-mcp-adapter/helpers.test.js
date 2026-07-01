@@ -10,6 +10,7 @@ const {
   summarizeQueryResult,
   escapeRegex,
   buildLogsQuery,
+  buildExactLogsQuery,
   buildExploreUrl,
   buildDrilldownUrl,
   buildLineFilterToken,
@@ -175,6 +176,53 @@ test("buildLogsQuery: namespace-pinned, no component/env -> service_name matcher
   // Nothing left to narrow by inside the namespace: emit only the namespace pin,
   // not an empty `service_name=~"(?i).*.*"`.
   assert.equal(buildLogsQuery({ client: "april", namespaces: ["april-prod"] }), '{namespace=~"^april-prod$"}');
+});
+
+// ---------------------------------------------------------------------------
+// buildExactLogsQuery
+// ---------------------------------------------------------------------------
+
+test("buildExactLogsQuery: single service_name -> exact `=` matchers", () => {
+  assert.equal(
+    buildExactLogsQuery({ namespace: "ghd-prod", serviceNames: ["graviteeio-apim3-gateway"] }),
+    '{namespace="ghd-prod", service_name="graviteeio-apim3-gateway"}',
+  );
+});
+
+test("buildExactLogsQuery: multiple service_names -> `=~` alternation, regex-escaped", () => {
+  assert.equal(
+    buildExactLogsQuery({
+      namespace: "ghd-prod",
+      serviceNames: ["graviteeio-apim-ghd-prod-apim3-gateway", "graviteeio-apim3-gateway"],
+    }),
+    '{namespace="ghd-prod", service_name=~"graviteeio-apim-ghd-prod-apim3-gateway|graviteeio-apim3-gateway"}',
+  );
+});
+
+test("buildExactLogsQuery: line_filter appends a backtick `|=` filter, stripping backticks", () => {
+  assert.equal(
+    buildExactLogsQuery({
+      namespace: "ghd-prod",
+      serviceNames: ["graviteeio-apim3-gateway"],
+      lineFilter: "ConnectTimeoutException",
+    }),
+    '{namespace="ghd-prod", service_name="graviteeio-apim3-gateway"} |= `ConnectTimeoutException`',
+  );
+});
+
+test("buildExactLogsQuery: no service_names -> namespace-only selector", () => {
+  assert.equal(buildExactLogsQuery({ namespace: "ghd-prod" }), '{namespace="ghd-prod"}');
+});
+
+test("buildExactLogsQuery: dedupes service_names", () => {
+  assert.equal(
+    buildExactLogsQuery({ namespace: "ghd-prod", serviceNames: ["a", "a"] }),
+    '{namespace="ghd-prod", service_name="a"}',
+  );
+});
+
+test("buildExactLogsQuery: throws when namespace missing", () => {
+  assert.throws(() => buildExactLogsQuery({ serviceNames: ["a"] }), /namespace is required/);
 });
 
 // ---------------------------------------------------------------------------

@@ -159,6 +159,25 @@ export function buildLogsQuery({ client, component, lineFilter, namespaces } = {
   return lineFilter ? `${selector} |= \`${lineFilter.replace(/`/g, "")}\`` : selector;
 }
 
+// Build an EXACT LogQL query for one namespace scoped to the precise
+// service_name values discovered via /series (not the free-text regex selector).
+// Used for the Explore fallback attached to each drilldown link: Explore honours
+// the `|=` line filter on load, whereas the Logs Drilldown app leaves a
+// pre-filled var-lineFilters in the box without applying it. `=` for a single
+// service_name, `=~` alternation (values regex-escaped) for several.
+export function buildExactLogsQuery({ namespace, serviceNames = [], lineFilter } = {}) {
+  if (!namespace) throw new Error("namespace is required");
+  const names = [...new Set((serviceNames || []).filter(Boolean))];
+  const matchers = [`namespace="${namespace}"`];
+  if (names.length === 1) {
+    matchers.push(`service_name="${names[0]}"`);
+  } else if (names.length > 1) {
+    matchers.push(`service_name=~"${names.map(escapeRegex).join("|")}"`);
+  }
+  const selector = `{${matchers.join(", ")}}`;
+  return lineFilter ? `${selector} |= \`${lineFilter.replace(/`/g, "")}\`` : selector;
+}
+
 // Build a permanent Grafana Explore deep link for a Loki query + time range.
 // Grafana 11+ (this instance is 13.x) reads a `panes` param: an object keyed by
 // an arbitrary pane id, each holding the datasource, queries and range. The old
