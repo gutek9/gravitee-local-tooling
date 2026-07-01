@@ -144,11 +144,11 @@ def exec_mcp(name: str, env: dict[str, str]) -> None:
             "--read-only",
         ]
     elif name == "atlassian":
-        url = env.get("ATLASSIAN_MCP_URL", "https://mcp.atlassian.com/v1/sse")
+        url = env.get("ATLASSIAN_MCP_URL", "https://mcp.atlassian.com/v1/mcp")
         site = env.get("ATLASSIAN_SITE_URL", "")
         cmd = ["npx", "-y", "mcp-remote@latest", url]
         if site:
-            cmd.extend(["--transport", "sse-only", "--resource", site])
+            cmd.extend(["--transport", "http-first", "--resource", site])
     elif name == "kapa":
         url = env.get("KAPA_REMOTE_MCP_URL", "")
         if not url:
