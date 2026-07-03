@@ -72,6 +72,21 @@ test("summarizeQueryResult: slices to maxSeries and reports truncated count", ()
   assert.equal(out.results.A.truncated, 3);
 });
 
+test("summarizeQueryResult: digests a large series without overflowing the stack", () => {
+  // A wide metric query can return 100k+ points. min/max must NOT be computed via
+  // Math.min(...values) — spreading that many args throws a RangeError.
+  const N = 200000;
+  const values = Array.from({ length: N }, (_, i) => i);
+  const out = summarizeQueryResult({ results: { A: { frames: [frame({}, values)] } } });
+  const d = out.results.A.series[0];
+  assert.equal(d.count, N);
+  assert.equal(d.min, 0);
+  assert.equal(d.max, N - 1);
+  assert.equal(d.first, 0);
+  assert.equal(d.last, N - 1);
+  assert.equal(d.avg, (N - 1) / 2);
+});
+
 test("summarizeQueryResult: tolerates missing results / frames", () => {
   assert.deepEqual(summarizeQueryResult(), { results: {} });
   assert.deepEqual(summarizeQueryResult({ results: { A: {} } }).results.A, {

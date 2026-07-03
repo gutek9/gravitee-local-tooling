@@ -20,14 +20,25 @@ export function summarizeQueryResult(payload = {}, { maxSeries = 50 } = {}) {
       const labels = valueFieldIdx >= 0 ? fields[valueFieldIdx]?.labels || {} : {};
       const values = (frame?.data?.values?.[valueFieldIdx] || []).filter((v) => typeof v === "number");
       const count = values.length;
+      // Fold min/max/sum in a single pass. NOT Math.min(...values): spreading a
+      // large series (metric queries can return 100k+ points — the very reason
+      // this digest exists) overflows the call stack with a RangeError.
+      let min = values[0];
+      let max = values[0];
+      let sum = 0;
+      for (const v of values) {
+        if (v < min) min = v;
+        if (v > max) max = v;
+        sum += v;
+      }
       const digest = count
         ? {
             count,
             first: values[0],
             last: values[count - 1],
-            min: Math.min(...values),
-            max: Math.max(...values),
-            avg: values.reduce((a, b) => a + b, 0) / count,
+            min,
+            max,
+            avg: sum / count,
           }
         : { count: 0 };
       series.push({ labels, ...digest });
