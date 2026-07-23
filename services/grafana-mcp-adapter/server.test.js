@@ -287,13 +287,20 @@ test("grafana_query: returns the per-series digest by default and raw frames wit
     },
   };
   const origFetch = globalThis.fetch;
-  globalThis.fetch = () =>
-    Promise.resolve({
+  globalThis.fetch = (url) => {
+    // assertReadOnly resuelve primero el type del uid; respondemos esa llamada con
+    // un type read-only (pasa el guardián) y la de /ds/query con los frames.
+    const body = String(url).includes("/datasources/uid/")
+      ? { uid: "ds", name: "test prometheus", type: "prometheus" }
+      : payload;
+    return Promise.resolve({
       ok: true,
       status: 200,
-      text: () => Promise.resolve(JSON.stringify(payload)),
+      text: () => Promise.resolve(JSON.stringify(body)),
       headers: { get: () => null },
     });
+  };
+
   try {
     const digest = await callTool("grafana_query", { datasource_uid: "ds", expr: "up" });
     assert.equal(digest.results.A.series_count, 1);
@@ -314,3 +321,62 @@ test("grafana_query: returns the per-series digest by default and raw frames wit
     globalThis.fetch = origFetch;
   }
 });
+
+
+// ---------------------------------------------------------------------------
+// grafana_query read-only guard (comentario #1 de gutek): solo types allowlisted
+// ---------------------------------------------------------------------------
+
+test("grafana_query: rejects a datasource whose type is not in the read-only allowlist", async () => {
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = (url) => {
+    calls.push(String(url));
+    // El uid resuelve a un type que SÍ escribe; el guardián debe denegar antes de consultar.
+    const body = String(url).includes("/datasources/uid/")
+      ? { uid: "am", name: "Alertmanager", type: "alertmanager" }
+      : { results: {} };
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify(body)),
+      headers: { get: () => null },
+    });
+  };
+  try {
+    await assert.rejects(
+      () => tools.grafana_query({ datasource_uid: "am", expr: "up" }, {}),
+      /not in the read-only allowlist/,
+    );
+    // Clave: corta ANTES de hacer POST a /ds/query.
+    assert.ok(!calls.some((u) => u.includes("/ds/query")), "must not query a non-read-only datasource");
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+
+
+test("grafana_query: fails closed when the datasource cannot be resolved", async () => {
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = (url) => {
+    calls.push(String(url));
+    // La resolución del uid falla (uid desconocido -> 403). Se deniega igualmente.
+    return Promise.resolve({
+      ok: false,
+      status: 403,
+      text: () => Promise.resolve(""),
+      headers: { get: () => null },
+    });
+  };
+  try {
+    await assert.rejects(
+      () => tools.grafana_query({ datasource_uid: "nope", expr: "up" }, {}),
+      /could not be verified read-only/,
+    );
+    assert.ok(!calls.some((u) => u.includes("/ds/query")), "must not query when the type is unknown");
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+

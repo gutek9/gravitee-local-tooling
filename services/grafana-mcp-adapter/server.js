@@ -26,6 +26,11 @@ import {
 // Loki datasource uid for the logs tools. Override per-instance via env.
 const LOGS_DATASOURCE_UID = process.env.GRAFANA_LOGS_DATASOURCE_UID || "grafanacloud-logs";
 
+// Allow list of read-only datasource types. 
+// PromQL/LogQL have no write statements.
+const READONLY_QUERY_TYPES = new Set(["prometheus", "loki"]);
+
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -35,6 +40,31 @@ function textResult(value) {
     content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }],
   };
 }
+
+// Given a datasource uid, verify it is read-only against the allowlist defined by READONLY_QUERY_TYPES. 
+// Throws if not allowed or not found. Returns the datasource's uid, name and type.
+async function assertReadOnly(uid) {
+  if (typeof uid !== "string" || uid.trim() === "") {
+    throw new Error("datasource_uid is required");
+  }
+
+  let ds;
+  try {
+    ds = await grafanaGet(`/datasources/uid/${encodeURIComponent(uid)}`);
+  } catch (err) {
+    throw new Error(`datasource "${uid}" could not be verified read-only: ${err.message}`);
+  }
+
+  const type = ds?.type ?? null;
+  if (!type || !READONLY_QUERY_TYPES.has(type)) {
+    throw new Error(
+      `datasource "${uid}" (type "${type ?? "unknown"}") is not in the read-only allowlist ${JSON.stringify([...READONLY_QUERY_TYPES])}`
+    )
+  }
+
+  return { uid: ds.uid ?? uid, name: ds.name ?? null, type };
+}
+
 
 async function listDatasources() {
   const items = await grafanaGet("/datasources");
@@ -49,6 +79,7 @@ async function listDatasources() {
     })),
   };
 }
+
 
 // Discover which log streams match a selector WITHOUT pulling any log lines.
 // Loki's /series returns just the label sets of the matching streams (one object
@@ -173,7 +204,9 @@ registerTool(
     "uid (from grafana_list_datasources), a raw expression (PromQL for Prometheus, " +
     "LogQL for Loki, etc.), and an optional time range. By default returns a compact " +
     "per-series digest (labels + count/first/last/min/max/avg); pass raw=true for the " +
-    "full (potentially very large) frames.",
+    "full (potentially very large) frames. Only datasources whose query language is " +
+    `read-only are allowed (types: ${[...READONLY_QUERY_TYPES].join(", ")}); a uid of ` +
+    "any other type is rejected.",
   {
     datasource_uid: z.string().describe("Datasource uid from grafana_list_datasources."),
     expr: z.string().describe("Query expression (PromQL/LogQL/etc.)."),
@@ -184,6 +217,7 @@ registerTool(
   },
   async ({ datasource_uid, expr, from = "now-1h", to = "now", max_data_points = 1000, raw = false }) =>
     withToolLogging("grafana_query", { datasource_uid }, async () => {
+      await assertReadOnly(datasource_uid);
       const payload = await grafanaPost("/ds/query", {
         from,
         to,
