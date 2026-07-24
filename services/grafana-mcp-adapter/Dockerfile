@@ -2,8 +2,8 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-COPY package.json /app/package.json
-RUN npm install --omit=dev
+COPY package.json package-lock.json /app/
+RUN npm ci --omit=dev
 
 COPY server.js /app/server.js
 COPY grafanaClient.js /app/grafanaClient.js
