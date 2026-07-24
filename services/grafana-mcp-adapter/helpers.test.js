@@ -87,6 +87,30 @@ test("summarizeQueryResult: digests a large series without overflowing the stack
   assert.equal(d.avg, (N - 1) / 2);
 });
 
+test("summarizeQueryResult: wide frame emits one digest per numeric field", () => {
+  // A single Grafana frame can carry several numeric fields (one per series).
+  // Every numeric field must produce its own digest — not just the first.
+  const wide = {
+    schema: {
+      fields: [
+        { type: "time" },
+        { type: "number", labels: { series: "a" } },
+        { type: "number", labels: { series: "b" } },
+      ],
+    },
+    data: { values: [[0, 1, 2], [2, 4, 6], [10, 20, 30]] },
+  };
+  const out = summarizeQueryResult({ results: { A: { status: 200, frames: [wide] } } });
+  assert.equal(out.results.A.series_count, 2);
+  assert.deepEqual(out.results.A.series[0], {
+    labels: { series: "a" }, count: 3, first: 2, last: 6, min: 2, max: 6, avg: 4,
+  });
+  assert.deepEqual(out.results.A.series[1], {
+    labels: { series: "b" }, count: 3, first: 10, last: 30, min: 10, max: 30, avg: 20,
+  });
+});
+
+
 test("summarizeQueryResult: tolerates missing results / frames", () => {
   assert.deepEqual(summarizeQueryResult(), { results: {} });
   assert.deepEqual(summarizeQueryResult({ results: { A: {} } }).results.A, {

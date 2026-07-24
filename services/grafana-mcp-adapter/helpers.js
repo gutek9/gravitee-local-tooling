@@ -14,35 +14,39 @@ export function summarizeQueryResult(payload = {}, { maxSeries = 50 } = {}) {
   for (const [refId, res] of Object.entries(payload.results || {})) {
     const frames = Array.isArray(res?.frames) ? res.frames : [];
     const series = [];
+
     for (const frame of frames) {
-      const fields = frame?.schema?.fields || [];
-      const valueFieldIdx = fields.findIndex((f) => f?.type === "number");
-      const labels = valueFieldIdx >= 0 ? fields[valueFieldIdx]?.labels || {} : {};
-      const values = (frame?.data?.values?.[valueFieldIdx] || []).filter((v) => typeof v === "number");
-      const count = values.length;
-      // Fold min/max/sum in a single pass. NOT Math.min(...values): spreading a
-      // large series (metric queries can return 100k+ points — the very reason
-      // this digest exists) overflows the call stack with a RangeError.
-      let min = values[0];
-      let max = values[0];
-      let sum = 0;
-      for (const v of values) {
-        if (v < min) min = v;
-        if (v > max) max = v;
-        sum += v;
+      const fields = frame?.schema?.fields || []; //Obtengo los campos del esquema
+      //Esquema en formato wide  -> { "field1": [value1, value2], "field2": [value1, value2] }
+      for (let idx = 0; idx < fields.length; idx++) {
+        if (fields[idx]?.type !== "number") continue; //No es number -> no lo incluyo
+        const labels = fields[idx]?.labels  || {};
+        const values = (frame?.data?.values?.[idx] || []).filter((v) => typeof v === "number"); //Filtrar solo números para los values.
+        const count = values.length;
+        // Hago un resumen de las series
+        // No uso Math.min/max/sum para evitar error por la cantidad de datos potencialmente grande
+        let min = values[0];
+        let max = values[0];
+        let sum = 0;
+        for (const v of values){
+          if (v < min) min = v;
+          if (v > max) max = v;
+          sum += v;
+        }
+        const digest = count
+          ? {
+              count,
+              first: values[0],
+              last: values[count - 1],
+              min,
+              max,
+              avg: sum / count,
+            }
+          : { count: 0 };
+        series.push({ labels, ...digest });
       }
-      const digest = count
-        ? {
-            count,
-            first: values[0],
-            last: values[count - 1],
-            min,
-            max,
-            avg: sum / count,
-          }
-        : { count: 0 };
-      series.push({ labels, ...digest });
     }
+
     out.results[refId] = {
       status: res?.status ?? null,
       series_count: series.length,
