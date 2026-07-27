@@ -93,6 +93,42 @@ CODE_REPO=/path/to/the/code-repo-you-work-on
 This writes workflow rules into the target code repo, for example
 `.cursor/rules/local-tooling.mdc`.
 
+## Dockerized Ollama (optional)
+
+The default `EMBEDDING_BACKEND=mock` is only meant for first-time plumbing
+tests: its embeddings carry no semantic meaning, so vector search quality is
+poor. For real semantic search, switch to Ollama.
+
+If you prefer keeping everything in Docker instead of installing Ollama on the
+host, enable the optional `ollama` service:
+
+```bash
+# In .env
+EMBEDDING_BACKEND=ollama
+OLLAMA_URL=http://ollama:11434
+COMPOSE_PROFILES=ollama
+```
+
+```bash
+./bin/local-tooling start
+docker exec local-tooling-ollama ollama pull nomic-embed-text
+```
+
+Then re-index so existing chunks get real embeddings:
+
+```bash
+CODE_REPO=/path/to/the/code-repo-you-work-on
+./bin/local-tooling setup --agents all --repo "$CODE_REPO" --bootstrap
+```
+
+Notes:
+
+- `nomic-embed-text` produces 768-dim vectors, matching the default
+  `EMBEDDING_DIM=768`, so no schema change is needed.
+- Inside Docker, Ollama runs CPU-only on macOS/Windows. A host install
+  (`OLLAMA_URL=http://host.docker.internal:11434`) uses the GPU and is faster
+  for bulk indexing; both options are otherwise equivalent.
+
 ## Upgrade
 
 Existing users can update with the same flow as the initial setup. This keeps

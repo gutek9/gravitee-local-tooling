@@ -73,5 +73,24 @@ services:
         condition: service_started
     stdin_open: true
 
+  # Optional dockerized Ollama for local embeddings. Disabled by default.
+  # Enable with COMPOSE_PROFILES=ollama and OLLAMA_URL=http://ollama:11434,
+  # then pull the embedding model once:
+  #   docker exec local-tooling-ollama ollama pull nomic-embed-text
+  # Note: inside Docker, Ollama runs CPU-only on macOS/Windows. Install Ollama
+  # on the host instead if you want GPU acceleration.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: local-tooling-ollama
+    profiles: ["ollama"]
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
 volumes:
   vectordb_pgdata:
+  ollama_models:

@@ -360,6 +360,27 @@ class LocalToolingTest(unittest.TestCase):
             self.assertTrue(rule.exists())
             self.assertIn("local-tooling context", rule.read_text(encoding="utf-8"))
 
+    def test_compose_ollama_service_is_profile_gated(self) -> None:
+        compose = (Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text(encoding="utf-8")
+
+        # The optional ollama service must exist and stay behind the "ollama"
+        # profile so default deployments are unchanged.
+        self.assertIn("\n  ollama:", compose)
+        self.assertIn('profiles: ["ollama"]', compose)
+
+        # Its model cache volume must be declared at the top level.
+        self.assertRegex(compose, r"volumes:\n(.*\n)*  ollama_models:")
+
+        # No default service may depend on the profiled service, which would
+        # break `docker compose up` when the profile is inactive.
+        self.assertNotRegex(compose, r"depends_on:\n(\s+- ollama\b|\s+ollama:)")
+
+    def test_env_example_documents_dockerized_ollama(self) -> None:
+        env_example = (Path(__file__).resolve().parents[1] / ".env.example").read_text(encoding="utf-8")
+
+        self.assertIn("COMPOSE_PROFILES=", env_example)
+        self.assertIn("http://ollama:11434", env_example)
+
 
 if __name__ == "__main__":
     unittest.main()
