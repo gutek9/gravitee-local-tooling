@@ -352,11 +352,13 @@ def install_agent_rules(repo: Path, agents: list[str]) -> None:
 
 Use local-tooling as a workflow assistant, not as the only source of truth.
 
-- Start non-trivial Jira/code/debug tasks with `local-tooling context --repo <this repo> --task "<task>"` or the `rag_prepare_task` MCP tool.
+- For every non-trivial task, call the `rag_prepare_task` MCP tool before analysis or edits (hybrid=true; limit at least 8 for broad work). Use `rag_search` when more context is needed.
+- `local-tooling context --repo <this repo> --task "<task>"` is optional for manual inspection or a session receipt; it does not replace the MCP call.
 - Treat RAG results as orientation only; verify useful hits in current repo files before editing.
-- Before final answers or commits, run `local-tooling review-change --repo <this repo>`.
-- If the task produced reusable knowledge, run `local-tooling learn --repo <this repo> --task "<task>" --summary-file <file>`.
-- If there is no reusable knowledge, record an explicit skip reason with `local-tooling learn --repo <this repo> --task "<task>" --skip "<reason>"`.
+- Before browser access or web search for a target service, check available MCP tools and use a suitable one first. Use the browser only if MCP cannot perform the operation or fails.
+- Before final answers or commits, run `local-tooling review-change --repo <this repo>`. It may warn about missing CLI receipts even when MCP was used.
+- If the task produced reusable non-sensitive knowledge, call `rag_ingest` and verify retrieval with `rag_search`. Never ingest secrets, credentials, or personal data.
+- `local-tooling learn --repo <this repo> --task "<task>" --summary-file <file>` is optional for a local learning receipt; use `--skip "<reason>"` to record no reusable learning.
 - For production changes, add focused tests or explain why existing coverage is sufficient.
 """
     written: list[Path] = []

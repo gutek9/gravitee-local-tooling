@@ -23,6 +23,7 @@ It packages:
 - read/search Atlassian MCP wiring
 - Kapa MCP wiring
 - optional read-only Zendesk MCP wiring and ticket indexing
+- optional read-only Grafana MCP wiring for datasource queries and log links
 - local repo bootstrap indexing, generated on each developer machine
 - lightweight task sessions for context, review, and reusable learning
 
@@ -76,12 +77,12 @@ Configure yourself using the local-tooling repo and run doctor.
 After setup, use Codex, Cursor, or Claude normally.
 
 For a non-trivial task, describe the work to your agent as usual. The agent
-should first gather relevant context with `rag_prepare_task`, then verify useful
+must first gather relevant context with `rag_prepare_task`, then verify useful
 results in the current repository before relying on them.
 
 You do not need to manually run `local-tooling context` for every task. It
-remains available as an optional CLI alternative when you want to inspect or
-record a context search yourself.
+remains available when you want to inspect or record a context search yourself;
+it does not replace the agent's MCP workflow.
 
 Optional, recommended for Cursor users:
 
@@ -95,8 +96,13 @@ This writes workflow rules into the target code repo, for example
 
 ## Upgrade
 
-Existing users can update with the same flow as the initial setup. This keeps
-the local vectordb volume and rebuilds only the service images/configuration.
+Existing users can update with the same flow as the initial setup. The commands
+below keep the local vectordb volume, rebuild the service images, update agent
+configuration, regenerate the manifest, and re-index the target repository.
+When Zendesk is enabled, `--bootstrap` also re-indexes tickets matching
+`ZENDESK_INDEX_DEFAULT_QUERY`. After `git pull`, compare `.env.example` with
+your existing `.env` and add any settings you need; setup does not rewrite
+`.env`.
 
 Generic upgrade:
 
@@ -180,6 +186,15 @@ The default profile indexes high-signal repo context:
 
 The `gravitee-apim` profile adds APIM-specific module rules and higher-signal Java/Angular patterns.
 
+`EMBEDDING_BACKEND=mock` is the default. It computes deterministic embeddings
+locally, which is useful for checking the pipeline but gives limited semantic
+search quality. `ollama` sends text chunks to the configured `OLLAMA_URL`
+(normally Ollama on the developer's machine). `openai-compatible` sends indexed
+text chunks and search queries to the configured `EMBEDDING_BASE_URL`
+`/embeddings` endpoint; use it only for content approved for that destination.
+After changing the backend, rerun `setup --bootstrap` to apply the setting and
+re-index the target repository. Re-index any other ingested sources separately.
+
 Generated manifests are written to `manifests/generated/`. Reports are written to `reports/`.
 
 ## Zendesk
@@ -210,21 +225,37 @@ Zendesk commands:
 Indexed tickets are stored in vectordb with sources such as
 `zendesk/your-subdomain` and paths such as `tickets/12345`.
 
+## Grafana
+
+The read-only Grafana MCP adapter is disabled by default. To enable it, set
+`GRAFANA_ENABLED=true`, `GRAFANA_BASE_URL`, and a read-only service account
+`GRAFANA_TOKEN` in `.env`. Rerun `setup` with your usual `--agents` and `--repo`
+values to add the adapter to agent configuration, then restart the agent.
+It exposes datasource queries and links to matching logs. See the
+[Grafana adapter guide](services/grafana-mcp-adapter/README.md) for the tools,
+optional Loki datasource UID, and token setup.
+
 ## Context-aware task workflow
 
 The normal entry point is your AI coding assistant: Codex, Cursor, or Claude.
-For non-trivial Jira, debugging, or code-change tasks, the agent should use the
-`rag_prepare_task` MCP tool first. RAG results provide orientation only; the
-agent must verify relevant hits against current repository files and applicable
-repository instructions before proposing or editing code.
+For every non-trivial task, the agent must use the `rag_prepare_task` MCP tool
+before analysis or edits (hybrid retrieval, with a limit of at least 8 for broad
+work). If the initial context is incomplete, use `rag_search` to refine it.
+RAG results provide orientation only; verify relevant hits against current
+repository files and applicable repository instructions before acting.
 
-The workflow is intentionally advisory by default. It improves context gathering
-without blocking simple local development.
+Before accessing a target service through a browser or web search, check the
+available MCP tools and use a suitable one first. Use the browser when the MCP
+tool is unavailable, lacks the needed operation, or fails.
+
+For reusable non-sensitive knowledge, call `rag_ingest` and verify it with
+`rag_search`. Never ingest secrets, credentials, or personal data.
 
 ### Optional manual CLI workflow
 
 Use this when you want to inspect the retrieved context or deliberately create
-a local session receipt. It is not required for normal agent-driven work.
+a local session receipt. It is not required for normal agent-driven work and
+does not replace `rag_prepare_task` for the agent.
 
 ```bash
 CODE_REPO=/path/to/the/code-repo-you-work-on
@@ -249,6 +280,8 @@ CODE_REPO=/path/to/the/code-repo-you-work-on
 
 By default this is warning-only. Use `--strict` only when you want it to fail on
 missing context, missing test changes for production edits, or missing learning.
+It checks local session receipts, so it may warn about missing context or
+learning receipts even when the agent used MCP directly.
 
 When the task produced reusable knowledge, you can save it:
 
@@ -273,7 +306,11 @@ CODE_REPO=/path/to/the/code-repo-you-work-on
 
 ## Safety defaults
 
-GitHub and Atlassian are configured as read-only by default. Mutating tools such as creating PRs, editing Jira issues, adding comments, or merging PRs are disabled in generated agent config. Zendesk only exposes read-only tools and local vectordb ingestion.
+GitHub and Atlassian are configured as read-only by default. Mutating tools such
+as creating PRs, editing Jira issues, adding comments, or merging PRs are
+disabled in generated agent config. Zendesk only exposes read-only tools and
+local vectordb ingestion. Grafana is disabled by default and its adapter exposes
+read-only tools when enabled.
 
 If you need write-capable tools, add them explicitly after reviewing `docs/security.md`.
 
@@ -300,4 +337,5 @@ flowchart TD
     G --> J["Kapa MCP"]
     G --> L["Zendesk MCP read-only"]
     L --> E
+    G --> M["Grafana MCP read-only"]
 ```

@@ -143,10 +143,10 @@ fetched; open a link to read the logs in Grafana.
 
 ## Setup
 
-This service ships as part of `ia-tooling`. It is **opt-in** and disabled by
+This service ships as part of `local-tooling`. It is **opt-in** and disabled by
 default, so teams that don't use Grafana are unaffected.
 
-To enable it, set the following in your `ia-tooling` `.env` (which is
+To enable it, set the following in your `local-tooling` `.env` (which is
 git-ignored — never hardcode the token):
 
 ```bash
@@ -155,9 +155,9 @@ GRAFANA_BASE_URL=https://your-grafana-host   # e.g. https://gravitee.grafana.net
 GRAFANA_TOKEN=...                            # service account token (see Auth above)
 ```
 
-Then build and start the stack as usual (`bin/local-tooling start`). Once
-`GRAFANA_ENABLED=true`, `bin/local-tooling` exposes the `grafana` MCP server
-automatically — it is added to your agent config (`.mcp.json` / Codex) just like
+Then rerun `bin/local-tooling setup` with your usual `--agents` and `--repo`
+values, and restart the agent. With `GRAFANA_ENABLED=true`, setup adds the
+`grafana` MCP server to your agent config (`.mcp.json` / Codex) just like
 `zendesk` / `vectordb` / `github`, with no manual wiring. It only needs HTTPS
 egress to the Grafana instance.
 
