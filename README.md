@@ -33,7 +33,7 @@ Run these commands from the `local-tooling` repository. `CODE_REPO` must point
 to the working code repository the developer wants the agent to understand and
 work on. It is not the path to `local-tooling`.
 
-Generic setup:
+Setup:
 
 ```bash
 cd /path/to/local-tooling
@@ -49,19 +49,6 @@ cp .env.example .env
 CODE_REPO=/path/to/the/code-repo-you-work-on
 
 ./bin/local-tooling setup --agents all --repo "$CODE_REPO" --bootstrap
-```
-
-`gravitee-api-management` setup:
-
-```bash
-cd /path/to/local-tooling
-
-cp .env.example .env
-# Edit .env before continuing.
-
-CODE_REPO=/path/to/gravitee-api-management
-
-./bin/local-tooling setup --agents all --repo "$CODE_REPO" --profile gravitee-apim --bootstrap
 ```
 
 Then restart Codex, Cursor, or Claude if they were already running.
@@ -104,7 +91,7 @@ When Zendesk is enabled, `--bootstrap` also re-indexes tickets matching
 your existing `.env` and add any settings you need; setup does not rewrite
 `.env`.
 
-Generic upgrade:
+Upgrade:
 
 ```bash
 cd /path/to/local-tooling
@@ -114,18 +101,6 @@ CODE_REPO=/path/to/the/code-repo-you-work-on
 
 ./bin/local-tooling stop
 ./bin/local-tooling setup --agents all --repo "$CODE_REPO" --bootstrap
-```
-
-`gravitee-api-management` upgrade:
-
-```bash
-cd /path/to/local-tooling
-git pull
-
-CODE_REPO=/path/to/gravitee-api-management
-
-./bin/local-tooling stop
-./bin/local-tooling setup --agents all --repo "$CODE_REPO" --profile gravitee-apim --bootstrap
 ```
 
 If the target repo should receive/update the optional Cursor workflow rules, run:
@@ -151,8 +126,8 @@ CODE_REPO=/path/to/the/code-repo-you-work-on
 ./bin/local-tooling start
 ./bin/local-tooling stop
 ./bin/local-tooling doctor
-./bin/local-tooling manifest --repo "$CODE_REPO" --profile default
-./bin/local-tooling index --repo "$CODE_REPO" --profile default
+./bin/local-tooling manifest --repo "$CODE_REPO"
+./bin/local-tooling index --repo "$CODE_REPO"
 ./bin/local-tooling install-agent-rules --repo "$CODE_REPO" --agents cursor
 ./bin/local-tooling print-config --agent codex
 ```
@@ -162,18 +137,17 @@ Optional task-session commands:
 ```bash
 CODE_REPO=/path/to/the/code-repo-you-work-on
 
-./bin/local-tooling context --repo "$CODE_REPO" --task "APIM-12345 ..."
+./bin/local-tooling context --repo "$CODE_REPO" --task "TASK-123 ..."
 ./bin/local-tooling review-change --repo "$CODE_REPO"
-./bin/local-tooling learn --repo "$CODE_REPO" --task "APIM-12345 ..." --summary-file learning.md
+./bin/local-tooling learn --repo "$CODE_REPO" --task "TASK-123 ..." --summary-file learning.md
 ```
 
 ## Bootstrap indexing
 
 Bootstrap indexing does not transfer a database. It generates a local manifest from files the developer already has access to, then ingests those files into their local vectordb.
 
-The `--repo` value controls what gets indexed. For example, if a developer works
-on `gravitee-api-management`, `--repo` should be the absolute path to their local
-checkout of `gravitee-api-management`.
+The `--repo` value controls what gets indexed. Pass the absolute path to the
+local checkout of the repository you want the agent to work on.
 
 The default profile indexes high-signal repo context:
 
@@ -182,9 +156,10 @@ The default profile indexes high-signal repo context:
 - README and contributor docs
 - build/package manifests
 - selected docs
-- selected source and test files
+- selected Java and TypeScript source and test files
 
-The `gravitee-apim` profile adds APIM-specific module rules and higher-signal Java/Angular patterns.
+The CLI selects an indexing profile for the target repository automatically.
+Use `--profile` to override that choice.
 
 `EMBEDDING_BACKEND=mock` is the default. It computes deterministic embeddings
 locally, which is useful for checking the pipeline but gives limited semantic
@@ -217,10 +192,12 @@ matching `ZENDESK_INDEX_DEFAULT_QUERY`.
 Zendesk commands:
 
 ```bash
-./bin/local-tooling zendesk-search --query "type:ticket tag:apim"
-./bin/local-tooling zendesk-index --query "type:ticket tag:apim updated>2026-01-01"
+./bin/local-tooling zendesk-search --query "type:ticket tag:example"
+./bin/local-tooling zendesk-index --query "type:ticket tag:example updated>2026-01-01"
 ./bin/local-tooling zendesk-index --ticket-id 12345
 ```
+
+Replace `example` with a tag used by your team.
 
 Indexed tickets are stored in vectordb with sources such as
 `zendesk/your-subdomain` and paths such as `tickets/12345`.
@@ -259,7 +236,7 @@ does not replace `rag_prepare_task` for the agent.
 
 ```bash
 CODE_REPO=/path/to/the/code-repo-you-work-on
-./bin/local-tooling context --repo "$CODE_REPO" --task "APIM-12345 short task summary"
+./bin/local-tooling context --repo "$CODE_REPO" --task "TASK-123 short task summary"
 ```
 
 This queries vectordb and writes a context receipt under:
@@ -287,14 +264,14 @@ When the task produced reusable knowledge, you can save it:
 
 ```bash
 CODE_REPO=/path/to/the/code-repo-you-work-on
-./bin/local-tooling learn --repo "$CODE_REPO" --task "APIM-12345" --summary-file learning.md
+./bin/local-tooling learn --repo "$CODE_REPO" --task "TASK-123" --summary-file learning.md
 ```
 
 If there is nothing useful to remember, record that explicitly without ingesting:
 
 ```bash
 CODE_REPO=/path/to/the/code-repo-you-work-on
-./bin/local-tooling learn --repo "$CODE_REPO" --task "APIM-12345" --skip "mechanical rename, no reusable learning"
+./bin/local-tooling learn --repo "$CODE_REPO" --task "TASK-123" --skip "mechanical rename, no reusable learning"
 ```
 
 To make this context-aware workflow visible to agents in the target repo:
