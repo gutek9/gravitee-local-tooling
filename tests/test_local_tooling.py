@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import json
+import re
 import subprocess
 import tempfile
 import tomllib
@@ -233,6 +234,129 @@ class LocalToolingTest(unittest.TestCase):
         self.assertNotIn("update_ticket", text)
         self.assertNotIn("add_comment", text)
         self.assertIn("zendesk_ingest_ticket", text)
+
+
+
+
+    def test_grafana_config_requires_logs_datasource_uid(self) -> None:
+        """The Loki datasource uid has no default, so doctor must flag it as a
+        config error rather than letting the adapter guess at runtime."""
+        from local_tooling.grafana import grafana_config_errors
+
+        base = {
+            "GRAFANA_ENABLED": "true",
+            "GRAFANA_BASE_URL": "https://grafana.example.com",
+            "GRAFANA_TOKEN": "glsa_x",
+        }
+
+        errors = grafana_config_errors({**base, "GRAFANA_LOGS_DATASOURCE_UID": ""})
+        self.assertTrue(any("GRAFANA_LOGS_DATASOURCE_UID" in e for e in errors), errors)
+        # The message must warn that uid != display name - the assumption that
+        # actually cost time against the Gravitee instance.
+        self.assertTrue(any("not always the same as the display name" in e for e in errors), errors)
+
+        # Whitespace is not a value.
+        self.assertTrue(
+            any("GRAFANA_LOGS_DATASOURCE_UID" in e for e in grafana_config_errors({**base, "GRAFANA_LOGS_DATASOURCE_UID": "   "}))
+        )
+
+        # Set -> no error.
+        self.assertEqual(grafana_config_errors({**base, "GRAFANA_LOGS_DATASOURCE_UID": "grafanacloud-logs"}), [])
+
+        # Disabled -> no errors at all, regardless of the uid.
+        self.assertEqual(grafana_config_errors({"GRAFANA_ENABLED": "false"}), [])
+
+    def test_grafana_adapter_registers_no_write_tools(self) -> None:
+        """The Grafana adapter must stay read-only: no tool may create, update or
+        delete anything, and the only POST it makes is the query endpoint."""
+        adapter = Path(__file__).resolve().parents[1] / "services" / "grafana-mcp-adapter"
+        server = (adapter / "server.js").read_text(encoding="utf-8")
+        client = (adapter / "grafanaClient.js").read_text(encoding="utf-8")
+
+        # Every tool the adapter exposes, by name.
+        registered = set(re.findall(r'registerTool\(\s*"([^"]+)"', server))
+        self.assertEqual(
+            registered,
+            {
+                "grafana_health",
+                "grafana_list_datasources",
+                "grafana_query",
+                "grafana_logs_link",
+                "grafana_logs_trend",
+                "grafana_logs_patterns",
+                "grafana_find_customer",
+                "grafana_logs_context",
+                "grafana_logs_noise",
+                "grafana_http_requests",
+                "grafana_first_occurrence",
+                "grafana_failure_topology",
+                "grafana_explore_link",
+            },
+            "a tool was added or renamed - confirm it is read-only before updating this set",
+        )
+
+        # No write-shaped tool names.
+        for verb in ("create", "update", "delete", "write", "annotate", "silence", "pause"):
+            for name in registered:
+                self.assertNotIn(verb, name, f"tool {name!r} looks like a write operation")
+
+        # The HTTP client offers no mutating verb at all.
+        for verb in ("PUT", "DELETE", "PATCH"):
+            self.assertNotIn(f'"{verb}"', client, f"grafanaClient exposes a {verb} method")
+
+        # POST exists only because Grafana's query endpoint requires it; a POST to
+        # any other path would be a write.
+        posts = re.findall(r'grafanaPost\(\s*"([^"]+)"', server)
+        self.assertEqual(posts, ["/ds/query"], "grafanaPost is used outside the query endpoint")
+
+        # Queries are gated on an allowlist of datasource types whose query
+        # languages (PromQL/LogQL) have no write statements.
+        self.assertIn("assertReadOnly", server)
+        allowlist = re.search(r"READONLY_QUERY_TYPES = new Set\(\[([^\]]*)\]\)", server)
+        self.assertIsNotNone(allowlist, "READONLY_QUERY_TYPES allowlist not found")
+        types = set(re.findall(r'"([^"]+)"', allowlist.group(1)))
+        self.assertEqual(
+            types,
+            {
+                "prometheus",
+                "loki",
+                "elasticsearch",
+                "graphite",
+                "grafana-pyroscope-datasource",
+                "grafanacloud-cardinality-datasource",
+                "cloudwatch",
+            },
+            "the allowlist changed - every entry must be a datasource type whose QUERY "
+            "LANGUAGE cannot write, verified individually",
+        )
+
+        # The point of the allowlist is what it keeps out. These types can act,
+        # not just read, so they must never appear:
+        #   alertmanager  -> can create silences
+        #   incident      -> can create/modify incidents
+        #   k6            -> can trigger load test runs against real targets
+        # tempo and knowledgegraph are read-only but unused here: unused surface
+        # is surface that nobody verifies, so it stays out.
+        for unused in ("tempo", "grafana-knowledgegraph-datasource"):
+            self.assertNotIn(unused, types, f"{unused} is not used and should not be enabled")
+
+        for dangerous in ("alertmanager", "grafana-incident-datasource", "k6-datasource"):
+            self.assertNotIn(dangerous, types, f"{dangerous} is action-capable and must stay blocked")
+
+        # cloudwatch is allowed only because the payload is inspected: its Logs
+        # Insights mode bills per GB scanned, so allowing the type without the
+        # guard would expose an unbounded cost.
+        self.assertIn("assertCloudwatchNotBillableLogs", server)
+        self.assertIn('ds.type === "cloudwatch"', server)
+
+        # The datasource must be pinned after any caller-supplied query fields are
+        # spread, or a caller could redirect the query to an unverified datasource
+        # and bypass the guard entirely.
+        spread = server.find("...(query || {})")
+        pinned = server.find("datasource: { uid: datasource_uid")
+        self.assertNotEqual(spread, -1, "caller query spread not found")
+        self.assertNotEqual(pinned, -1, "datasource pin not found")
+        self.assertLess(spread, pinned, "caller-supplied query fields must not override the datasource")
 
     def test_setup_bootstrap_skips_zendesk_when_disabled(self) -> None:
         cli = load_cli()
