@@ -29,6 +29,14 @@ def grafana_config_errors(env: dict[str, str]) -> list[str]:
         errors.append("GRAFANA_BASE_URL must be set to the team's Grafana instance URL")
     if not env.get("GRAFANA_TOKEN", "").strip():
         errors.append("GRAFANA_TOKEN is required (service account token, sent as a Bearer token)")
+    if not env.get("GRAFANA_LOGS_DATASOURCE_UID", "").strip():
+        # No default: a uid that is right for one Grafana org fails silently and
+        # plausibly in every other one, so an unset value is a config error here
+        # rather than a guess made at runtime.
+        errors.append(
+            "GRAFANA_LOGS_DATASOURCE_UID is required (uid of the Loki datasource holding "
+            "your logs; note the uid is not always the same as the display name)"
+        )
     return errors
 
 

@@ -234,6 +234,34 @@ class LocalToolingTest(unittest.TestCase):
         self.assertNotIn("add_comment", text)
         self.assertIn("zendesk_ingest_ticket", text)
 
+    def test_grafana_config_requires_logs_datasource_uid(self) -> None:
+        """The Loki datasource uid has no default, so doctor must flag it as a
+        config error rather than letting the adapter guess at runtime."""
+        from local_tooling.grafana import grafana_config_errors
+
+        base = {
+            "GRAFANA_ENABLED": "true",
+            "GRAFANA_BASE_URL": "https://grafana.example.com",
+            "GRAFANA_TOKEN": "glsa_x",
+        }
+
+        errors = grafana_config_errors({**base, "GRAFANA_LOGS_DATASOURCE_UID": ""})
+        self.assertTrue(any("GRAFANA_LOGS_DATASOURCE_UID" in e for e in errors), errors)
+        # The message must warn that uid != display name - the assumption that
+        # actually cost time against the Gravitee instance.
+        self.assertTrue(any("not always the same as the display name" in e for e in errors), errors)
+
+        # Whitespace is not a value.
+        self.assertTrue(
+            any("GRAFANA_LOGS_DATASOURCE_UID" in e for e in grafana_config_errors({**base, "GRAFANA_LOGS_DATASOURCE_UID": "   "}))
+        )
+
+        # Set -> no error.
+        self.assertEqual(grafana_config_errors({**base, "GRAFANA_LOGS_DATASOURCE_UID": "grafanacloud-logs"}), [])
+
+        # Disabled -> no errors at all, regardless of the uid.
+        self.assertEqual(grafana_config_errors({"GRAFANA_ENABLED": "false"}), [])
+
     def test_setup_bootstrap_skips_zendesk_when_disabled(self) -> None:
         cli = load_cli()
         with tempfile.TemporaryDirectory() as tmp:
