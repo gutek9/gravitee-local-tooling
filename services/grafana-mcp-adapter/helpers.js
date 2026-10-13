@@ -124,19 +124,58 @@ export function splitClientEnv(client = "") {
   return { core: core.join(" "), envs };
 }
 
-// From the full list of `namespace` label values, pick the ones that belong to
-// the customer named by `core`: every (non-env) word of `core` must appear as a
-// substring (case-insensitive). Generic, name-agnostic — works for any customer
-// that has its own namespace (`april-prod`, `blueyonder-plt-live`, …) and
-// returns [] for customers that only live in a shared namespace (`prod`), which
-// is the signal to fall back to a `service_name` match.
-export function matchNamespaces(namespaceValues = [], core = "") {
-  const words = String(core || "").toLowerCase().trim().split(/\s+/).filter(Boolean);
+// From the full list of `namespace` label values, pick the ones the phrase names.
+//
+// Tried in three tiers, most specific first — measured against every live hosted
+// customer (296 namespaces), asking for each by its own name plus environment:
+//
+//   whole name   `orbit plt live` -> `orbit-plt-live`   exact 296
+//   segments     every word is a whole `-` segment                exact 270
+//   substring    every word appears anywhere                      exact 245
+//
+// The tiers matter because customers' names nest: `orbit-plt-live` is a
+// prefix of `orbit-plt-live-ap`, and namespaces exist that are called just
+// `prod` or `dev`. Substring alone returns the siblings too; whole-name first
+// returns the one that was asked for, and falls through when the phrase names a
+// customer rather than a deployment (`acme` -> all five of acme's namespaces).
+//
+// No environment word list is involved: the phrase is matched as typed, and what
+// the caller meant by the last word is decided by what exists.
+export function matchNamespaces(namespaceValues = [], phrase = "") {
+  const words = String(phrase || "").toLowerCase().trim().split(/[\s-]+/).filter(Boolean);
   if (!words.length) return [];
-  return [...new Set(namespaceValues.filter(Boolean))].filter((ns) => {
-    const l = ns.toLowerCase();
+  const values = [...new Set((namespaceValues || []).filter(Boolean))];
+
+  const joined = words.join("-");
+  const whole = values.filter((n) => n.toLowerCase() === joined);
+  if (whole.length) return whole;
+
+  const bySegment = values.filter((n) => {
+    const segments = n.toLowerCase().split("-");
+    return words.every((w) => segments.includes(w));
+  });
+  if (bySegment.length) return bySegment;
+
+  return values.filter((n) => {
+    const l = n.toLowerCase();
     return words.every((w) => l.includes(w));
   });
+}
+
+// The same, but allowed to give ground: if the whole phrase names nothing, drop
+// one trailing word at a time. The dropped tail is returned rather than
+// discarded — it is what the caller said about the deployment ("recette",
+// "gatewaytesting"), and the customer map, not a word list, decides whether it
+// means anything.
+export function matchNamespacesPhrase(namespaceValues = [], phrase = "") {
+  const words = String(phrase || "").trim().split(/\s+/).filter(Boolean);
+  for (let n = words.length; n > 0; n--) {
+    const namespaces = matchNamespaces(namespaceValues, words.slice(0, n).join(" "));
+    if (namespaces.length) {
+      return { namespaces, name: words.slice(0, n).join(" "), tail: words.slice(n) };
+    }
+  }
+  return { namespaces: [], name: "", tail: words };
 }
 
 // Build a LogQL selector from free-text client/component. Both are matched
@@ -146,7 +185,7 @@ export function matchNamespaces(namespaceValues = [], core = "") {
 // `lineFilter` becomes a `|= "..."` line filter on top. When `namespaces` is
 // given, the selector is pinned to those namespaces (`namespace=~"a|b"`) — used
 // when we've resolved the customer to its own namespace(s) and only need
-// `service_name` to narrow by component/env within them.
+// `service_name` to narrow by component within them.
 export function buildLogsQuery({ client, component, lineFilter, namespaces } = {}) {
   if (!client) throw new Error("client is required");
   // Whitespace inside a fragment means "these words, in order, with anything in
@@ -164,12 +203,15 @@ export function buildLogsQuery({ client, component, lineFilter, namespaces } = {
       .map(toWord)
       .join(".*");
   const ns = [...new Set((namespaces || []).filter(Boolean))];
-  // When the customer is pinned to its own namespace(s), the namespace label
-  // already isolates the customer — so `service_name` only needs the env/
-  // component words, not the client core (which often isn't even in the
-  // service_name for namespace-named customers). Without namespaces we keep the
-  // original behaviour: match the client (+component) against service_name.
-  const svcSource = ns.length ? splitClientEnv(client).envs.join(" ") : client;
+  // When the customer is pinned to its own namespace(s), those namespaces were
+  // chosen from the whole phrase (or from the map, env filter already applied),
+  // so the environment is ALREADY expressed by the namespace list. Repeating it
+  // against `service_name` only removes results: some customers call production
+  // `plt-live` or `multitenant`, so `service_name=~".*prod.*"` matched nothing
+  // and the caller got an empty answer for a customer that was logging happily.
+  // Without namespaces we keep the original behaviour: match the client
+  // (+component) against service_name.
+  const svcSource = ns.length ? "" : client;
   const parts = [toPattern(svcSource)].filter(Boolean);
   if (component) {
     const c = toPattern(component);

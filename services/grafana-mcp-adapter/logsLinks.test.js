@@ -60,6 +60,17 @@ test("linksForStreams: a line filter adds an explore_url with the exact selector
   assert.ok(panes.logs.queries[0].expr.includes('service_name="graviteeio-apim3-gateway"'));
 });
 
+test("explainNoStreams: mapped namespaces Loki has not seen point at a stale map, not a quiet customer", async () => {
+  const out = await explainNoStreams({
+    ...RANGE,
+    namespaces: ["apim-dp-cp1111-dp0003"],
+    absentNamespaces: ["apim-dp-cp1111-dp0003"],
+    client: "acme qa",
+  });
+  assert.match(out.note, /1 of the mapped namespace\(s\) \(apim-dp-cp1111-dp0003\) do not appear in Loki/);
+  assert.match(out.note, /customer map is stale/);
+});
+
 test("explainNoStreams: resolved namespaces mean a quiet range, and Loki is not asked for suggestions", async () => {
   const origFetch = globalThis.fetch;
   let called = false;

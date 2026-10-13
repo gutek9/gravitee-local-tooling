@@ -19,6 +19,7 @@ const {
   rankClientSuggestions,
   splitClientEnv,
   matchNamespaces,
+  matchNamespacesPhrase,
   requireDatasourceUid,
 } = await import("./helpers.js");
 
@@ -194,15 +195,21 @@ test("buildLogsQuery: throws when client missing", () => {
   assert.throws(() => buildLogsQuery({}), /client is required/);
 });
 
-test("buildLogsQuery: namespaces pin the selector and drop client from service_name", () => {
-  // Customer resolved to its own namespace: the namespace isolates the customer,
-  // so service_name only carries env/component (not the client core).
-  // Hyphens aren't regex metachars (outside a char class) so escapeRegex leaves
-  // them as-is — same convention as the drilldown alternation test.
+test("buildLogsQuery: a pinned namespace carries the environment, so service_name does not repeat it", () => {
+  // The namespaces were chosen from the whole phrase (or from the map with the
+  // env filter already applied), so repeating the env against service_name only
+  // removes results: customers who call production `plt-live` or `multitenant`
+  // returned nothing for `prod` while logging happily.
   assert.equal(
-    buildLogsQuery({ client: "blueyonder prod", component: "gateway", namespaces: ["blueyonder-plt-live"] }),
-    '{namespace=~"^blueyonder-plt-live$", service_name=~"(?i).*(?:^|[-_.])prod(?:[-_.]|$).*gateway.*"}',
+    buildLogsQuery({ client: "orbit prod", component: "gateway", namespaces: ["orbit-plt-live"] }),
+    '{namespace=~"^orbit-plt-live$", service_name=~"(?i).*gateway.*"}',
   );
+  assert.equal(
+    buildLogsQuery({ client: "orbit prod", namespaces: ["orbit-plt-live"] }),
+    '{namespace=~"^orbit-plt-live$"}',
+  );
+  // Unpinned, the client text still has to do the work against service_name.
+  assert.match(buildLogsQuery({ client: "orbit prod" }), /service_name=~"\(\?i\).*orbit/);
 });
 
 test("buildLogsQuery: multiple namespaces -> anchored alternation", () => {
@@ -303,6 +310,53 @@ test("matchNamespaces: customer with no dedicated namespace -> [] (fall back to 
 test("matchNamespaces: empty core matches nothing (avoids matching every namespace)", () => {
   assert.deepEqual(matchNamespaces(NAMESPACES, ""), []);
   assert.deepEqual(matchNamespaces(NAMESPACES, "   "), []);
+});
+
+// ---------------------------------------------------------------------------
+// Tiered namespace matching
+// ---------------------------------------------------------------------------
+
+const FLEET = [
+  "acme-int", "acme-ppr", "acme-prod", "acme-rec", "acme-sandbox",
+  "orbit-plt-live", "orbit-plt-live-ap", "orbit-plt-live-au", "orbit-multitenant",
+  "beacon-management-prod1", "beacon-management-uat",
+  "prod", "dev",
+];
+
+test("matchNamespaces: the whole name wins over its own siblings", () => {
+  // Substring matching returned plt-live AND plt-live-ap/au for "orbit plt live".
+  assert.deepEqual(matchNamespaces(FLEET, "orbit plt live"), ["orbit-plt-live"]);
+  assert.deepEqual(matchNamespaces(FLEET, "beacon management uat"), ["beacon-management-uat"]);
+});
+
+test("matchNamespaces: a namespace that IS an environment word still resolves", () => {
+  // splitClientEnv classified the whole phrase as environment, leaving no name.
+  assert.deepEqual(matchNamespaces(FLEET, "prod"), ["prod"]);
+  assert.deepEqual(matchNamespaces(FLEET, "dev"), ["dev"]);
+});
+
+test("matchNamespaces: a customer name alone returns their whole estate", () => {
+  assert.deepEqual(matchNamespaces(FLEET, "acme"), ["acme-int", "acme-ppr", "acme-prod", "acme-rec", "acme-sandbox"]);
+});
+
+test("matchNamespaces: falls back from segments to substring", () => {
+  // "plt live ap" are whole segments; "ultitenant" is only a substring.
+  assert.deepEqual(matchNamespaces(FLEET, "orbit plt live ap"), ["orbit-plt-live-ap"]);
+  assert.deepEqual(matchNamespaces(FLEET, "orbit ultitenant"), ["orbit-multitenant"]);
+  assert.deepEqual(matchNamespaces(FLEET, "nosuchcustomer"), []);
+  assert.deepEqual(matchNamespaces(FLEET, ""), []);
+});
+
+test("matchNamespacesPhrase: drops the tail only when the whole phrase names nothing, and returns it", () => {
+  assert.deepEqual(matchNamespacesPhrase(FLEET, "acme rec"), { namespaces: ["acme-rec"], name: "acme rec", tail: [] });
+  // "gatewaytesting" is a Cockpit environment: no hosted namespace has it, so the
+  // tail comes back for the map to explain rather than being thrown away.
+  assert.deepEqual(matchNamespacesPhrase(FLEET, "acme gatewaytesting"), {
+    namespaces: ["acme-int", "acme-ppr", "acme-prod", "acme-rec", "acme-sandbox"],
+    name: "acme",
+    tail: ["gatewaytesting"],
+  });
+  assert.deepEqual(matchNamespacesPhrase(FLEET, "nobody here"), { namespaces: [], name: "", tail: ["nobody", "here"] });
 });
 
 // ---------------------------------------------------------------------------

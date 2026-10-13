@@ -13,12 +13,12 @@ import {
 import {
   summarizeQueryResult,
   buildLogsQuery,
-  splitClientEnv,
-  matchNamespaces,
   requireDatasourceUid,
 } from "./helpers.js";
-import { fetchMatchingStreams, fetchLabelValues } from "./lokiDiscovery.js";
+import { fetchMatchingStreams } from "./lokiDiscovery.js";
 import { linksForStreams, explainNoStreams } from "./logsLinks.js";
+import { warmCustomerMap } from "./customerMapLoader.js";
+import { resolveNamespaces, resolutionReport } from "./customerResolver.js";
 
 // Loki datasource uid for the logs tools. Required — deliberately NOT defaulted:
 // a uid that is correct for one Grafana org is a silent, plausible failure in
@@ -80,27 +80,6 @@ async function listDatasources() {
   };
 }
 
-
-// Resolve a free-text `client` to the customer's own namespace(s). Many
-// customers have a dedicated namespace that names them (`april-prod`,
-// `blueyonder-plt-live`) — that namespace is the most reliable customer
-// identifier, more so than `service_name` (which for some tenants carries an
-// opaque id, not the name). We fetch the `namespace` label values and keep the
-// ones whose name contains the customer "core" (env tokens excluded — they
-// aren't reliably in the namespace). Returns [] for customers that only live in
-// a shared namespace (e.g. `prod`), which tells the caller to fall back to a
-// plain `service_name` match.
-async function resolveNamespaces(client, { from } = {}) {
-  const { core } = splitClientEnv(client);
-  if (!core) return [];
-  let values = [];
-  try {
-    values = await fetchLabelValues(LOGS_DATASOURCE_UID, "namespace", { from });
-  } catch {
-    return [];
-  }
-  return matchNamespaces(values, core);
-}
 
 async function withToolLogging(tool, fields, fn) {
   const start = Date.now();
@@ -221,10 +200,11 @@ registerTool(
       .enum(["drilldown", "explore"])
       .default("drilldown")
       .describe("Link format: 'drilldown' (Logs Drilldown app, per-namespace; default) or 'explore' (raw LogQL Explore)."),
+    control_plane_id: z.string().optional().describe("Narrow to one Cockpit organization when a customer name spans several."),
     from: z.string().default("now-1h").describe("Range start, e.g. 'now-1h', 'now-6h', or epoch ms."),
     to: z.string().default("now").describe("Range end, e.g. 'now' or epoch ms."),
   },
-  async ({ client, component, line_filter, link_style = "drilldown", from = "now-1h", to = "now" }) =>
+  async ({ client, component, line_filter, link_style = "drilldown", control_plane_id, from = "now-1h", to = "now" }) =>
     withToolLogging("grafana_logs_link", { client, component, link_style, from, to }, async () => {
       // Fail loudly and once, rather than querying a nonexistent datasource and
       // reporting "no log streams matched" for what is really a config error.
@@ -234,44 +214,31 @@ registerTool(
       // whereas `service_name` doesn't for every tenant. Customers that only
       // live in a shared namespace (`prod`) resolve to [] and fall back to the
       // plain service_name match.
-      const namespaces = await resolveNamespaces(client, { from });
+      const resolution = await resolveNamespaces(client, {
+        datasourceUid: LOGS_DATASOURCE_UID,
+        from,
+        controlPlaneId: control_plane_id,
+      });
+      const namespaces = resolution.namespaces;
       const pinned = namespaces.length ? namespaces : undefined;
       // The selector we discover streams with carries no line filter — /series
       // matches on the stream selector only, and the line_filter is applied in
       // the generated link itself, not here.
-      let query = buildLogsQuery({ client, component, namespaces: pinned });
-      let streams = await fetchMatchingStreams(LOGS_DATASOURCE_UID, { query, from, to });
-
-      // Env tokens (prod, stage, …) aren't reliably in the service_name either —
-      // some customers name their prod `plt-live`/`multitenant`. So if we pinned
-      // the customer's namespace, asked for an env, and got nothing, drop the env
-      // filter and retry once: the namespace pin still scopes us to the customer,
-      // which beats a misleading empty result. (We can't be perfect against
-      // legacy/inconsistent labels; this just maximizes useful hits.)
-      let env_filter_dropped = false;
-      if (streams.length === 0 && pinned && splitClientEnv(client).envs.length) {
-        const retryQuery = buildLogsQuery({ client: splitClientEnv(client).core, component, namespaces: pinned });
-        const retryStreams = await fetchMatchingStreams(LOGS_DATASOURCE_UID, { query: retryQuery, from, to });
-        if (retryStreams.length) {
-          query = retryQuery;
-          streams = retryStreams;
-          env_filter_dropped = true;
-        }
-      }
+      const query = buildLogsQuery({ client, component, namespaces: pinned });
+      const streams = await fetchMatchingStreams(LOGS_DATASOURCE_UID, { query, from, to });
 
       // Re-attach the line filter to the reported query so the caller sees the
       // full LogQL (the discovery query above intentionally omitted it). Only
-      // rebuild when there's actually a line filter to add — otherwise `query`
-      // (already env-adjusted by the retry) is exactly what we'd produce.
+      // rebuild when there's actually a line filter to add.
       const reportedQuery = line_filter
-        ? buildLogsQuery({ client: env_filter_dropped ? splitClientEnv(client).core : client, component, lineFilter: line_filter, namespaces: pinned })
+        ? buildLogsQuery({ client, component, lineFilter: line_filter, namespaces: pinned })
         : query;
 
       const result = {
         query: reportedQuery,
         link_style,
         resolved_namespaces: namespaces,
-        ...(env_filter_dropped ? { env_filter_dropped: true } : {}),
+        ...resolutionReport(resolution),
         range: { from, to },
         matched_count: streams.length,
         matched_streams: streams,
@@ -286,7 +253,16 @@ registerTool(
         }),
       };
       if (streams.length === 0) {
-        Object.assign(result, await explainNoStreams({ namespaces, client, datasourceUid: LOGS_DATASOURCE_UID, from }));
+        Object.assign(
+          result,
+          await explainNoStreams({
+            namespaces,
+            absentNamespaces: resolution.mapped_namespaces_absent_in_range,
+            client,
+            datasourceUid: LOGS_DATASOURCE_UID,
+            from,
+          }),
+        );
       }
       return textResult(result);
     }),
@@ -298,6 +274,9 @@ registerTool(
 
 async function main() {
   log("info", "Starting MCP adapter", { enabled: ENABLED, base_url: BASE_URL || null });
+  // Warm the customer map now, so the GitHub round trip overlaps the MCP
+  // handshake instead of being paid by whoever runs the first query.
+  warmCustomerMap();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log("info", "MCP adapter connected", { transport: "stdio" });

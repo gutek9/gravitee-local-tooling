@@ -70,14 +70,26 @@ section). The default range is the last hour; widen with `from`/`to`. When nothi
 matches, it returns close `service_name` values as `suggestions` so typos like
 `aprl → april` surface.
 
-Two conditional fields also appear:
+The response also says how the customer was found:
 
-- `env_filter_dropped: true` — set when the query pinned the customer's namespace,
-  the `client` asked for an env (e.g. `prod`), the first `/series` discovery
-  returned nothing, and dropping the env token and retrying *did* find streams.
-  Env tokens aren't reliably in `service_name` for every tenant (some name prod
-  `plt-live`/`multitenant`), so this flags that the reported streams are the
-  customer's namespace-wide results, not env-narrowed ones.
+- `resolved_via` — `namespace_label` (a hosted customer whose namespace carries
+  its name), `customer_map` (a Gravitee Cloud customer, found through the
+  deployment map), both joined with `+`, or `none`.
+- `map_source`, `map_generated_at`, `map_warning` — where the map came from
+  (`github`, `bundled_snapshot`, `unavailable`) and whether it is stale.
+- `matched_deployments`, `control_plane_ids`, `shared_control_plane_namespaces` —
+  the Cloud deployments behind the namespaces. Control-plane namespaces are
+  shared by every customer on that control plane, so they are reported but never
+  searched under one customer's name.
+- `ambiguous_customer`, `candidates`, `customer_note` — the fragment matched
+  several Cloud customers, so the map contributed nothing. Pass the exact name.
+- `spans_multiple_organizations`, `organizations_note` — one name, several Cockpit
+  organizations. Pass `control_plane_id` to narrow to one.
+- `namespace_match_ignored` — trailing words no namespace carries (e.g. `prod`
+  for a customer whose production namespace is `orbit-plt-live`).
+- `mapped_namespaces_absent_in_range` — namespaces the map lists that Loki has
+  not seen in this range. When nothing matches and these exist, the `note` says
+  the map is probably stale rather than reporting "no logs".
 - `suggestions` — close `service_name` values (see above), only when the `client`
   matched no namespace **and** no streams.
 
@@ -102,10 +114,11 @@ Each entry in `links` is `{ url }` (explore) or `{ namespace, service_names, url
 (drilldown). The matching stream label sets are always returned in
 `matched_streams` regardless of `link_style` — no log lines are fetched.
 
-> **Multitenant note.** On the multitenant Cockpit instance the customer name is
-> *not* in `service_name`/`namespace` (it uses a tenant id, e.g. `ba813`), so a
-> free-text `client` won't find those tenants. Resolving customer → tenant id is
-> a planned improvement; for now pass the tenant's namespace/id you were given.
+> **Gravitee Cloud customers.** Cockpit tenants live in
+> `apim-dp-<controlPlaneId>-<dataPlaneId>` namespaces that carry no customer
+> name, so the namespace label cannot find them. `client` is also looked up in
+> the Gravitee Cloud customer map, which resolves the name to those namespaces.
+> See [Finding a customer](#finding-a-customer-without-guessing-which-word-is-the-environment).
 
 #### Examples (how a user asks for it)
 
@@ -127,19 +140,63 @@ Just ask in plain language — the agent maps it to the `client` / `component` /
 > "Give me the **production** gateway logs for **Northwind**."
 > → `{ "client": "northwind prod", "component": "gateway" }`
 
-(The environment — `prod`, `rec`, `dev` — isn't a separate argument: it lives
-inside `service_name`, so just fold it into `client` as another word. Words are
-matched as case-insensitive substrings with `.*` between them, so `northwind
-prod` matches `…-northwind-prod-…`. Known environment words (`prod`, `rec`,
-`dev`, `nonprod`, `preprod`, `qa`, `int`, `ppr`, `sandbox`, …) are anchored to a
-whole `service_name` segment, so `prod` matches `…-prod-…` but **not** the
-`prod` inside `nonprod`/`preprod`. Non-env words stay plain substrings, so a
-partial customer name like `arcelor` still matches `arcelor-mittal`.)
+(The environment — `prod`, `rec`, `dev` — isn't a separate argument: fold it
+into `client` as another word. When the customer resolves to its own namespaces,
+the phrase picks the namespace (`northwind prod` → `northwind-prod`) and
+`service_name` is not filtered by it again; see the next section. When it does
+not, the words are matched against `service_name` as case-insensitive substrings
+with `.*` between them, so `northwind prod` matches `…-northwind-prod-…`. There,
+known environment words (`prod`, `rec`, `dev`, `nonprod`, `preprod`, `qa`,
+`int`, `ppr`, `sandbox`, …) are anchored to a whole `service_name` segment, so
+`prod` matches `…-prod-…` but **not** the `prod` inside `nonprod`/`preprod`.)
 
 Each call returns `links` — shareable Grafana links (Logs Drilldown per namespace
 by default; see `link_style` above) — plus `matched_streams`, the
 `{ namespace, service_name }` label sets the selector matched. No log lines are
 fetched; open a link to read the logs in Grafana.
+
+### Finding a customer without guessing which word is the environment
+
+`client` is resolved by two routes, always both: the namespace label (hosted
+customers, whose namespace carries their name) and the Gravitee Cloud customer
+map (Cockpit tenants, whose namespaces carry only ids). A customer can be in both
+populations at once, so stopping at the first route that answers would search
+half of its logs.
+
+`client: "acme rec"` has to be split into a customer and an environment. That
+split used to run against a list of 16 known environment words. A list cannot be
+finished: measured against every live customer, **38 of 82** multi-namespace
+customers have a suffix it did not contain (`staging`, `prd`, `sit`, `qualif`,
+`multitenant`, `plt-live-ap`), and one customer's environments are `ab`, `ge`,
+`pr`, `se`.
+
+Worse, an unlisted word was not noticed at all. It stayed part of the name, the
+name matched nobody, and the answer was empty with no reason given — **39 of 416**
+Cockpit deployments (`acme recette`, `beacon staging`, and `production`
+failing where `prod` worked). The reverse bit too: seven namespaces are *called*
+`prod` or `dev`, so the split left an empty name.
+
+Nothing is classified now. Both routes match the phrase as typed, and give ground
+only when it matches nothing:
+
+- **Namespaces** in tiers — whole name, then whole `-` segments, then substring.
+  `orbit plt live` returns that namespace, not it plus its `-ap`/`-au`/`-eu`
+  siblings.
+- **The map** is asked where the name ends: drop one trailing word at a time
+  until a customer matches. The tail is then matched against what the deployment
+  *is* — environment, region or provider — so `acme dev europe` narrows, and a
+  tail describing nothing is reported along with the environments that customer
+  actually has.
+
+Measured live after the change: hosted **286 of 286** exact (was 104, with 7
+resolving to nothing), Cockpit **0** failures (was 39). The 133 Cockpit phrases
+that still return several deployments are genuinely several: 46 customer+
+environment pairs have more than one data plane, and region or provider
+separates 30 of them.
+
+One consequence: a pinned namespace already expresses the environment, so
+`service_name` no longer repeats it — and the "drop the env token and retry"
+fallback is gone with it.
 
 ## Setup
 
@@ -239,10 +296,15 @@ Coverage:
 - `customerMapLoader.test.js` — where the map comes from: GitHub, the snapshot
   fallback, the unavailable case, caching. GitHub is stubbed and the snapshot is
   a temp file, never a real one.
+- `customerResolver.test.js` — resolving a client through both routes (label and
+  customer map) from given namespace values and map rows, and what of that
+  resolution reaches the caller. No network.
 - `server.test.js` — the `server.js` orchestration that talks to Loki, with
-  `fetch` stubbed per Loki endpoint: `grafana_logs_link`'s namespace resolution,
-  per-namespace drilldown grouping, the `explore_url` fallback, the env
-  auto-retry, and the empty-result `note`/`suggestions` branches, plus
-  `grafana_query`'s digest-vs-`raw` output. `server.js` only starts the stdio
+  `fetch` stubbed per Loki endpoint: `grafana_logs_link`'s namespace resolution
+  through both routes (label and customer map), per-namespace drilldown
+  grouping, the `explore_url` fallback, and the empty-result
+  `note`/`suggestions` branches, plus `grafana_query`'s digest-vs-`raw` output.
+  The stub also answers the customer map's GitHub fetch with a made-up CSV, so
+  the tests never read a local `customers-snapshot.json` or the network. `server.js` only starts the stdio
   transport when run as the entrypoint, so tests import it and invoke the
   registered tool handlers directly (via the exported `tools` map).

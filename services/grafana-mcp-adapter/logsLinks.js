@@ -49,8 +49,18 @@ export function linksForStreams({ streams = [], linkStyle, query, lineFilter, da
 // No streams: if we resolved the customer's namespace(s) but nothing matched,
 // the customer is right — it's just a quiet range (or the component/env
 // narrowed too far). Otherwise the `client` text likely didn't match any
-// service_name; offer close matches to correct it.
-export async function explainNoStreams({ namespaces = [], client, datasourceUid, from }) {
+// service_name; offer close matches to correct it. Mapped namespaces that Loki
+// has not seen in the range at all point at a stale customer map instead.
+export async function explainNoStreams({ namespaces = [], absentNamespaces = [], client, datasourceUid, from }) {
+  if (absentNamespaces.length) {
+    return {
+      note:
+        `No log streams matched, and ${absentNamespaces.length} of the mapped namespace(s) (${absentNamespaces.join(", ")}) do not ` +
+        "appear in Loki for this range at all. That usually means the customer map is stale — the deployment was " +
+        "recreated under a new id — rather than that the customer has no logs. Widen from/to in case the " +
+        "deployment is simply dormant.",
+    };
+  }
   if (namespaces.length) {
     return {
       note: `No log streams in this range for namespace(s) ${namespaces.join(", ")}. Try widening from/to or relaxing component/env.`,
