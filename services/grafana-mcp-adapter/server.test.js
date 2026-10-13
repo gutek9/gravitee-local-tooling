@@ -171,13 +171,31 @@ test("grafana_logs_link: a pinned namespace does not repeat the environment agai
   await withLokiStub(
     { [NS_VALUES]: ["orbit-plt-live"], [SERIES]: [stream("orbit-plt-live", "by-live-gateway")] },
     async (calls) => {
-      const out = await callTool("grafana_logs_link", { client: "orbit prod", component: "gateway" });
+      const out = await callTool("grafana_logs_link", { client: "orbit plt live", component: "gateway" });
       assert.deepEqual(out.resolved_namespaces, ["orbit-plt-live"]);
-      assert.ok(!/prod/.test(out.query), out.query);
+      // service_name only carries the component, not the environment words.
+      assert.ok(!/service_name=~"[^"]*(plt|live)/.test(out.query), out.query);
       assert.equal(calls.filter((u) => u.includes(SERIES)).length, 1, "no retry should be needed");
       assert.equal(out.env_filter_dropped, undefined);
-      // The word the namespaces could not account for is still reported.
-      assert.equal(out.namespace_match_ignored, "prod");
+    },
+  );
+});
+
+test("grafana_logs_link: a word no namespace carries is refused, listing the namespaces that exist", async () => {
+  // Regression: the label route dropped "prod" to find something and searched
+  // orbit-plt-live as if it were what was asked for. The same path made
+  // "april staging" search every april namespace.
+  await withLokiStub(
+    { [NS_VALUES]: ["orbit-plt-live"], [SERIES]: [stream("orbit-plt-live", "by-live-gateway")] },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "orbit prod" });
+      assert.equal(out.refused, true);
+      assert.deepEqual(out.resolved_namespaces, []);
+      assert.deepEqual(out.links, []);
+      assert.deepEqual(out.unknown_qualifiers, ["prod"]);
+      assert.deepEqual(out.skipped_namespaces, ["orbit-plt-live"]);
+      assert.match(out.note, /"prod" is in none of the namespaces found for "orbit" \(orbit-plt-live\)/);
+      assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
     },
   );
 });
@@ -264,6 +282,54 @@ test("grafana_logs_link: an env word narrows the map to that deployment", async 
       assert.equal(out.matched_deployments[0].env, "dev");
     },
   );
+});
+
+test("grafana_logs_link: an env word does not drag in a hosted namespace it does not describe", async () => {
+  // Regression: "acme dev" also searched the hosted acme-prod, which the label
+  // route found only by dropping "dev".
+  await withLokiStub(
+    {
+      [NS_VALUES]: ["acme-prod", "apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp0002"],
+      [SERIES]: [stream("apim-dp-cp1111-dp0002", "apim-gateway")],
+    },
+    async () => {
+      const out = await callTool("grafana_logs_link", { client: "acme dev" });
+      assert.deepEqual(out.resolved_namespaces, ["apim-dp-cp1111-dp0002"]);
+      assert.equal(out.resolved_via, "customer_map");
+      assert.deepEqual(out.skipped_namespaces, ["acme-prod"]);
+      assert.match(out.skipped_namespaces_note, /not for "dev", so not searched/);
+    },
+  );
+});
+
+test("grafana_logs_link: an env word matching none of the customer's deployments is refused, and Loki is never queried", async () => {
+  // Regression (#9 review): "acme staging" with only prod, dev and qa searched all
+  // of them, and the hosted acme-prod too, with no staging constraint at all.
+  await withLokiStub(
+    { [NS_VALUES]: ["acme-prod", "apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp0002"], [SERIES]: [] },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "acme staging" });
+      assert.equal(out.refused, true);
+      assert.deepEqual(out.resolved_namespaces, []);
+      assert.deepEqual(out.links, []);
+      assert.deepEqual(out.unknown_qualifiers, ["staging"]);
+      assert.deepEqual(out.known_environments, ["dev", "prod", "qa"]);
+      assert.deepEqual(out.skipped_namespaces, ["acme-prod"]);
+      assert.match(out.note, /"staging" does not describe any deployment of acme/);
+      assert.match(out.note, /Retry without it/);
+      assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+    },
+  );
+});
+
+test("grafana_logs_link: a hosted customer with a word none of its namespaces carries is refused", async () => {
+  await withLokiStub({ [NS_VALUES]: ["april-prod", "april-rec"], [SERIES]: [] }, async (calls) => {
+    const out = await callTool("grafana_logs_link", { client: "april staging" });
+    assert.equal(out.refused, true);
+    assert.deepEqual(out.skipped_namespaces, ["april-prod", "april-rec"]);
+    assert.equal(out.known_environments, undefined);
+    assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+  });
 });
 
 test("grafana_logs_link: no streams for a mapped namespace Loki does not know -> stale-map note", async () => {

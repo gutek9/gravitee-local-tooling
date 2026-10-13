@@ -221,7 +221,7 @@ registerTool(
       });
       // Refused before any stream discovery: with no namespaces the selector
       // below would fall back to a service_name match across all of Loki.
-      if (resolution.unknown_control_plane) {
+      if (resolution.refused) {
         return textResult({
           refused: true,
           link_style,

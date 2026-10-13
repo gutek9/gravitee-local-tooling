@@ -91,8 +91,17 @@ The response also says how the customer was found:
   organizations, the customer is not in the map, or the name is ambiguous.
   Nothing is searched, and `control_plane_ids` lists the valid ids. An id only
   ever narrows; it is never dropped to search more widely.
-- `namespace_match_ignored` — trailing words no namespace carries (e.g. `prod`
-  for a customer whose production namespace is `orbit-plt-live`).
+- `refused`, `unknown_qualifiers`, `known_environments`, `known_regions` — a word
+  after the customer name (environment, region or provider) describes none of
+  its deployments and none of its namespaces, e.g. `acme staging` when acme only
+  has prod, dev and qa. Nothing is searched; retry without the word, or with one
+  of the environments, regions or namespaces listed. A word only ever narrows; it
+  is never dropped to search more widely.
+- `skipped_namespaces`, `skipped_namespaces_note` — namespaces found for the
+  customer name but not for the words after it, so not searched: `acme dev`
+  searches acme's Cloud dev deployment, not its hosted `acme-prod`. To search
+  one, name it: `orbit plt live` for `orbit-plt-live`, where `orbit prod` is
+  refused.
 - `mapped_namespaces_absent_in_range` — namespaces the map lists that Loki has
   not seen in this range. When nothing matches and these exist, the `note` says
   the map is probably stale rather than reporting "no logs".
@@ -187,12 +196,14 @@ only when it matches nothing:
 
 - **Namespaces** in tiers — whole name, then whole `-` segments, then substring.
   `orbit plt live` returns that namespace, not it plus its `-ap`/`-au`/`-eu`
-  siblings.
+  siblings. Namespaces found only by dropping trailing words are reported as
+  `skipped_namespaces`, not searched: they ignore what the caller said about the
+  deployment.
 - **The map** is asked where the name ends: drop one trailing word at a time
   until a customer matches. The tail is then matched against what the deployment
   *is* — environment, region or provider — so `acme dev europe` narrows, and a
-  tail describing nothing is reported along with the environments that customer
-  actually has.
+  tail describing nothing is refused along with the environments and regions
+  that customer actually has.
 
 Measured live after the change: hosted **286 of 286** exact (was 104, with 7
 resolving to nothing), Cockpit **0** failures (was 39). The 133 Cockpit phrases

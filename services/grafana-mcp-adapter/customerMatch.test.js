@@ -78,13 +78,15 @@ test("resolveCustomerNamespaces: env words narrow to that deployment", () => {
   assert.equal(out.env_filter_applied, true);
 });
 
-test("resolveCustomerNamespaces: an env that matches nothing returns all deployments, not none", () => {
-  // A customer whose envs are named differently is better served by all of its
-  // deployments than by an empty result that reads as "no such customer".
+test("resolveCustomerNamespaces: an env that matches nothing is refused, not widened to every deployment", () => {
+  // Regression: an env matching none of the customer's deployments fell back to
+  // all of them, so "acme qa" searched prod and dev with no qa constraint.
   const rows = parseCustomerCsv(CSV);
   const out = resolveCustomerNamespaces(rows, { core: "acme", envs: ["qa"] });
-  assert.equal(out.namespaces.length, 2);
-  assert.equal(out.env_filter_applied, false);
+  assert.deepEqual(out.namespaces, []);
+  assert.deepEqual(out.unknown_qualifiers, ["qa"]);
+  assert.deepEqual(out.known_environments, ["dev", "prod"]);
+  assert.match(out.reason, /Nothing was searched/);
 });
 
 test("resolveCustomerNamespaces: never searches shared control-plane namespaces by default", () => {
@@ -259,12 +261,29 @@ test("resolveCustomerNamespaces: a qualifier narrows by environment, region or p
   assert.equal(byRegion.namespaces.length, 2);
 });
 
-test("resolveCustomerNamespaces: a tail that describes nothing is reported, not silently dropped", () => {
+test("resolveCustomerNamespaces: a tail that describes nothing is refused, with what the customer has", () => {
   // Enrique's question: what if the removed string matches no environment?
+  // Regression: it used to return all of the customer's deployments, so the
+  // answer was broader than the one asked for.
   const rows = parseCustomerCsv(CSV);
   const out = resolveCustomerNamespaces(rows, { core: "acme", qualifiers: ["gatewaytesting"] });
-  assert.equal(out.namespaces.length, 2, "all of the customer's deployments, not none");
+  assert.deepEqual(out.namespaces, []);
+  assert.deepEqual(out.matched, []);
   assert.deepEqual(out.unknown_qualifiers, ["gatewaytesting"]);
   assert.deepEqual(out.known_environments, ["dev", "prod"]);
-  assert.match(out.qualifier_note, /does not describe any deployment of acme/);
+  assert.deepEqual(out.known_regions, ["unitedstates"]);
+  assert.match(out.reason, /"gatewaytesting" does not describe any deployment of acme/);
+  assert.match(out.reason, /Retry without it/);
+});
+
+test("resolveCustomerNamespaces: env words and qualifiers narrow together", () => {
+  const rows = parseCustomerCsv(CSV);
+  assert.deepEqual(
+    resolveCustomerNamespaces(rows, { core: "acme", envs: ["prod"], qualifiers: ["unitedstates"] }).namespaces,
+    ["apim-dp-cp1111-dp0001"],
+  );
+  // Each word must hold: a region acme does not have refuses even with a valid env.
+  const out = resolveCustomerNamespaces(rows, { core: "acme", envs: ["prod"], qualifiers: ["europe"] });
+  assert.deepEqual(out.namespaces, []);
+  assert.deepEqual(out.unknown_qualifiers, ["prod", "europe"]);
 });

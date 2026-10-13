@@ -120,6 +120,42 @@ test("resolveClient: control_plane_id with an ambiguous name is refused, with th
   assert.match(out.note, /was not applied to any of them/);
 });
 
+test("resolveClient: a namespace found only by dropping a word is skipped, not searched", () => {
+  // "acme dev": no `acme-dev`, so the label route drops "dev" and finds acme-prod.
+  const out = resolve("acme dev", ["acme-prod", ...ACME_DATA_PLANES]);
+  assert.deepEqual(out.namespaces, ["apim-dp-cp1111-dp0002"]);
+  assert.equal(out.via, "customer_map");
+  assert.deepEqual(out.label_namespaces, []);
+  assert.deepEqual(out.skipped_namespaces, ["acme-prod"]);
+});
+
+test("resolveClient: a word that narrows neither route is refused, with what each route has", () => {
+  const out = resolve("acme staging", ["acme-prod", ...ACME_DATA_PLANES]);
+  assert.deepEqual(out.namespaces, []);
+  assert.equal(out.refused, true);
+  assert.deepEqual(out.unknown_qualifiers, ["staging"]);
+  assert.deepEqual(out.known_environments, ["dev", "prod", "qa"]);
+  assert.deepEqual(out.skipped_namespaces, ["acme-prod"]);
+  assert.match(out.note, /"staging" is in none of the namespaces found for "acme" \(acme-prod\)/);
+  assert.match(out.note, /does not describe any deployment of acme/);
+});
+
+test("resolveClient: a hosted namespace that carries every word is searched even when the map has no such deployment", () => {
+  // acme-staging names the whole phrase, so the word narrows the label route.
+  const out = resolve("acme staging", ["acme-staging", ...ACME_DATA_PLANES]);
+  assert.deepEqual(out.namespaces, ["acme-staging"]);
+  assert.equal(out.via, "namespace_label");
+  assert.equal(out.refused, undefined);
+});
+
+test("resolveClient: control_plane_id with a word the customer does not have refuses on the word", () => {
+  const out = resolve("acme staging", ACME_DATA_PLANES, { controlPlaneId: "cp1111" });
+  assert.equal(out.refused, true);
+  assert.deepEqual(out.unknown_qualifiers, ["staging"]);
+  assert.equal(out.unknown_control_plane, undefined);
+  assert.match(out.note, /"staging" does not describe any deployment of acme/);
+});
+
 test("resolutionReport: renames via and note, and leaves out what is not set", () => {
   const report = resolutionReport({
     namespaces: ["x"],
@@ -142,6 +178,9 @@ test("resolutionReport: every field a resolution sets reaches the report", () =>
     resolve("northwind", ["apim-dp-cp5555-dp0001", "apim-dp-cp6666-dp0001"]),
     resolve("northwind", [], { controlPlaneId: "cp9999" }),
     resolve("beac", [], { controlPlaneId: "cp2222" }),
+    resolve("acme dev", ["acme-prod", ...ACME_DATA_PLANES]),
+    resolve("acme staging", ["acme-prod", ...ACME_DATA_PLANES]),
+    resolve("april staging", ["april-prod", "april-rec"]),
     { ...resolve("acme", ACME_DATA_PLANES), map_warning: "stale" },
   ];
   const renamed = { via: "resolved_via", note: "customer_note" };

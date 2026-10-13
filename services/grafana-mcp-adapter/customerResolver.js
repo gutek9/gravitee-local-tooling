@@ -55,10 +55,39 @@ export function resolveClient({ phrase, controlPlaneId, namespaceValues = [], ma
   // map where the customer name ends. What the caller meant by the last word is
   // decided by what exists, not by a list of known environment names.
   const label = matchNamespacesPhrase(namespaceValues, phrase);
-  const byLabel = label.namespaces;
+  // The label route only counts when it matched every word typed. Namespaces it
+  // found by dropping trailing words ignore those words: "acme dev" has no
+  // `acme-dev`, so it drops "dev" and finds `acme-prod`, and dev would also
+  // search prod. Such namespaces are reported as skipped, never searched.
+  const byLabel = label.tail.length ? [] : label.namespaces;
+  const skipped = label.tail.length ? label.namespaces : [];
   const { core, tail } = splitNameAndTail(map.rows, phrase);
   const resolved = resolveCustomerNamespaces(map.rows, { core, qualifiers: tail, controlPlaneId });
   const namespaces = [...new Set([...byLabel, ...resolved.namespaces])];
+
+  // Words that narrow neither route are refused, not dropped: both routes found
+  // the customer only by ignoring them, so searching either would return more
+  // than was asked for. What exists is listed so the caller can retry.
+  const refuseUnknownWords = () => {
+    const labelPart = skipped.length
+      ? `"${label.tail.join(" ")}" is in none of the namespaces found for "${label.name}" (${skipped.join(", ")}).`
+      : "";
+    return {
+      namespaces: [],
+      via: "none",
+      refused: true,
+      unknown_qualifiers: resolved.unknown_qualifiers || label.tail,
+      ...(resolved.unknown_qualifiers
+        ? { known_environments: resolved.known_environments, known_regions: resolved.known_regions }
+        : {}),
+      ...(skipped.length ? { skipped_namespaces: skipped } : {}),
+      note: resolved.unknown_qualifiers
+        ? [labelPart, resolved.reason].filter(Boolean).join(" ")
+        : `${labelPart} Nothing was searched. Retry without it, or with one of those namespaces.`,
+      map_source: map.source,
+      map_warning: map.warning,
+    };
+  };
 
   // control_plane_id only ever narrows. If it selected nothing from the map —
   // an id that is not this customer's, a customer the map does not have, or a
@@ -66,6 +95,7 @@ export function resolveClient({ phrase, controlPlaneId, namespaceValues = [], ma
   // without it: the label route, or the caller's service_name fallback, would
   // return logs the id was meant to exclude.
   if (controlPlaneId && !resolved.namespaces.length) {
+    if (resolved.unknown_qualifiers) return refuseUnknownWords();
     const note =
       resolved.reason && resolved.unknown_control_plane
         ? resolved.reason
@@ -76,6 +106,7 @@ export function resolveClient({ phrase, controlPlaneId, namespaceValues = [], ma
     return {
       namespaces: [],
       via: "none",
+      refused: true,
       unknown_control_plane: true,
       requested_control_plane_id: controlPlaneId,
       control_plane_ids: resolved.control_plane_ids || [],
@@ -98,11 +129,14 @@ export function resolveClient({ phrase, controlPlaneId, namespaceValues = [], ma
       via: byLabel.length ? "namespace_label" : "none",
       ambiguous_customer: true,
       candidates: resolved.candidates,
+      ...(skipped.length ? { skipped_namespaces: skipped } : {}),
       note: resolved.reason,
       map_source: map.source,
       map_warning: map.warning,
     };
   }
+
+  if (!namespaces.length && (resolved.unknown_qualifiers || skipped.length)) return refuseUnknownWords();
 
   if (!namespaces.length) {
     return {
@@ -134,9 +168,14 @@ export function resolveClient({ phrase, controlPlaneId, namespaceValues = [], ma
   return {
     namespaces,
     via,
-    // The namespace route ignored the tail (no namespace carries it); say so, in
-    // case the map did not explain it either.
-    ...(label.tail.length && byLabel.length ? { namespace_match_ignored: label.tail.join(" ") } : {}),
+    ...(skipped.length
+      ? {
+          skipped_namespaces: skipped,
+          skipped_namespaces_note:
+            `Found for "${label.name}" but not for "${label.tail.join(" ")}", so not searched. ` +
+            "Name one of them to search it.",
+        }
+      : {}),
     ...(absent.length ? { mapped_namespaces_absent_in_range: absent } : {}),
     ...(resolved.namespaces.length
       ? {
@@ -171,17 +210,18 @@ export function resolveClient({ phrase, controlPlaneId, namespaceValues = [], ma
 export function resolutionReport(resolution = {}) {
   const out = { resolved_via: resolution.via };
   for (const key of [
+    "refused",
     "map_source",
     "map_generated_at",
     "map_generated_days_ago",
     "label_namespaces",
     "matched_deployments",
     "env_filter_applied",
-    "namespace_match_ignored",
+    "skipped_namespaces",
+    "skipped_namespaces_note",
     "unknown_qualifiers",
     "known_environments",
     "known_regions",
-    "qualifier_note",
     "shared_control_plane_namespaces",
     "ambiguous_customer",
     "candidates",
