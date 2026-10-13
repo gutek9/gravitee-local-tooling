@@ -89,6 +89,20 @@ test("loadCustomerMap: a live map regenerated long ago is called stale, even tho
   });
 });
 
+test("loadCustomerMap: a live map whose date cannot be read says its age is unknown", async () => {
+  // Regression: no commit date meant no age and no warning, so `source: "github"`
+  // read as a current map.
+  for (const committedAt of [null, "not-a-date"]) {
+    resetCustomerMapCache();
+    await withGitHub({ committedAt }, async () => {
+      const map = await loadCustomerMap();
+      assert.equal(map.source, "github");
+      assert.equal(map.generated_days_ago, undefined);
+      assert.match(map.warning, /its age is unknown/, `for committedAt=${committedAt}`);
+    });
+  }
+});
+
 test("loadCustomerMap: GitHub down falls back to the snapshot, dated by its source CSV, not its refresh", async () => {
   // Regression (#9 review): the snapshot's only date was the refresh date, so
   // refreshing an old CSV today made the fallback report a map generated today.

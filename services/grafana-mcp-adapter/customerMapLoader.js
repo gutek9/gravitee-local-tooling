@@ -158,7 +158,23 @@ async function loadCustomerMapUncached() {
     const rows = parseCustomerCsv(await fetchCustomerCsv());
     if (!rows.length) throw new Error("fetched customer CSV parsed to zero rows");
     const generatedAt = await fetchGeneratedAt((process.env.GITHUB_PERSONAL_ACCESS_TOKEN || "").trim());
-    cache = { rows, source: "github", generated_at: generatedAt, ...staleness(generatedAt) };
+    const age = staleness(generatedAt);
+    cache = {
+      rows,
+      source: "github",
+      generated_at: generatedAt,
+      ...age,
+      // No readable commit date means no age, and `source: "github"` alone must
+      // not pass for a current map.
+      ...(age.generated_days_ago === undefined
+        ? {
+            warning:
+              "The customer map was fetched from GitHub, but when it was last regenerated could not be read, " +
+              "so its age is unknown. It is a GENERATED file: fetching it live does not make it current, and a " +
+              "customer that does not resolve may simply be missing from it.",
+          }
+        : {}),
+    };
     cachedAt = Date.now();
     return cache;
   } catch (err) {

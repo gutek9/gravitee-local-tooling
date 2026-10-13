@@ -77,7 +77,8 @@ The response also says how the customer was found:
   its name), `customer_map` (a Gravitee Cloud customer, found through the
   deployment map), both joined with `+`, or `none`.
 - `map_source`, `map_generated_at`, `map_warning` — where the map came from
-  (`github`, `bundled_snapshot`, `unavailable`) and whether it is stale.
+  (`github`, `bundled_snapshot`, `unavailable`) and whether it is stale, or
+  whether its age could not be read.
 - `matched_deployments`, `control_plane_ids`, `shared_control_plane_namespaces` —
   the Cloud deployments behind the namespaces. Control-plane namespaces are
   shared by every customer on that control plane, so they are reported but never
