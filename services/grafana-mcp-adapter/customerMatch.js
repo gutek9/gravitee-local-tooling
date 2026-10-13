@@ -167,7 +167,7 @@ export function resolveCustomerNamespaces(rows = [], { core, envs = [], qualifie
       candidates,
       reason:
         `"${core}" matches ${candidates.length} different customers (${candidates.map((c) => c.customer).join(", ")}). ` +
-        "Searching them together would return one customer's logs under another's name, so nothing was searched. " +
+        "Searching them together would return one customer's logs under another's name, so none of them was searched. " +
         "Use the exact customer name.",
     };
   }

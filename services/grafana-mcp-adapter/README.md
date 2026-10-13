@@ -83,7 +83,10 @@ The response also says how the customer was found:
   shared by every customer on that control plane, so they are reported but never
   searched under one customer's name.
 - `ambiguous_customer`, `candidates`, `customer_note` — the fragment matched
-  several Cloud customers, so the map contributed nothing. Pass the exact name.
+  several Cloud customers, so the map contributed nothing. Unless a hosted
+  namespace carries the whole fragment, nothing is searched (`refused`): a
+  `service_name` match across all of Loki would search the same ambiguous
+  fragment. Pass the exact name.
 - `spans_multiple_organizations`, `organizations_note` — one name, several Cockpit
   organizations. Pass `control_plane_id` to narrow to one.
 - `refused`, `unknown_control_plane`, `requested_control_plane_id` — the

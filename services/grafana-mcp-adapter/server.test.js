@@ -367,19 +367,37 @@ test("grafana_logs_link: a failed namespace lookup is reported, not blamed on a 
   });
 });
 
-test("grafana_logs_link: a fragment matching several Cloud customers contributes nothing from the map", async () => {
+test("grafana_logs_link: a fragment matching several Cloud customers is refused, and Loki is never queried", async () => {
   // "beac" matches beacon AND beaconlabs. Merging them would return one
   // customer's logs under the other's name, so the map withholds both.
+  // Regression: the tool then searched service_name for "beac" across all of
+  // Loki, while its note said nothing was searched.
   await withLokiStub(
     { [NS_VALUES]: ["apim-dp-cp2222-dp0001", "apim-dp-cp3333-dp0001"], [SERIES]: [], [SVC_VALUES]: [] },
     async (calls) => {
       const out = await callTool("grafana_logs_link", { client: "beac" });
+      assert.equal(out.refused, true);
       assert.deepEqual(out.resolved_namespaces, []);
+      assert.deepEqual(out.links, []);
       assert.equal(out.ambiguous_customer, true);
       assert.deepEqual(out.candidates.map((c) => c.customer), ["beacon", "beaconlabs"]);
       assert.match(out.customer_note, /matches 2 different customers/);
-      const series = decodeURIComponent(calls.find((u) => u.includes(SERIES)));
-      assert.ok(!series.includes("apim-dp-"), series);
+      assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+    },
+  );
+});
+
+test("grafana_logs_link: an ambiguous fragment still searches a hosted namespace that carries it whole", async () => {
+  await withLokiStub(
+    { [NS_VALUES]: ["beac-prod", "apim-dp-cp2222-dp0001"], [SERIES]: [stream("beac-prod", "beac-gateway")] },
+    async () => {
+      const out = await callTool("grafana_logs_link", { client: "beac" });
+      assert.equal(out.refused, undefined);
+      assert.deepEqual(out.resolved_namespaces, ["beac-prod"]);
+      assert.equal(out.ambiguous_customer, true);
+      assert.match(out.customer_note, /none of them was searched/);
+      assert.match(out.customer_note, /Only the namespaces named after "beac" \(beac-prod\) were searched/);
+      assert.equal(out.links[0].namespace, "beac-prod");
     },
   );
 });

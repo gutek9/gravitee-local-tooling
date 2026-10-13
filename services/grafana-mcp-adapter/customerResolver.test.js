@@ -64,6 +64,7 @@ test("resolveClient: an ambiguous fragment takes nothing from the map, and names
   const out = resolve("beac", ["apim-dp-cp2222-dp0001", "apim-dp-cp3333-dp0001"]);
   assert.deepEqual(out.namespaces, []);
   assert.equal(out.via, "none");
+  assert.equal(out.refused, true);
   assert.equal(out.ambiguous_customer, true);
   assert.deepEqual(out.candidates.map((c) => c.customer), ["beacon", "beaconlabs"]);
   assert.match(out.note, /different customers/);

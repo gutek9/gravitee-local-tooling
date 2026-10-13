@@ -138,14 +138,20 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
   // which Cockpit customers were withheld and why.
   // A customer that does not resolve may simply be missing from a stale map, and
   // that is a different answer from "no such customer".
+  // With no hosted namespace either, the resolution is refused: falling back to
+  // a service_name match across all of Loki would search the very fragment the
+  // caller was just told was too ambiguous to search.
   if (resolved.ambiguous) {
     return {
       namespaces: byLabel,
       via: byLabel.length ? "namespace_label" : "none",
+      ...(byLabel.length ? {} : { refused: true }),
       ambiguous_customer: true,
       candidates: resolved.candidates,
       ...(skipped.length ? { skipped_namespaces: skipped } : {}),
-      note: resolved.reason,
+      note: byLabel.length
+        ? `${resolved.reason} Only the namespaces named after "${label.name}" (${byLabel.join(", ")}) were searched.`
+        : resolved.reason,
       map_source: map.source,
       map_warning: map.warning,
     };
