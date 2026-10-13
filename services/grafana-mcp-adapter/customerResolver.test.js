@@ -156,6 +156,17 @@ test("resolveClient: control_plane_id with a word the customer does not have ref
   assert.match(out.note, /"staging" does not describe any deployment of acme/);
 });
 
+test("resolveClient: a failed namespace lookup still resolves through the map, and is reported", () => {
+  // null is "Loki did not answer", not "no namespaces": nothing may be called
+  // absent from Loki on the strength of a lookup that failed.
+  const out = resolve("acme", null);
+  assert.deepEqual(out.namespaces, ACME_DATA_PLANES);
+  assert.equal(out.via, "customer_map");
+  assert.equal(out.mapped_namespaces_absent_in_range, undefined);
+  assert.equal(out.namespace_lookup_failed, true);
+  assert.match(out.namespace_lookup_note, /not checked against Loki/);
+});
+
 test("resolutionReport: renames via and note, and leaves out what is not set", () => {
   const report = resolutionReport({
     namespaces: ["x"],
@@ -181,6 +192,7 @@ test("resolutionReport: every field a resolution sets reaches the report", () =>
     resolve("acme dev", ["acme-prod", ...ACME_DATA_PLANES]),
     resolve("acme staging", ["acme-prod", ...ACME_DATA_PLANES]),
     resolve("april staging", ["april-prod", "april-rec"]),
+    resolve("acme", null),
     { ...resolve("acme", ACME_DATA_PLANES), map_warning: "stale" },
   ];
   const renamed = { via: "resolved_via", note: "customer_note" };
@@ -220,6 +232,16 @@ test("findCustomerMatches: max_results caps the list and says how many were left
   assert.deepEqual(out.gravitee_cloud_customers.map((c) => c.customer), ["beacon"]);
   assert.equal(out.gravitee_cloud_truncated, 1);
   assert.match(out.note, /matches 2 different Gravitee Cloud customers/);
+});
+
+test("findCustomerMatches: a failed namespace lookup is not reported as nothing matched", () => {
+  const out = find("april", null);
+  assert.equal(out.namespace_lookup_failed, true);
+  assert.match(out.note, /No Gravitee Cloud customer matched "april", and hosted namespaces could not be checked/);
+  // A Cloud customer still resolves from the map; only the Loki side is unknown.
+  const acme = find("acme", null);
+  assert.equal(acme.gravitee_cloud_customers[0].customer, "acme");
+  assert.equal(acme.namespace_lookup_failed, true);
 });
 
 test("findCustomerMatches: a live data plane the map does not attribute is reported apart, never claimed", () => {

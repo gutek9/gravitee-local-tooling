@@ -105,6 +105,9 @@ The response also says how the customer was found:
 - `mapped_namespaces_absent_in_range` — namespaces the map lists that Loki has
   not seen in this range. When nothing matches and these exist, the `note` says
   the map is probably stale rather than reporting "no logs".
+- `namespace_lookup_failed`, `namespace_lookup_note` — Loki did not return its
+  namespace list. Hosted customers could not be matched by namespace, and mapped
+  namespaces were not checked against Loki, so none is reported as absent.
 - `suggestions` — close `service_name` values (see above), only when the `client`
   matched no namespace **and** no streams.
 
@@ -232,7 +235,10 @@ regions, the exact data-plane namespaces, and the shared control-plane
 namespaces. Hosted customers come back as `hosted_namespaces`. Data planes that
 are live on a customer's control plane but missing from the map are listed as
 `unattributed_namespaces_on_same_control_plane`: a control plane is shared, so
-they may belong to another customer and are never searched as this one.
+they may belong to another customer and are never searched as this one. When
+Loki does not return its namespace list, `namespace_lookup_failed` says hosted
+namespaces and unattributed data planes could not be checked, rather than
+reporting that none matched.
 
 ## Setup
 

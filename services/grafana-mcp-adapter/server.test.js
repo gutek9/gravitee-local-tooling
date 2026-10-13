@@ -53,11 +53,14 @@ function githubResponse(u) {
   });
 }
 
+// A route answered with this fails with HTTP 502, as Loki does when it is down.
+const LOKI_DOWN = { lokiDown: true };
+
 // Install a fetch stub that answers each Loki endpoint from `routes` (keyed by a
 // substring of the request path) and records every Loki URL it saw. `routes`
-// values are the JSON `data` array Loki would return under `{ status, data }`.
-// The customer map is reloaded through the stub on every call, so each test
-// starts from CUSTOMERS_CSV rather than a map cached by an earlier test.
+// values are the JSON `data` array Loki would return under `{ status, data }`,
+// or LOKI_DOWN. The customer map is reloaded through the stub on every call, so
+// each test starts from CUSTOMERS_CSV rather than a map cached by an earlier test.
 function withLokiStub(routes, fn) {
   const calls = [];
   const origFetch = globalThis.fetch;
@@ -72,6 +75,9 @@ function withLokiStub(routes, fn) {
         data = typeof value === "function" ? value(u) : value;
         break;
       }
+    }
+    if (data === LOKI_DOWN) {
+      return Promise.resolve({ ok: false, status: 502, text: () => Promise.resolve(""), headers: { get: () => null } });
     }
     return Promise.resolve({
       ok: true,
@@ -347,6 +353,20 @@ test("grafana_logs_link: no streams for a mapped namespace Loki does not know ->
   );
 });
 
+test("grafana_logs_link: a failed namespace lookup is reported, not blamed on a stale map", async () => {
+  // Regression: the failure was swallowed as "no namespaces", so every mapped
+  // namespace looked absent from Loki and an empty result blamed a stale map.
+  await withLokiStub({ [NS_VALUES]: LOKI_DOWN, [SERIES]: [] }, async () => {
+    const out = await callTool("grafana_logs_link", { client: "acme" });
+    assert.equal(out.resolved_namespaces.length, 3);
+    assert.equal(out.namespace_lookup_failed, true);
+    assert.match(out.namespace_lookup_note, /Loki did not return its namespace list/);
+    assert.equal(out.mapped_namespaces_absent_in_range, undefined);
+    assert.doesNotMatch(out.note, /stale/);
+    assert.match(out.note, /No log streams in this range for namespace/);
+  });
+});
+
 test("grafana_logs_link: a fragment matching several Cloud customers contributes nothing from the map", async () => {
   // "beac" matches beacon AND beaconlabs. Merging them would return one
   // customer's logs under the other's name, so the map withholds both.
@@ -496,6 +516,18 @@ test("grafana_find_customer: nothing matched -> says so", async () => {
     assert.deepEqual(out.gravitee_cloud_customers, []);
     assert.deepEqual(out.hosted_namespaces, []);
     assert.match(out.note, /No Gravitee Cloud customer/);
+  });
+});
+
+test("grafana_find_customer: a failed namespace lookup says hosted namespaces could not be checked", async () => {
+  // Regression: it answered "no hosted namespace matched" for a lookup that never
+  // happened.
+  await withLokiStub({ [NS_VALUES]: LOKI_DOWN }, async () => {
+    const out = await callTool("grafana_find_customer", { query: "april" });
+    assert.deepEqual(out.hosted_namespaces, []);
+    assert.equal(out.namespace_lookup_failed, true);
+    assert.match(out.note, /hosted namespaces could not be checked/);
+    assert.doesNotMatch(out.note, /hosted namespace, or known id matched/);
   });
 });
 

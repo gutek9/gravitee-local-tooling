@@ -35,17 +35,32 @@ export async function resolveNamespaces(client, { datasourceUid, from, controlPl
   const phrase = String(client || "").trim();
   if (!phrase) return { namespaces: [], via: "none" };
 
-  let namespaceValues = [];
+  let namespaceValues = null;
   try {
     namespaceValues = await fetchLabelValues(datasourceUid, "namespace", { from });
   } catch {
-    namespaceValues = [];
+    namespaceValues = null;
   }
   const map = await loadCustomerMap();
   return resolveClient({ phrase, controlPlaneId, namespaceValues, map });
 }
 
-export function resolveClient({ phrase, controlPlaneId, namespaceValues = [], map }) {
+// `namespaceValues: null` means Loki did not return its namespace list. That is
+// not "no namespaces": hosted customers cannot be matched by namespace, and
+// mapped namespaces cannot be checked against Loki, so calling them all absent
+// would blame a stale map for a failed lookup. The result says so instead.
+export function resolveClient({ namespaceValues = [], ...rest }) {
+  if (namespaceValues !== null) return resolveFromRoutes({ ...rest, namespaceValues, liveNamespacesKnown: true });
+  return {
+    ...resolveFromRoutes({ ...rest, namespaceValues: [], liveNamespacesKnown: false }),
+    namespace_lookup_failed: true,
+    namespace_lookup_note:
+      "Loki did not return its namespace list, so hosted customers could not be matched by namespace " +
+      "and mapped namespaces were not checked against Loki.",
+  };
+}
+
+function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamespacesKnown, map }) {
   // BOTH routes, always — never stop at the first hit. A customer can exist in
   // both populations at once: acme has a hosted `acme-prod` namespace
   // AND Cockpit data planes under `apim-dp-cp1111-*`. Returning early on the
@@ -163,7 +178,7 @@ export function resolveClient({ phrase, controlPlaneId, namespaceValues = [], ma
   // a confident "no logs for this customer" — a false negative dressed as an
   // answer. Flag it instead.
   const liveNamespaces = new Set(namespaceValues);
-  const absent = resolved.namespaces.filter((n) => !liveNamespaces.has(n));
+  const absent = liveNamespacesKnown ? resolved.namespaces.filter((n) => !liveNamespaces.has(n)) : [];
 
   return {
     namespaces,
@@ -229,6 +244,8 @@ export function resolutionReport(resolution = {}) {
     "organizations_note",
     "control_plane_ids",
     "mapped_namespaces_absent_in_range",
+    "namespace_lookup_failed",
+    "namespace_lookup_note",
     "unknown_control_plane",
     "requested_control_plane_id",
   ]) {
@@ -247,17 +264,22 @@ const ID_SHAPED = /^(apim-(dp|cp)-[0-9a-z-]+|[0-9a-z]+(-[0-9a-z]+)+)$/i;
 // without querying any logs.
 export async function findCustomer(query, { datasourceUid, maxResults = 20 } = {}) {
   const map = await loadCustomerMap();
-  let namespaceValues = [];
+  let namespaceValues = null;
   try {
     // 30 days: a deployment absent over that window is gone, not merely quiet.
     namespaceValues = await fetchLabelValues(datasourceUid, "namespace", { from: "now-30d" });
   } catch {
-    namespaceValues = [];
+    namespaceValues = null;
   }
   return findCustomerMatches({ query, map, namespaceValues, maxResults });
 }
 
-export function findCustomerMatches({ query, map, namespaceValues = [], maxResults = 20 }) {
+// `namespaceValues: null` means Loki did not return its namespace list: hosted
+// namespaces and unattributed data planes could not be checked, which is not the
+// same answer as "none matched".
+export function findCustomerMatches({ query, map, namespaceValues: givenValues = [], maxResults = 20 }) {
+  const lookupFailed = givenValues === null;
+  const namespaceValues = givenValues || [];
   const needle = String(query || "").trim();
 
   // Ids are the only handle a Cockpit tenant has in an alert or a pod name, so
@@ -313,6 +335,14 @@ export function findCustomerMatches({ query, map, namespaceValues = [], maxResul
     gravitee_cloud_customers: cockpit.slice(0, maxResults),
     gravitee_cloud_truncated: cockpit.length > maxResults ? cockpit.length - maxResults : 0,
     hosted_namespaces: hostedNamespaces,
+    ...(lookupFailed
+      ? {
+          namespace_lookup_failed: true,
+          namespace_lookup_note:
+            "Loki did not return its namespace list, so hosted namespaces and unattributed data planes " +
+            "could not be checked.",
+        }
+      : {}),
   };
 
   if (cockpit.length > 1) {
@@ -334,6 +364,10 @@ export function findCustomerMatches({ query, map, namespaceValues = [], maxResul
       "cover — you can still query it directly by namespace, but its owner cannot be determined from the map." : ""}`;
   } else if (byId && byId.kind !== "unknown" && byId.note) {
     result.note = byId.note;
+  } else if (!cockpit.length && lookupFailed) {
+    result.note =
+      `No Gravitee Cloud customer matched "${query}", and hosted namespaces could not be checked: ` +
+      "Loki did not return its namespace list.";
   } else if (!cockpit.length && !hostedNamespaces.length) {
     result.note =
       byId && byId.kind === "unknown"
