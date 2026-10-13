@@ -157,6 +157,23 @@ test("resolveClient: control_plane_id with a word the customer does not have ref
   assert.match(out.note, /"staging" does not describe any deployment of acme/);
 });
 
+test("resolveClient: a control_plane_id skips hosted namespaces, even ones that carry the whole name", () => {
+  const out = resolve("acme", ["acme-prod", ...ACME_DATA_PLANES], { controlPlaneId: "cp1111" });
+  assert.deepEqual(out.namespaces, ACME_DATA_PLANES);
+  assert.deepEqual(out.label_namespaces, []);
+  assert.deepEqual(out.skipped_namespaces, ["acme-prod"]);
+  assert.match(out.skipped_namespaces_note, /a hosted namespace is on no Cockpit organization/);
+});
+
+test("resolveClient: control_plane_id with a hosted whole-name match and a word the map lacks refuses on the word", () => {
+  // acme-staging carries the whole phrase, but the id rules hosted namespaces
+  // out, and the map has no staging: the refusal names the word only.
+  const out = resolve("acme staging", ["acme-staging", ...ACME_DATA_PLANES], { controlPlaneId: "cp1111" });
+  assert.equal(out.refused, true);
+  assert.deepEqual(out.skipped_namespaces, ["acme-staging"]);
+  assert.match(out.note, /^"staging" does not describe any deployment of acme/);
+});
+
 test("resolveClient: a failed namespace lookup still resolves through the map, and is reported", () => {
   // null is "Loki did not answer", not "no namespaces": nothing may be called
   // absent from Loki on the strength of a lookup that failed.
@@ -194,6 +211,7 @@ test("resolutionReport: every field a resolution sets reaches the report", () =>
     resolve("acme staging", ["acme-prod", ...ACME_DATA_PLANES]),
     resolve("april staging", ["april-prod", "april-rec"]),
     resolve("acme", null),
+    resolve("acme", ["acme-prod", ...ACME_DATA_PLANES], { controlPlaneId: "cp1111" }),
     { ...resolve("acme", ACME_DATA_PLANES), map_warning: "stale" },
   ];
   const renamed = { via: "resolved_via", note: "customer_note" };

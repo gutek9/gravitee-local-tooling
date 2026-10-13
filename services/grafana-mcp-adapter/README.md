@@ -93,7 +93,9 @@ The response also says how the customer was found:
   `control_plane_id` selected nothing: it is not one of the customer's
   organizations, the customer is not in the map, or the name is ambiguous.
   Nothing is searched, and `control_plane_ids` lists the valid ids. An id only
-  ever narrows; it is never dropped to search more widely.
+  ever narrows; it is never dropped to search more widely. A hosted namespace is
+  on no Cockpit organization, so with an id it is left out and reported in
+  `skipped_namespaces`.
 - `refused`, `unknown_qualifiers`, `known_environments`, `known_regions` — a word
   after the customer name (environment, region or provider) describes none of
   its deployments and none of its namespaces, e.g. `acme staging` when acme only

@@ -421,6 +421,26 @@ test("grafana_logs_link: a matching control_plane_id narrows to that organizatio
   );
 });
 
+test("grafana_logs_link: a control_plane_id leaves out hosted namespaces, which are on no organization", async () => {
+  // Regression: acme + cp1111 also searched the hosted acme-prod, so the id
+  // widened past the organization it names.
+  await withLokiStub(
+    {
+      [NS_VALUES]: ["acme-prod", "apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp0002", "apim-dp-cp1111-dp0003"],
+      [SERIES]: [stream("apim-dp-cp1111-dp0001", "apim-gateway")],
+    },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "acme", control_plane_id: "cp1111" });
+      assert.deepEqual(out.resolved_namespaces, ["apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp0002", "apim-dp-cp1111-dp0003"]);
+      assert.equal(out.resolved_via, "customer_map");
+      assert.deepEqual(out.skipped_namespaces, ["acme-prod"]);
+      assert.match(out.skipped_namespaces_note, /control_plane_id "cp1111" leaves it out/);
+      const series = decodeURIComponent(calls.find((u) => u.includes(SERIES)));
+      assert.ok(!series.includes("acme-prod"), series);
+    },
+  );
+});
+
 test("grafana_logs_link: an unmatched control_plane_id is refused and Loki is never queried", async () => {
   // Regression: an id matching none of the customer's organizations fell back to
   // every deployment, so a mistyped id searched both of northwind's tenants.

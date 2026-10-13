@@ -74,8 +74,11 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
   // found by dropping trailing words ignore those words: "acme dev" has no
   // `acme-dev`, so it drops "dev" and finds `acme-prod`, and dev would also
   // search prod. Such namespaces are reported as skipped, never searched.
-  const byLabel = label.tail.length ? [] : label.namespaces;
-  const skipped = label.tail.length ? label.namespaces : [];
+  // A control_plane_id names one Cockpit organization and a hosted namespace is
+  // on none, so with an id the label route's namespaces are skipped as well:
+  // searching them would widen past the organization asked for.
+  const byLabel = label.tail.length || controlPlaneId ? [] : label.namespaces;
+  const skipped = byLabel.length ? [] : label.namespaces;
   const { core, tail } = splitNameAndTail(map.rows, phrase);
   const resolved = resolveCustomerNamespaces(map.rows, { core, qualifiers: tail, controlPlaneId });
   const namespaces = [...new Set([...byLabel, ...resolved.namespaces])];
@@ -84,7 +87,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
   // the customer only by ignoring them, so searching either would return more
   // than was asked for. What exists is listed so the caller can retry.
   const refuseUnknownWords = () => {
-    const labelPart = skipped.length
+    const labelPart = label.tail.length && skipped.length
       ? `"${label.tail.join(" ")}" is in none of the namespaces found for "${label.name}" (${skipped.join(", ")}).`
       : "";
     return {
@@ -192,9 +195,11 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
     ...(skipped.length
       ? {
           skipped_namespaces: skipped,
-          skipped_namespaces_note:
-            `Found for "${label.name}" but not for "${label.tail.join(" ")}", so not searched. ` +
-            "Name one of them to search it.",
+          skipped_namespaces_note: label.tail.length
+            ? `Found for "${label.name}" but not for "${label.tail.join(" ")}", so not searched. ` +
+              "Name one of them to search it."
+            : `Found for "${label.name}", but a hosted namespace is on no Cockpit organization, so ` +
+              `control_plane_id "${controlPlaneId}" leaves it out. Drop control_plane_id to search it.`,
         }
       : {}),
     ...(absent.length ? { mapped_namespaces_absent_in_range: absent } : {}),
