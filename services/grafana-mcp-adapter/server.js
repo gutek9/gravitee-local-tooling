@@ -219,6 +219,19 @@ registerTool(
         from,
         controlPlaneId: control_plane_id,
       });
+      // Refused before any stream discovery: with no namespaces the selector
+      // below would fall back to a service_name match across all of Loki.
+      if (resolution.unknown_control_plane) {
+        return textResult({
+          refused: true,
+          link_style,
+          resolved_namespaces: [],
+          ...resolutionReport(resolution),
+          range: { from, to },
+          links: [],
+          note: resolution.note,
+        });
+      }
       const namespaces = resolution.namespaces;
       const pinned = namespaces.length ? namespaces : undefined;
       // The selector we discover streams with carries no line filter — /series

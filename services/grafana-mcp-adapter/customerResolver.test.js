@@ -94,6 +94,32 @@ test("resolveClient: one name over two organizations says so, and control_plane_
   assert.equal(one.spans_multiple_organizations, undefined);
 });
 
+test("resolveClient: an unmatched control_plane_id is refused, with the customer's valid ids", () => {
+  const out = resolve("northwind", ["apim-dp-cp5555-dp0001", "apim-dp-cp6666-dp0001"], { controlPlaneId: "cp9999" });
+  assert.deepEqual(out.namespaces, []);
+  assert.equal(out.unknown_control_plane, true);
+  assert.equal(out.requested_control_plane_id, "cp9999");
+  assert.deepEqual(out.control_plane_ids, ["cp5555", "cp6666"]);
+  assert.match(out.note, /"cp9999" is not one of northwind's Cockpit organizations/);
+});
+
+test("resolveClient: control_plane_id on a customer the map does not have is refused, even with a label match", () => {
+  // The label route alone would search april-prod, which the id was meant to narrow.
+  const out = resolve("april", ["april-prod"], { controlPlaneId: "cp1111" });
+  assert.deepEqual(out.namespaces, []);
+  assert.equal(out.unknown_control_plane, true);
+  assert.match(out.note, /only narrows a Gravitee Cloud customer/);
+});
+
+test("resolveClient: control_plane_id with an ambiguous name is refused, with the candidates", () => {
+  const out = resolve("beac", [], { controlPlaneId: "cp2222" });
+  assert.deepEqual(out.namespaces, []);
+  assert.equal(out.unknown_control_plane, true);
+  assert.equal(out.ambiguous_customer, true);
+  assert.deepEqual(out.candidates.map((c) => c.customer), ["beacon", "beaconlabs"]);
+  assert.match(out.note, /was not applied to any of them/);
+});
+
 test("resolutionReport: renames via and note, and leaves out what is not set", () => {
   const report = resolutionReport({
     namespaces: ["x"],
@@ -114,6 +140,8 @@ test("resolutionReport: every field a resolution sets reaches the report", () =>
     resolve("beac"),
     resolve("zzxqq"),
     resolve("northwind", ["apim-dp-cp5555-dp0001", "apim-dp-cp6666-dp0001"]),
+    resolve("northwind", [], { controlPlaneId: "cp9999" }),
+    resolve("beac", [], { controlPlaneId: "cp2222" }),
     { ...resolve("acme", ACME_DATA_PLANES), map_warning: "stale" },
   ];
   const renamed = { via: "resolved_via", note: "customer_note" };

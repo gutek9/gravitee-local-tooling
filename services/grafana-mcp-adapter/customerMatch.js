@@ -194,7 +194,30 @@ export function resolveCustomerNamespaces(rows = [], { core, envs = [], qualifie
 
   // Optional narrowing to one organization when a name spans several.
   const cpFiltered = controlPlaneId ? rowsToUse.filter((r) => r.control_plane_id === controlPlaneId) : rowsToUse;
-  const finalRows = cpFiltered.length ? cpFiltered : rowsToUse;
+
+  // An id that narrows to nothing is refused, never ignored. Falling back to
+  // every deployment would turn a filter into a widening: a mistyped or foreign
+  // id would return all of the customer's organizations as if they were the one
+  // asked for.
+  if (controlPlaneId && !cpFiltered.length) {
+    const valid = [...new Set(rowsToUse.map((r) => r.control_plane_id).filter(Boolean))].sort();
+    const ownsIt = matched.some((r) => r.control_plane_id === controlPlaneId);
+    return {
+      matched: [],
+      namespaces: [],
+      control_plane_namespaces: [],
+      unknown_control_plane: true,
+      requested_control_plane_id: controlPlaneId,
+      control_plane_ids: valid,
+      reason: ownsIt
+        ? `"${controlPlaneId}" is one of ${matched[0].customer}'s Cockpit organizations, but none of the ` +
+          `deployments matching ${quals.length ? `"${quals.join(" ")}"` : "the requested environment"} is on it ` +
+          `(those are on: ${valid.join(", ")}). Nothing was searched.`
+        : `"${controlPlaneId}" is not one of ${matched[0].customer}'s Cockpit organizations ` +
+          `(${valid.join(", ")}). Nothing was searched.`,
+    };
+  }
+  const finalRows = cpFiltered;
 
   const namespaces = [...new Set(finalRows.map((r) => dataPlaneNamespace(r.data_plane_id)))];
   const controlPlanes = [...new Set(finalRows.map((r) => r.control_plane_id).filter(Boolean).map(controlPlaneNamespace))];

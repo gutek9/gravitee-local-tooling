@@ -168,6 +168,29 @@ test("resolveCustomerNamespaces: control_plane_id narrows to one organization", 
   assert.equal(out.spans_multiple_organizations, undefined);
 });
 
+test("resolveCustomerNamespaces: an unmatched control_plane_id is refused, not ignored", () => {
+  // Regression: an id matching none of the customer's organizations fell back to
+  // ALL of them, so a mistyped id returned every deployment as if it were the one
+  // asked for.
+  const out = resolveCustomerNamespaces(parseCustomerCsv(AMBIG), { core: "matt", controlPlaneId: "cp9999" });
+  assert.deepEqual(out.namespaces, []);
+  assert.deepEqual(out.matched, []);
+  assert.equal(out.unknown_control_plane, true);
+  assert.equal(out.requested_control_plane_id, "cp9999");
+  assert.deepEqual(out.control_plane_ids, ["cp5555", "cp6666"]);
+  assert.match(out.reason, /"cp9999" is not one of matt's Cockpit organizations \(cp5555, cp6666\)/);
+});
+
+test("resolveCustomerNamespaces: the customer's own id on another environment is refused, and says so", () => {
+  // cp5555 is matt's, but only for dev. Asking for matt prod on cp5555 selects
+  // nothing; widening to prod's organization would ignore the id.
+  const out = resolveCustomerNamespaces(parseCustomerCsv(AMBIG), { core: "matt", qualifiers: ["prod"], controlPlaneId: "cp5555" });
+  assert.deepEqual(out.namespaces, []);
+  assert.equal(out.unknown_control_plane, true);
+  assert.deepEqual(out.control_plane_ids, ["cp6666"]);
+  assert.match(out.reason, /is one of matt's Cockpit organizations, but none of the deployments matching "prod" is on it/);
+});
+
 test("groupByCustomer: groups rows by slug", () => {
   const groups = groupByCustomer(parseCustomerCsv(AMBIG));
   assert.equal(groups.size, 3);

@@ -60,6 +60,32 @@ export function resolveClient({ phrase, controlPlaneId, namespaceValues = [], ma
   const resolved = resolveCustomerNamespaces(map.rows, { core, qualifiers: tail, controlPlaneId });
   const namespaces = [...new Set([...byLabel, ...resolved.namespaces])];
 
+  // control_plane_id only ever narrows. If it selected nothing from the map —
+  // an id that is not this customer's, a customer the map does not have, or a
+  // name too ambiguous to pick one customer — refuse instead of searching
+  // without it: the label route, or the caller's service_name fallback, would
+  // return logs the id was meant to exclude.
+  if (controlPlaneId && !resolved.namespaces.length) {
+    const note =
+      resolved.reason && resolved.unknown_control_plane
+        ? resolved.reason
+        : resolved.ambiguous
+          ? `${resolved.reason} control_plane_id "${controlPlaneId}" was not applied to any of them: pass the exact customer name.`
+          : `control_plane_id "${controlPlaneId}" only narrows a Gravitee Cloud customer, and "${phrase}" is not one ` +
+            "in the customer map. Nothing was searched. Drop control_plane_id, or check the name.";
+    return {
+      namespaces: [],
+      via: "none",
+      unknown_control_plane: true,
+      requested_control_plane_id: controlPlaneId,
+      control_plane_ids: resolved.control_plane_ids || [],
+      ...(resolved.ambiguous ? { ambiguous_customer: true, candidates: resolved.candidates } : {}),
+      note,
+      map_source: map.source,
+      map_warning: map.warning,
+    };
+  }
+
   // An ambiguous fragment contributes NOTHING from the map rather than merging
   // several customers together. The label route is unaffected — a hosted
   // customer that matched by name is still searched — but the caller is told
@@ -163,6 +189,8 @@ export function resolutionReport(resolution = {}) {
     "organizations_note",
     "control_plane_ids",
     "mapped_namespaces_absent_in_range",
+    "unknown_control_plane",
+    "requested_control_plane_id",
   ]) {
     if (resolution[key] !== undefined && resolution[key] !== null) out[key] = resolution[key];
   }

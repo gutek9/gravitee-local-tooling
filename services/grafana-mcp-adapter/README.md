@@ -86,6 +86,11 @@ The response also says how the customer was found:
   several Cloud customers, so the map contributed nothing. Pass the exact name.
 - `spans_multiple_organizations`, `organizations_note` — one name, several Cockpit
   organizations. Pass `control_plane_id` to narrow to one.
+- `refused`, `unknown_control_plane`, `requested_control_plane_id` — the
+  `control_plane_id` selected nothing: it is not one of the customer's
+  organizations, the customer is not in the map, or the name is ambiguous.
+  Nothing is searched, and `control_plane_ids` lists the valid ids. An id only
+  ever narrows; it is never dropped to search more widely.
 - `namespace_match_ignored` — trailing words no namespace carries (e.g. `prod`
   for a customer whose production namespace is `orbit-plt-live`).
 - `mapped_namespaces_absent_in_range` — namespaces the map lists that Loki has

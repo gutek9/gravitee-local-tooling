@@ -26,12 +26,15 @@ const { resetCustomerMapCache } = await import("./customerMapLoader.js");
 //   acme        one Cockpit organization, three data planes (prod, dev, qa)
 //   beacon,     two distinct customers that a fragment like "beac" matches
 //   beaconlabs  together
+//   northwind   one customer name across two Cockpit organizations
 const CUSTOMERS_CSV = `Customer,ControlPlaneId,DataPlaneId,Region,Provider,Cloud Region,Custom DNS,URLs
 acme,cp1111,cp1111-dp0001,unitedstates,aws,us-east-1,None,prod-org-acme.us-aws-us-east-1.gateway.gravitee.io
 acme,cp1111,cp1111-dp0002,unitedstates,aws,us-east-1,None,dev-org-acme.us-aws-us-east-1.gateway.gravitee.io
 acme,cp1111,cp1111-dp0003,unitedstates,aws,us-east-1,None,qa-org-acme.us-aws-us-east-1.gateway.gravitee.io
 beacon,cp2222,cp2222-dp0001,europe,az,westeurope,None,prod-org-beacon.eu-az-westeurope.gateway.gravitee.io
 beaconlabs,cp3333,cp3333-dp0001,europe,az,westeurope,None,prod-org-beaconlabs.eu-az-westeurope.gateway.gravitee.io
+northwind,cp4444,cp4444-dp0001,europe,az,westeurope,None,prod-org-northwind-a.eu-az-westeurope.gateway.gravitee.io
+northwind,cp5555,cp5555-dp0001,europe,az,westeurope,None,prod-org-northwind-b.eu-az-westeurope.gateway.gravitee.io
 `;
 
 // ---------------------------------------------------------------------------
@@ -293,6 +296,64 @@ test("grafana_logs_link: a fragment matching several Cloud customers contributes
       assert.ok(!series.includes("apim-dp-"), series);
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// grafana_logs_link: control_plane_id only ever narrows
+// ---------------------------------------------------------------------------
+
+const NORTHWIND_NS = ["apim-dp-cp4444-dp0001", "apim-dp-cp5555-dp0001"];
+
+test("grafana_logs_link: a matching control_plane_id narrows to that organization", async () => {
+  await withLokiStub(
+    { [NS_VALUES]: NORTHWIND_NS, [SERIES]: [stream("apim-dp-cp5555-dp0001", "apim-gateway")] },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "northwind", control_plane_id: "cp5555" });
+      assert.deepEqual(out.resolved_namespaces, ["apim-dp-cp5555-dp0001"]);
+      assert.equal(out.refused, undefined);
+      const series = decodeURIComponent(calls.find((u) => u.includes(SERIES)));
+      assert.ok(series.includes("apim-dp-cp5555-dp0001") && !series.includes("cp4444"), series);
+    },
+  );
+});
+
+test("grafana_logs_link: an unmatched control_plane_id is refused and Loki is never queried", async () => {
+  // Regression: an id matching none of the customer's organizations fell back to
+  // every deployment, so a mistyped id searched both of northwind's tenants.
+  await withLokiStub({ [NS_VALUES]: NORTHWIND_NS, [SERIES]: [], [SVC_VALUES]: [] }, async (calls) => {
+    const out = await callTool("grafana_logs_link", { client: "northwind", control_plane_id: "cp9999" });
+    assert.equal(out.refused, true);
+    assert.deepEqual(out.resolved_namespaces, []);
+    assert.deepEqual(out.links, []);
+    assert.equal(out.unknown_control_plane, true);
+    assert.equal(out.requested_control_plane_id, "cp9999");
+    assert.deepEqual(out.control_plane_ids, ["cp4444", "cp5555"]);
+    assert.match(out.note, /not one of northwind's Cockpit organizations/);
+    assert.ok(!calls.some((u) => u.includes(SERIES) || u.includes(SVC_VALUES)), calls.join("\n"));
+  });
+});
+
+test("grafana_logs_link: control_plane_id on a customer the map does not have is refused", async () => {
+  // april is hosted: no Cockpit organizations to narrow. Ignoring the id would
+  // search april-prod, or every service_name, as if the id had been applied.
+  await withLokiStub({ [NS_VALUES]: ["april-prod"], [SERIES]: [], [SVC_VALUES]: [] }, async (calls) => {
+    const out = await callTool("grafana_logs_link", { client: "april", control_plane_id: "cp1111" });
+    assert.equal(out.refused, true);
+    assert.deepEqual(out.control_plane_ids, []);
+    assert.match(out.note, /only narrows a Gravitee Cloud customer/);
+    assert.ok(!calls.some((u) => u.includes(SERIES)), calls.join("\n"));
+  });
+});
+
+test("grafana_logs_link: control_plane_id with an ambiguous name is refused, with the candidates", async () => {
+  await withLokiStub({ [NS_VALUES]: [], [SERIES]: [], [SVC_VALUES]: [] }, async (calls) => {
+    const out = await callTool("grafana_logs_link", { client: "beac", control_plane_id: "cp2222" });
+    assert.equal(out.refused, true);
+    assert.equal(out.ambiguous_customer, true);
+    assert.deepEqual(out.candidates.map((c) => c.customer), ["beacon", "beaconlabs"]);
+    assert.match(out.note, /was not applied to any of them/);
+    assert.ok(!calls.some((u) => u.includes(SERIES)), calls.join("\n"));
+  });
 });
 
 // ---------------------------------------------------------------------------
