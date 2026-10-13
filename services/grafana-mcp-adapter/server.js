@@ -15,12 +15,16 @@ import {
   buildLogsQuery,
   splitClientEnv,
   matchNamespaces,
+  requireDatasourceUid,
 } from "./helpers.js";
 import { fetchMatchingStreams, fetchLabelValues } from "./lokiDiscovery.js";
 import { linksForStreams, explainNoStreams } from "./logsLinks.js";
 
-// Loki datasource uid for the logs tools. Override per-instance via env.
-const LOGS_DATASOURCE_UID = process.env.GRAFANA_LOGS_DATASOURCE_UID || "grafanacloud-logs";
+// Loki datasource uid for the logs tools. Required — deliberately NOT defaulted:
+// a uid that is correct for one Grafana org is a silent, plausible failure in
+// every other one. requireDatasourceUid() turns "unset" into a clear error at
+// the point of use instead.
+const LOGS_DATASOURCE_UID = (process.env.GRAFANA_LOGS_DATASOURCE_UID || "").trim();
 
 // Allow list of read-only datasource types. 
 // PromQL/LogQL have no write statements.
@@ -222,6 +226,9 @@ registerTool(
   },
   async ({ client, component, line_filter, link_style = "drilldown", from = "now-1h", to = "now" }) =>
     withToolLogging("grafana_logs_link", { client, component, link_style, from, to }, async () => {
+      // Fail loudly and once, rather than querying a nonexistent datasource and
+      // reporting "no log streams matched" for what is really a config error.
+      requireDatasourceUid(LOGS_DATASOURCE_UID);
       // Prefer the customer's own namespace when it has one (`april-prod`,
       // `blueyonder-plt-live`): the namespace names the customer reliably,
       // whereas `service_name` doesn't for every tenant. Customers that only

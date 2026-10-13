@@ -19,6 +19,7 @@ const {
   rankClientSuggestions,
   splitClientEnv,
   matchNamespaces,
+  requireDatasourceUid,
 } = await import("./helpers.js");
 
 // ---------------------------------------------------------------------------
@@ -496,4 +497,22 @@ test("rankClientSuggestions: de-duplicates and caps at 10", () => {
   const out = rankClientSuggestions([...many, ...many], "april");
   assert.equal(out.length, 10);
   assert.equal(new Set(out).size, out.length);
+});
+
+// ---------------------------------------------------------------------------
+// requireDatasourceUid
+// ---------------------------------------------------------------------------
+
+test("requireDatasourceUid: returns the configured uid", () => {
+  assert.equal(requireDatasourceUid("grafanacloud-logs"), "grafanacloud-logs");
+  assert.equal(requireDatasourceUid("  padded-uid  "), "padded-uid");
+});
+
+test("requireDatasourceUid: unset/blank fails with an actionable message", () => {
+  for (const bad of [undefined, null, "", "   "]) {
+    assert.throws(() => requireDatasourceUid(bad), /GRAFANA_LOGS_DATASOURCE_UID is not set/);
+  }
+  // The message must say the uid can differ from the display name — the exact
+  // assumption that cost time on this instance.
+  assert.throws(() => requireDatasourceUid(""), /not always the same as the display name/);
 });

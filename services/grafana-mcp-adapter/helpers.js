@@ -57,6 +57,23 @@ export function summarizeQueryResult(payload = {}, { maxSeries = 50 } = {}) {
   return out;
 }
 
+// The Loki datasource uid has no safe default. Hardcoding one that happens to be
+// right for a single Grafana org is worse than having none: it fails silently
+// and plausibly everywhere else. Validated here so the failure is one clear
+// message rather than an empty result set.
+export function requireDatasourceUid(uid) {
+  const value = String(uid ?? "").trim();
+  if (!value) {
+    throw new Error(
+      "GRAFANA_LOGS_DATASOURCE_UID is not set. Set it to the uid of the Loki datasource " +
+        "holding your logs (Grafana > Connections > Data sources; the uid is in the page " +
+        "URL and is not always the same as the display name), then recreate the container: " +
+        "docker compose up -d --force-recreate grafana-mcp-adapter",
+    );
+  }
+  return value;
+}
+
 // Escape a free-text fragment for safe use inside a Loki regex matcher.
 export function escapeRegex(s = "") {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

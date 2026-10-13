@@ -83,6 +83,15 @@ services:
       GRAFANA_TOKEN: ${GRAFANA_TOKEN:-}
       GRAFANA_TIMEOUT_SECONDS: ${GRAFANA_TIMEOUT_SECONDS:-15}
       GRAFANA_LOGS_DATASOURCE_UID: ${GRAFANA_LOGS_DATASOURCE_UID:-}
+      # Gravitee Cloud customers live in `apim-dp-<cp>-<dp>` namespaces carrying
+      # their name nowhere, so the adapter resolves them through the deployment
+      # map in cloud-deployments-configuration - a private repo, so the fetch
+      # reuses the PAT the github MCP server already uses rather than adding a
+      # credential. Without it, hosted customers still resolve; Cloud ones do not.
+      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}
+      GRAFANA_CUSTOMER_MAP_REPO: ${GRAFANA_CUSTOMER_MAP_REPO:-}
+      GRAFANA_CUSTOMER_MAP_PATH: ${GRAFANA_CUSTOMER_MAP_PATH:-}
+      GRAFANA_CUSTOMER_MAP_REF: ${GRAFANA_CUSTOMER_MAP_REF:-}
     stdin_open: true
 
 volumes:

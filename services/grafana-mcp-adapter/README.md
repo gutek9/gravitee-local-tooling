@@ -161,8 +161,60 @@ values, and restart the agent. With `GRAFANA_ENABLED=true`, setup adds the
 `zendesk` / `vectordb` / `github`, with no manual wiring. It only needs HTTPS
 egress to the Grafana instance.
 
-`GRAFANA_LOGS_DATASOURCE_UID` is optional; it defaults to `grafanacloud-logs`,
-which is the Loki datasource uid on the Gravitee Grafana instance.
+`GRAFANA_LOGS_DATASOURCE_UID` is **required** — it has no default. A uid that is
+correct for one Grafana org is a silent, plausible failure in every other one, so
+the adapter refuses to guess: `doctor` reports it as a config error and the logs
+tools fail with a clear message rather than returning an empty result.
+
+Find it under Connections > Data sources > (Loki). **The uid is not always the
+same as the display name.** On the Gravitee instance the datasource is displayed
+as `grafanacloud-gravitee-logs` but its uid is `grafanacloud-logs`.
+
+### The customer snapshot is never committed
+
+`customers-snapshot.json` is a **local fallback cache** and is deliberately
+gitignored. It is generated from `gravitee-io/cloud-deployments-configuration`,
+which is **private**, and it contains the customer list with their control-plane
+and data-plane ids. **This repository is public** — committing that file would
+publish who Gravitee's customers are and how their infrastructure is addressed.
+
+Generate it locally when you want an offline fallback:
+
+```bash
+cd services/grafana-mcp-adapter
+GITHUB_PERSONAL_ACCESS_TOKEN=... npm run refresh-customers
+```
+
+Nothing breaks without it. The Dockerfile's `COPY customers-snapshot.jso[n]` is a
+no-op when the file is absent, so a fresh clone builds; the adapter fetches the
+map from GitHub at runtime and, if GitHub is unreachable AND no snapshot exists,
+reports that Gravitee Cloud customers cannot be resolved rather than failing or
+guessing. Hosted customers are unaffected either way — they resolve from Loki.
+
+### Customer-map environment variables
+
+The Gravitee Cloud customer map is fetched at runtime from a private GitHub repo.
+These variables control where it comes from and how it is cached. Only the token
+is required for a live fetch. Without it, the adapter falls back to the local
+snapshot (if you generated one) or reports that Cloud customers cannot be
+resolved. Hosted customers are not affected.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `GITHUB_PERSONAL_ACCESS_TOKEN` | *(none)* | Auth for the GitHub fetch. Used at **runtime** every time the map loads, not only by `npm run refresh-customers`. |
+| `GRAFANA_CUSTOMER_MAP_REPO` | `gravitee-io/cloud-deployments-configuration` | Repo holding the customer CSV. |
+| `GRAFANA_CUSTOMER_MAP_PATH` | `docs/summary/customers_summary.csv` | Path to the CSV inside that repo. |
+| `GRAFANA_CUSTOMER_MAP_REF` | `prod` | Branch or tag the CSV is read from. |
+| `GRAFANA_CUSTOMER_MAP_TTL_SECONDS` | `3600` | How long a successful fetch stays cached in memory. |
+| `GRAFANA_CUSTOMER_MAP_TIMEOUT_MS` | `5000` | Timeout for the GitHub fetch. |
+| `GRAFANA_CUSTOMER_MAP_STALE_DAYS` | `30` | Age after which the map is reported as stale. |
+| `GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH` | `customers-snapshot.json` next to `server.js` | Where the fallback snapshot is read from. The tests point it at a file of their own. |
+
+> **Token type.** The token needs read access to
+> `gravitee-io/cloud-deployments-configuration`. In our tests a classic token
+> worked and a fine-grained one returned 404. We have not confirmed why. If you
+> use a fine-grained token and get a 404, check that its resource owner is
+> `gravitee-io` and that the org has approved it, or use a classic token instead.
 
 ## Testing
 
@@ -178,6 +230,15 @@ Coverage:
 - `helpers.test.js` — the pure helpers (`helpers.js`).
 - `grafanaClient.test.js` — the HTTP client (`grafanaClient.js`): config
   validation, auth headers, param handling.
+- `lokiDiscovery.test.js` / `logsLinks.test.js` — the Loki reads behind
+  `grafana_logs_link` (`fetch` stubbed) and the links it builds from the matched
+  streams.
+- `customerCsv.test.js` / `customerMatch.test.js` — the Gravitee Cloud customer
+  map: CSV parsing, name and id lookup, and resolving a customer to namespaces,
+  on made-up rows with the real CSV header. No network.
+- `customerMapLoader.test.js` — where the map comes from: GitHub, the snapshot
+  fallback, the unavailable case, caching. GitHub is stubbed and the snapshot is
+  a temp file, never a real one.
 - `server.test.js` — the `server.js` orchestration that talks to Loki, with
   `fetch` stubbed per Loki endpoint: `grafana_logs_link`'s namespace resolution,
   per-namespace drilldown grouping, the `explore_url` fallback, the env
