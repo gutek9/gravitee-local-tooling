@@ -9,19 +9,15 @@ import {
   requireConfig,
   grafanaGet,
   grafanaPost,
-  grafanaDatasourceProxyGet,
 } from "./grafanaClient.js";
 import {
   summarizeQueryResult,
   buildLogsQuery,
-  buildExploreUrl,
-  buildDrilldownUrl,
-  buildExactLogsQuery,
-  toLokiNs,
-  rankClientSuggestions,
   splitClientEnv,
   matchNamespaces,
 } from "./helpers.js";
+import { fetchMatchingStreams, fetchLabelValues } from "./lokiDiscovery.js";
+import { linksForStreams, explainNoStreams } from "./logsLinks.js";
 
 // Loki datasource uid for the logs tools. Override per-instance via env.
 const LOGS_DATASOURCE_UID = process.env.GRAFANA_LOGS_DATASOURCE_UID || "grafanacloud-logs";
@@ -81,26 +77,6 @@ async function listDatasources() {
 }
 
 
-// Discover which log streams match a selector WITHOUT pulling any log lines.
-// Loki's /series returns just the label sets of the matching streams (one object
-// per stream, e.g. {namespace, service_name, pod, ...}); we only need namespace
-// and service_name to build the link, so this is far cheaper than query_range
-// (no log bodies, no timestamps). The `|= "..."` line filter is dropped from the
-// selector here — /series matches on the stream selector only, and the
-// service_name we need for the link doesn't depend on the line filter anyway.
-async function fetchMatchingStreams({ query, from, to }) {
-  const data = await grafanaDatasourceProxyGet(LOGS_DATASOURCE_UID, "loki/api/v1/series", {
-    "match[]": query,
-    start: toLokiNs(from, 60 * 60),
-    end: toLokiNs(to, 0),
-  });
-  const series = data?.data || [];
-  return series.map((s) => ({
-    namespace: s.namespace || null,
-    service_name: s.service_name || null,
-  }));
-}
-
 // Resolve a free-text `client` to the customer's own namespace(s). Many
 // customers have a dedicated namespace that names them (`april-prod`,
 // `blueyonder-plt-live`) — that namespace is the most reliable customer
@@ -115,30 +91,11 @@ async function resolveNamespaces(client, { from } = {}) {
   if (!core) return [];
   let values = [];
   try {
-    const data = await grafanaDatasourceProxyGet(LOGS_DATASOURCE_UID, "loki/api/v1/label/namespace/values", {
-      start: toLokiNs(from, 60 * 60),
-    });
-    values = data?.data || [];
+    values = await fetchLabelValues(LOGS_DATASOURCE_UID, "namespace", { from });
   } catch {
     return [];
   }
   return matchNamespaces(values, core);
-}
-
-// When a logs query returns nothing, the `client` text often just doesn't match
-// any `service_name`. Fetch the label's values and suggest the closest ones so
-// the caller can correct the spelling. Returns a small, de-duplicated list.
-async function suggestClients(client, { from } = {}) {
-  let values = [];
-  try {
-    const data = await grafanaDatasourceProxyGet(LOGS_DATASOURCE_UID, "loki/api/v1/label/service_name/values", {
-      start: toLokiNs(from, 60 * 60),
-    });
-    values = data?.data || [];
-  } catch {
-    return [];
-  }
-  return rankClientSuggestions(values, client);
 }
 
 async function withToolLogging(tool, fields, fn) {
@@ -276,7 +233,7 @@ registerTool(
       // matches on the stream selector only, and the line_filter is applied in
       // the generated link itself, not here.
       let query = buildLogsQuery({ client, component, namespaces: pinned });
-      let streams = await fetchMatchingStreams({ query, from, to });
+      let streams = await fetchMatchingStreams(LOGS_DATASOURCE_UID, { query, from, to });
 
       // Env tokens (prod, stage, …) aren't reliably in the service_name either —
       // some customers name their prod `plt-live`/`multitenant`. So if we pinned
@@ -287,7 +244,7 @@ registerTool(
       let env_filter_dropped = false;
       if (streams.length === 0 && pinned && splitClientEnv(client).envs.length) {
         const retryQuery = buildLogsQuery({ client: splitClientEnv(client).core, component, namespaces: pinned });
-        const retryStreams = await fetchMatchingStreams({ query: retryQuery, from, to });
+        const retryStreams = await fetchMatchingStreams(LOGS_DATASOURCE_UID, { query: retryQuery, from, to });
         if (retryStreams.length) {
           query = retryQuery;
           streams = retryStreams;
@@ -311,70 +268,18 @@ registerTool(
         range: { from, to },
         matched_count: streams.length,
         matched_streams: streams,
+        links: linksForStreams({
+          streams,
+          linkStyle: link_style,
+          query: reportedQuery,
+          lineFilter: line_filter,
+          datasourceUid: LOGS_DATASOURCE_UID,
+          from,
+          to,
+        }),
       };
-
-      if (link_style === "explore") {
-        // Single raw Explore (LogQL) deep link.
-        result.links = [{ url: buildExploreUrl({ datasourceUid: LOGS_DATASOURCE_UID, query: reportedQuery, from, to }) }];
-      } else {
-        // Logs Drilldown navigates per-namespace. Group the matched streams by
-        // namespace (a multitenant customer can span several, e.g. two data plane
-        // gateways) and emit one link each, scoped to the EXACT service_name
-        // values seen in that namespace — the app treats a raw regex value as a
-        // literal, so we can't reuse the LogQL selector here.
-        const byNamespace = new Map();
-        for (const s of streams) {
-          if (!s.namespace) continue;
-          if (!byNamespace.has(s.namespace)) byNamespace.set(s.namespace, new Set());
-          if (s.service_name) byNamespace.get(s.namespace).add(s.service_name);
-        }
-        result.links = [...byNamespace.entries()].map(([namespace, names]) => {
-          const serviceNames = [...names];
-          const link = {
-            namespace,
-            service_names: serviceNames,
-            url: buildDrilldownUrl({
-              namespace,
-              serviceNames,
-              datasourceUid: LOGS_DATASOURCE_UID,
-              from,
-              to,
-              lineFilter: line_filter,
-            }),
-          };
-          // The Logs Drilldown app pre-fills the line filter in its box but does
-          // not apply it on load (it renders empty until the user re-types it).
-          // When a line_filter is set, attach a raw Explore (LogQL) link scoped to
-          // this namespace's exact service_names — Explore honours the filter
-          // immediately, so it's the reliable evidence link.
-          if (line_filter) {
-            link.explore_url = buildExploreUrl({
-              datasourceUid: LOGS_DATASOURCE_UID,
-              query: buildExactLogsQuery({ namespace, serviceNames, lineFilter: line_filter }),
-              from,
-              to,
-            });
-          }
-          return link;
-        });
-      }
-
-      // No streams: if we resolved the customer's namespace(s) but nothing
-      // matched, the customer is right — it's just a quiet range (or the
-      // component/env narrowed too far). Otherwise the `client` text likely
-      // didn't match any service_name; offer close matches to correct it.
       if (streams.length === 0) {
-        if (namespaces.length) {
-          result.note = `No log streams in this range for namespace(s) ${namespaces.join(", ")}. Try widening from/to or relaxing component/env.`;
-        } else {
-          const suggestions = await suggestClients(client, { from });
-          if (suggestions.length) {
-            result.note = `No log streams matched in this range. Did you mean one of these service_name values? Re-run with a closer 'client'.`;
-            result.suggestions = suggestions;
-          } else {
-            result.note = `No log streams matched in this range. Try widening from/to or adjusting client/component.`;
-          }
-        }
+        Object.assign(result, await explainNoStreams({ namespaces, client, datasourceUid: LOGS_DATASOURCE_UID, from }));
       }
       return textResult(result);
     }),
