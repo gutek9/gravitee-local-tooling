@@ -31,6 +31,7 @@ not chained to one another.
 | `grafana_list_datasources` | List configured datasources (uid, name, type). |
 | `grafana_query` | Run a PromQL/LogQL/etc. query against a datasource uid over a time range. Returns a per-series digest by default. |
 | `grafana_logs_link` | Build a shareable Grafana logs link for a customer's logs. Discovers matching streams via Loki's `/series` (label sets only, no log lines) to scope the link. Defaults to Logs Drilldown links (per-namespace); pass `link_style="explore"` for a raw LogQL Explore link. |
+| `grafana_find_customer` | Which customer or deployment is this, by name or by id. Touches no logs. |
 
 ### `grafana_query` response shape
 
@@ -198,6 +199,25 @@ One consequence: a pinned namespace already expresses the environment, so
 `service_name` no longer repeats it — and the "drop the env token and retry"
 fallback is gone with it.
 
+### `grafana_find_customer`
+
+Answers "who is this, and what do they have?" without querying any logs. Use it
+when `grafana_logs_link` reports `ambiguous_customer`, when a name spans several
+Cockpit organizations, or to see what a customer has before searching.
+
+`query` is a customer name or fragment (`acme`), or an id as it appears in an
+alert, pod name or dashboard (`apim-dp-cp1111-dp0001`, `cp1111-dp0001`,
+`cp1111`). The id lookup is always attempted, so pasting a namespace from an
+alert tells you whose it is.
+
+It returns, per Gravitee Cloud customer: deployment count, Cockpit
+organizations (control plane ids, to pass as `control_plane_id`), environments,
+regions, the exact data-plane namespaces, and the shared control-plane
+namespaces. Hosted customers come back as `hosted_namespaces`. Data planes that
+are live on a customer's control plane but missing from the map are listed as
+`unattributed_namespaces_on_same_control_plane`: a control plane is shared, so
+they may belong to another customer and are never searched as this one.
+
 ## Setup
 
 This service ships as part of `local-tooling`. It is **opt-in** and disabled by
@@ -297,13 +317,15 @@ Coverage:
   fallback, the unavailable case, caching. GitHub is stubbed and the snapshot is
   a temp file, never a real one.
 - `customerResolver.test.js` — resolving a client through both routes (label and
-  customer map) from given namespace values and map rows, and what of that
-  resolution reaches the caller. No network.
+  customer map) from given namespace values and map rows, what of that
+  resolution reaches the caller, and finding which customers a name or an id
+  matches. No network.
 - `server.test.js` — the `server.js` orchestration that talks to Loki, with
   `fetch` stubbed per Loki endpoint: `grafana_logs_link`'s namespace resolution
   through both routes (label and customer map), per-namespace drilldown
   grouping, the `explore_url` fallback, and the empty-result
-  `note`/`suggestions` branches, plus `grafana_query`'s digest-vs-`raw` output.
+  `note`/`suggestions` branches; `grafana_find_customer`'s name, id, ambiguous
+  and unattributed cases; plus `grafana_query`'s digest-vs-`raw` output.
   The stub also answers the customer map's GitHub fetch with a made-up CSV, so
   the tests never read a local `customers-snapshot.json` or the network. `server.js` only starts the stdio
   transport when run as the entrypoint, so tests import it and invoke the

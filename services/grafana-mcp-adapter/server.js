@@ -18,7 +18,7 @@ import {
 import { fetchMatchingStreams } from "./lokiDiscovery.js";
 import { linksForStreams, explainNoStreams } from "./logsLinks.js";
 import { warmCustomerMap } from "./customerMapLoader.js";
-import { resolveNamespaces, resolutionReport } from "./customerResolver.js";
+import { resolveNamespaces, resolutionReport, findCustomer } from "./customerResolver.js";
 
 // Loki datasource uid for the logs tools. Required — deliberately NOT defaulted:
 // a uid that is correct for one Grafana org is a silent, plausible failure in
@@ -200,7 +200,7 @@ registerTool(
       .enum(["drilldown", "explore"])
       .default("drilldown")
       .describe("Link format: 'drilldown' (Logs Drilldown app, per-namespace; default) or 'explore' (raw LogQL Explore)."),
-    control_plane_id: z.string().optional().describe("Narrow to one Cockpit organization when a customer name spans several."),
+    control_plane_id: z.string().optional().describe("Narrow to one Cockpit organization when a customer name spans several (see grafana_find_customer)."),
     from: z.string().default("now-1h").describe("Range start, e.g. 'now-1h', 'now-6h', or epoch ms."),
     to: z.string().default("now").describe("Range end, e.g. 'now' or epoch ms."),
   },
@@ -265,6 +265,31 @@ registerTool(
         );
       }
       return textResult(result);
+    }),
+);
+
+registerTool(
+  "grafana_find_customer",
+  "Read-only: find which customers and deployments match a name, WITHOUT querying any " +
+    "logs. Use this when a name is ambiguous, when grafana_logs_link reports " +
+    "ambiguous_customer, or simply to see what a customer has. Searches both populations: " +
+    "Gravitee Cloud (Cockpit) customers via the deployment map, and hosted customers via " +
+    "Loki's namespace label. Returns per customer: deployment count, Cockpit organizations " +
+    "(control plane ids), environments, regions and the exact namespaces — so the caller can " +
+    "pass a precise client (or control_plane_id) to grafana_logs_link.",
+  {
+    query: z
+      .string()
+      .describe(
+        "Customer name or fragment ('money', 'orbit'), OR an id/namespace seen in an alert, pod or " +
+          "dashboard ('apim-dp-cp1111-dp0001', 'cp1111-dp0001', 'cp1111') to look up who owns it.",
+      ),
+    max_results: z.number().int().min(1).max(50).default(20).optional(),
+  },
+  async ({ query, max_results = 20 }) =>
+    withToolLogging("grafana_find_customer", { query }, async () => {
+      const datasourceUid = requireDatasourceUid(LOGS_DATASOURCE_UID);
+      return textResult(await findCustomer(query, { datasourceUid, maxResults: max_results }));
     }),
 );
 

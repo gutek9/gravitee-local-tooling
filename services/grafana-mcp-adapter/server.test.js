@@ -296,6 +296,83 @@ test("grafana_logs_link: a fragment matching several Cloud customers contributes
 });
 
 // ---------------------------------------------------------------------------
+// grafana_find_customer: who is this, and what do they have (no log queries)
+// ---------------------------------------------------------------------------
+
+test("grafana_find_customer: a name returns the customer's deployments in both populations", async () => {
+  await withLokiStub(
+    { [NS_VALUES]: ["acme-prod", "apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp0002"] },
+    async (calls) => {
+      const out = await callTool("grafana_find_customer", { query: "acme" });
+      assert.equal(out.map_source, "github");
+      assert.equal(out.gravitee_cloud_customers.length, 1);
+      const acme = out.gravitee_cloud_customers[0];
+      assert.equal(acme.customer, "acme");
+      assert.equal(acme.deployments, 3);
+      assert.deepEqual(acme.organizations, ["cp1111"]);
+      assert.deepEqual(acme.envs, ["dev", "prod", "qa"]);
+      assert.deepEqual(acme.namespaces, ["apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp0002", "apim-dp-cp1111-dp0003"]);
+      assert.deepEqual(acme.shared_control_plane_namespaces, ["apim-cp-cp1111"]);
+      // The hosted namespace that carries the name is found too.
+      assert.deepEqual(out.hosted_namespaces, ["acme-prod"]);
+      assert.equal(out.note, undefined);
+      // It only reads label values: no log lines, no stream discovery.
+      assert.ok(!calls.some((u) => u.includes(SERIES) || u.includes("query_range")), calls.join("\n"));
+    },
+  );
+});
+
+test("grafana_find_customer: an id from an alert or pod name finds its owner", async () => {
+  await withLokiStub({ [NS_VALUES]: ["apim-dp-cp1111-dp0001"] }, async () => {
+    const out = await callTool("grafana_find_customer", { query: "apim-dp-cp1111-dp0001" });
+    assert.equal(out.matched_by_id.kind, "data_plane");
+    assert.equal(out.matched_by_id.customer, "acme");
+  });
+});
+
+test("grafana_find_customer: a fragment matching several customers says so", async () => {
+  await withLokiStub({ [NS_VALUES]: [] }, async () => {
+    const out = await callTool("grafana_find_customer", { query: "beac" });
+    assert.deepEqual(out.gravitee_cloud_customers.map((c) => c.customer), ["beacon", "beaconlabs"]);
+    assert.match(out.note, /matches 2 different Gravitee Cloud customers/);
+  });
+});
+
+test("grafana_find_customer: an unmapped data plane on the customer's control plane is reported, not claimed", async () => {
+  // dp9999 is live on acme's control plane but the map does not attribute it.
+  // A control plane is shared, so it may be someone else's: reported apart,
+  // never added to acme's namespaces.
+  await withLokiStub(
+    { [NS_VALUES]: ["apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp9999"] },
+    async () => {
+      const out = await callTool("grafana_find_customer", { query: "acme" });
+      const acme = out.gravitee_cloud_customers[0];
+      assert.deepEqual(acme.unattributed_namespaces_on_same_control_plane, ["apim-dp-cp1111-dp9999"]);
+      assert.match(acme.unattributed_note, /NOT searched as this customer/);
+      assert.ok(!acme.namespaces.includes("apim-dp-cp1111-dp9999"));
+    },
+  );
+});
+
+test("grafana_find_customer: a live id the map cannot attribute is reported as real but ownerless", async () => {
+  await withLokiStub({ [NS_VALUES]: ["apim-dp-cp9999-dp0001"] }, async () => {
+    const out = await callTool("grafana_find_customer", { query: "cp9999-dp0001" });
+    assert.equal(out.matched_by_id, undefined);
+    assert.match(out.note, /Neither cp9999-dp0001 nor its control plane appears in the customer map/);
+    assert.match(out.note, /does exist in Loki/);
+  });
+});
+
+test("grafana_find_customer: nothing matched -> says so", async () => {
+  await withLokiStub({ [NS_VALUES]: ["april-prod"] }, async () => {
+    const out = await callTool("grafana_find_customer", { query: "zzxqq" });
+    assert.deepEqual(out.gravitee_cloud_customers, []);
+    assert.deepEqual(out.hosted_namespaces, []);
+    assert.match(out.note, /No Gravitee Cloud customer/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // grafana_logs_link: empty-result branches (note / suggestions)
 // ---------------------------------------------------------------------------
 

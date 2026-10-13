@@ -57,8 +57,8 @@ export async function explainNoStreams({ namespaces = [], absentNamespaces = [],
       note:
         `No log streams matched, and ${absentNamespaces.length} of the mapped namespace(s) (${absentNamespaces.join(", ")}) do not ` +
         "appear in Loki for this range at all. That usually means the customer map is stale — the deployment was " +
-        "recreated under a new id — rather than that the customer has no logs. Widen from/to in case the " +
-        "deployment is simply dormant.",
+        "recreated under a new id — rather than that the customer has no logs. Check grafana_find_customer, or " +
+        "widen from/to in case the deployment is simply dormant.",
     };
   }
   if (namespaces.length) {

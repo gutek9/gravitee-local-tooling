@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { parseCustomerCsv } from "./customerCsv.js";
-import { resolveClient, resolutionReport } from "./customerResolver.js";
+import { resolveClient, resolutionReport, findCustomerMatches } from "./customerResolver.js";
 
 // Made-up Gravitee Cloud customers, with the real CSV header (same names as
 // server.test.js, plus one customer on two organizations).
@@ -125,4 +125,39 @@ test("resolutionReport: every field a resolution sets reaches the report", () =>
       assert.ok((renamed[key] || key) in report, `${key} is set by the resolution but missing from the report`);
     }
   }
+});
+
+const find = (query, namespaceValues = [], extra = {}) => findCustomerMatches({ query, namespaceValues, map: MAP, ...extra });
+
+test("findCustomerMatches: a name gives the customer's deployments, organizations and namespaces", () => {
+  const out = find("acme", ["acme-prod", ...ACME_DATA_PLANES]);
+  const [acme] = out.gravitee_cloud_customers;
+  assert.equal(acme.customer, "acme");
+  assert.equal(acme.deployments, 3);
+  assert.deepEqual(acme.organizations, ["cp1111"]);
+  assert.deepEqual(acme.envs, ["dev", "prod", "qa"]);
+  assert.deepEqual(acme.namespaces, ACME_DATA_PLANES);
+  assert.deepEqual(acme.shared_control_plane_namespaces, ["apim-cp-cp1111"]);
+  assert.deepEqual(out.hosted_namespaces, ["acme-prod"]);
+  assert.equal(out.map_source, "github");
+});
+
+test("findCustomerMatches: one name over two organizations says to pass control_plane_id", () => {
+  const out = find("northwind");
+  assert.equal(out.gravitee_cloud_customers.length, 1);
+  assert.match(out.note, /"northwind" spans 2 separate Cockpit organizations \(cp5555, cp6666\)/);
+});
+
+test("findCustomerMatches: max_results caps the list and says how many were left out", () => {
+  const out = find("beac", [], { maxResults: 1 });
+  assert.deepEqual(out.gravitee_cloud_customers.map((c) => c.customer), ["beacon"]);
+  assert.equal(out.gravitee_cloud_truncated, 1);
+  assert.match(out.note, /matches 2 different Gravitee Cloud customers/);
+});
+
+test("findCustomerMatches: a live data plane the map does not attribute is reported apart, never claimed", () => {
+  const out = find("acme", [...ACME_DATA_PLANES, "apim-dp-cp1111-dp0099"]);
+  const [acme] = out.gravitee_cloud_customers;
+  assert.deepEqual(acme.unattributed_namespaces_on_same_control_plane, ["apim-dp-cp1111-dp0099"]);
+  assert.ok(!acme.namespaces.includes("apim-dp-cp1111-dp0099"));
 });
