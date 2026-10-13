@@ -5,13 +5,8 @@
 // The snapshot is deliberately slimmed to what is needed to resolve a customer to
 // a namespace. Customer hostnames and custom DNS are NOT written to disk.
 import { writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import { parseCustomerCsv } from "../customerCsv.js";
-
-const REPO = process.env.GRAFANA_CUSTOMER_MAP_REPO || "gravitee-io/cloud-deployments-configuration";
-const PATH = process.env.GRAFANA_CUSTOMER_MAP_PATH || "docs/summary/customers_summary.csv";
-const REF = process.env.GRAFANA_CUSTOMER_MAP_REF || "prod";
+import { fetchCustomerCsv, fetchGeneratedAt, buildSnapshot, SNAPSHOT_PATH } from "../customerMapLoader.js";
 
 const token = (process.env.GITHUB_PERSONAL_ACCESS_TOKEN || "").trim();
 if (!token) {
@@ -19,32 +14,29 @@ if (!token) {
   process.exit(1);
 }
 
-const res = await fetch(`https://api.github.com/repos/${REPO}/contents/${PATH}?ref=${encodeURIComponent(REF)}`, {
-  headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.raw", "User-Agent": "refresh-customers" },
-});
-if (!res.ok) {
-  console.error(`GitHub responded ${res.status} for ${REPO}/${PATH}@${REF}`);
+let csv;
+try {
+  csv = await fetchCustomerCsv();
+} catch (err) {
+  console.error(`Could not fetch the customer CSV: ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 }
 
-const customers = parseCustomerCsv(await res.text());
+const customers = parseCustomerCsv(csv);
 if (!customers.length) {
   console.error("Parsed zero customers - refusing to overwrite the snapshot with an empty file.");
   process.exit(1);
 }
 
-const out = join(dirname(fileURLToPath(import.meta.url)), "..", "customers-snapshot.json");
-await writeFile(
-  out,
-  JSON.stringify(
-    {
-      generated_at: new Date().toISOString().slice(0, 10),
-      source: `${REPO}@${REF} ${PATH}`,
-      note: "Slimmed deliberately: only what is needed to resolve a customer to a namespace. Customer hostnames and custom DNS are NOT included.",
-      customers,
-    },
-    null,
-    2,
-  ) + "\n",
+// The CSV's own date, not today's: the fallback's freshness warning must say how
+// old the data is, not when it was copied.
+const sourceGeneratedAt = await fetchGeneratedAt(token);
+if (!sourceGeneratedAt) {
+  console.warn("Could not read when the CSV was last generated; the snapshot records its source date as unknown.");
+}
+
+await writeFile(SNAPSHOT_PATH, JSON.stringify(buildSnapshot({ customers, sourceGeneratedAt }), null, 2) + "\n");
+console.log(
+  `Wrote ${customers.length} deployments (${new Set(customers.map((c) => c.customer)).size} customers) to ${SNAPSHOT_PATH} ` +
+    `(source CSV generated ${sourceGeneratedAt ? sourceGeneratedAt.slice(0, 10) : "unknown"})`,
 );
-console.log(`Wrote ${customers.length} deployments (${new Set(customers.map((c) => c.customer)).size} customers) to ${out}`);

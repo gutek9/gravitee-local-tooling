@@ -12,8 +12,9 @@ import { parseCustomerCsv } from "./customerCsv.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // Overridable so tests can point the fallback at a file of their own and never
-// read a real local snapshot.
-const SNAPSHOT_PATH = process.env.GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH || join(HERE, "customers-snapshot.json");
+// read a real local snapshot. Exported so refresh-customers writes where this
+// module reads.
+export const SNAPSHOT_PATH = process.env.GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH || join(HERE, "customers-snapshot.json");
 
 const REPO = process.env.GRAFANA_CUSTOMER_MAP_REPO || "gravitee-io/cloud-deployments-configuration";
 const PATH = process.env.GRAFANA_CUSTOMER_MAP_PATH || "docs/summary/customers_summary.csv";
@@ -55,7 +56,7 @@ const STALE_AFTER_DAYS = Number(process.env.GRAFANA_CUSTOMER_MAP_STALE_DAYS || 3
 
 // The date the source file was last COMMITTED, i.e. last regenerated. Best-effort:
 // a failure here must not stop the map loading.
-async function fetchGeneratedAt(token) {
+export async function fetchGeneratedAt(token) {
   try {
     const url =
       `https://api.github.com/repos/${REPO}/commits?path=${encodeURIComponent(PATH)}` +
@@ -78,7 +79,7 @@ async function fetchGeneratedAt(token) {
   }
 }
 
-async function fetchFromGitHub() {
+export async function fetchCustomerCsv() {
   const token = (process.env.GITHUB_PERSONAL_ACCESS_TOKEN || "").trim();
   if (!token) throw new Error("GITHUB_PERSONAL_ACCESS_TOKEN is not set");
   const url = `https://api.github.com/repos/${REPO}/contents/${PATH}?ref=${encodeURIComponent(REF)}`;
@@ -100,9 +101,37 @@ async function fetchFromGitHub() {
   }
 }
 
+// The snapshot records two dates: when the source CSV was last generated
+// (committed), which is what freshness is about, and when it was copied here.
+// Refreshing an old CSV today must not make the fallback report a map generated
+// today.
+export function buildSnapshot({ customers, sourceGeneratedAt, refreshedAt = new Date().toISOString().slice(0, 10) }) {
+  return {
+    source_generated_at: sourceGeneratedAt || null,
+    refreshed_at: refreshedAt,
+    source: `${REPO}@${REF} ${PATH}`,
+    note: "Slimmed deliberately: only what is needed to resolve a customer to a namespace. Customer hostnames and custom DNS are NOT included.",
+    customers,
+  };
+}
+
+// A snapshot written before the two dates were split only has `generated_at`,
+// which was the copy date. It is kept as the refresh date and never passed off
+// as the CSV's.
 async function loadSnapshot() {
   const raw = JSON.parse(await readFile(SNAPSHOT_PATH, "utf8"));
-  return { rows: raw.customers || [], generated_at: raw.generated_at || null };
+  return {
+    rows: raw.customers || [],
+    source_generated_at: raw.source_generated_at || null,
+    refreshed_at: raw.refreshed_at || raw.generated_at || null,
+  };
+}
+
+function describeSnapshotDates(snap, days) {
+  const refreshed = `refreshed ${snap.refreshed_at || "unknown"}`;
+  if (!snap.source_generated_at) return `source CSV date unknown, ${refreshed}`;
+  const ago = days === undefined ? "" : ` (${days} days ago)`;
+  return `source CSV generated ${String(snap.source_generated_at).slice(0, 10)}${ago}, ${refreshed}`;
 }
 
 // Returns { rows, source, generated_at, warning }. `source` is always reported so
@@ -120,7 +149,7 @@ export async function loadCustomerMap({ refresh = false } = {}) {
 
 async function loadCustomerMapUncached() {
   try {
-    const rows = parseCustomerCsv(await fetchFromGitHub());
+    const rows = parseCustomerCsv(await fetchCustomerCsv());
     if (!rows.length) throw new Error("fetched customer CSV parsed to zero rows");
     const generatedAt = await fetchGeneratedAt((process.env.GITHUB_PERSONAL_ACCESS_TOKEN || "").trim());
     cache = { rows, source: "github", generated_at: generatedAt, ...staleness(generatedAt) };
@@ -132,12 +161,14 @@ async function loadCustomerMapUncached() {
     });
     try {
       const snap = await loadSnapshot();
+      const { generated_days_ago: days } = staleness(snap.source_generated_at);
       cache = {
         rows: snap.rows,
         source: "bundled_snapshot",
-        generated_at: snap.generated_at,
+        generated_at: snap.source_generated_at,
+        ...(days !== undefined ? { generated_days_ago: days } : {}),
         warning:
-          `Customer mapping came from the bundled snapshot (generated ${snap.generated_at || "unknown"}), ` +
+          `Customer mapping came from the bundled snapshot (${describeSnapshotDates(snap, days)}), ` +
           `because GitHub could not be reached: ${err instanceof Error ? err.message : String(err)}. ` +
           "Customers created or moved since then will not resolve.",
       };

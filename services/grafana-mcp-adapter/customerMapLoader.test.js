@@ -10,7 +10,7 @@ const DIR = await mkdtemp(join(tmpdir(), "customer-map-"));
 const SNAPSHOT = join(DIR, "customers-snapshot.json");
 process.env.GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH = SNAPSHOT;
 
-const { loadCustomerMap, resetCustomerMapCache } = await import("./customerMapLoader.js");
+const { loadCustomerMap, resetCustomerMapCache, buildSnapshot, fetchGeneratedAt } = await import("./customerMapLoader.js");
 
 const CSV = `Customer,ControlPlaneId,DataPlaneId,Region,Provider,Cloud Region,Custom DNS,URLs
 acme,cp1111,cp1111-dp0001,unitedstates,aws,us-east-1,None,prod-org-acme.us-aws-us-east-1.gateway.gravitee.io
@@ -27,8 +27,14 @@ const SNAPSHOT_ROW = {
 
 const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
 
-function writeSnapshot() {
-  return writeFile(SNAPSHOT, JSON.stringify({ generated_at: "2026-09-01", customers: [SNAPSHOT_ROW] }));
+// The CSV was generated weeks before the snapshot was refreshed: the two dates
+// must stay apart.
+const CSV_COMMITTED_AT = daysAgo(40);
+
+function writeSnapshot(
+  content = buildSnapshot({ customers: [SNAPSHOT_ROW], sourceGeneratedAt: CSV_COMMITTED_AT, refreshedAt: "2026-10-09" }),
+) {
+  return writeFile(SNAPSHOT, JSON.stringify(content));
 }
 
 // Answer the GitHub API: the CSV for the contents call, the last commit's date
@@ -83,16 +89,59 @@ test("loadCustomerMap: a live map regenerated long ago is called stale, even tho
   });
 });
 
-test("loadCustomerMap: GitHub down falls back to the snapshot, and says so", async () => {
+test("loadCustomerMap: GitHub down falls back to the snapshot, dated by its source CSV, not its refresh", async () => {
+  // Regression (#9 review): the snapshot's only date was the refresh date, so
+  // refreshing an old CSV today made the fallback report a map generated today.
   await writeSnapshot();
   await withGitHub({ csv: null }, async () => {
     const map = await loadCustomerMap();
     assert.equal(map.source, "bundled_snapshot");
     assert.deepEqual(map.rows, [SNAPSHOT_ROW]);
-    assert.equal(map.generated_at, "2026-09-01");
-    assert.match(map.warning, /bundled snapshot \(generated 2026-09-01\)/);
+    assert.equal(map.generated_at, CSV_COMMITTED_AT);
+    assert.equal(map.generated_days_ago, 40);
+    assert.match(
+      map.warning,
+      new RegExp(`bundled snapshot \\(source CSV generated ${CSV_COMMITTED_AT.slice(0, 10)} \\(40 days ago\\), refreshed 2026-10-09\\)`),
+    );
     assert.match(map.warning, /GitHub responded 503/);
   });
+});
+
+test("loadCustomerMap: a snapshot from before the dates were split says its source date is unknown", async () => {
+  // Its `generated_at` was the refresh date: kept as such, never shown as the
+  // CSV's date or used for the map's age.
+  await writeSnapshot({ generated_at: "2026-10-09", customers: [SNAPSHOT_ROW] });
+  await withGitHub({ csv: null }, async () => {
+    const map = await loadCustomerMap();
+    assert.equal(map.source, "bundled_snapshot");
+    assert.equal(map.generated_at, null);
+    assert.equal(map.generated_days_ago, undefined);
+    assert.match(map.warning, /source CSV date unknown, refreshed 2026-10-09/);
+  });
+});
+
+test("buildSnapshot: records the CSV's date and the refresh date apart, and no customer hostnames", () => {
+  const snap = buildSnapshot({ customers: [SNAPSHOT_ROW], sourceGeneratedAt: "2026-09-01T08:00:00Z", refreshedAt: "2026-10-09" });
+  assert.equal(snap.source_generated_at, "2026-09-01T08:00:00Z");
+  assert.equal(snap.refreshed_at, "2026-10-09");
+  assert.equal(snap.generated_at, undefined);
+  assert.deepEqual(snap.customers, [SNAPSHOT_ROW]);
+  // An unreadable CSV date is recorded as unknown, never as today.
+  assert.equal(buildSnapshot({ customers: [], sourceGeneratedAt: null }).source_generated_at, null);
+});
+
+test("fetchGeneratedAt: reads the CSV's last commit date, and gives null when GitHub fails", async () => {
+  await withGitHub({ committedAt: "2026-09-01T08:00:00Z" }, async (calls) => {
+    assert.equal(await fetchGeneratedAt("ghp_test"), "2026-09-01T08:00:00Z");
+    assert.ok(calls[0].includes("/commits?path="));
+  });
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = () => Promise.resolve({ ok: false, status: 404 });
+  try {
+    assert.equal(await fetchGeneratedAt("ghp_test"), null);
+  } finally {
+    globalThis.fetch = origFetch;
+  }
 });
 
 test("loadCustomerMap: without a token the snapshot answers and GitHub is never asked", async () => {

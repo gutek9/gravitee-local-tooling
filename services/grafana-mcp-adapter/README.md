@@ -278,6 +278,13 @@ cd services/grafana-mcp-adapter
 GITHUB_PERSONAL_ACCESS_TOKEN=... npm run refresh-customers
 ```
 
+The snapshot records two dates: `source_generated_at`, when the CSV was last
+committed in the source repo, and `refreshed_at`, when you ran the command. The
+fallback's freshness warning and `map_generated_days_ago` use the CSV's date, so
+refreshing an old CSV today does not make the map look current. A snapshot from
+before this split says its source date is unknown; run the command again to
+record it.
+
 Nothing breaks without it. The Dockerfile's `COPY customers-snapshot.jso[n]` is a
 no-op when the file is absent, so a fresh clone builds; the adapter fetches the
 map from GitHub at runtime and, if GitHub is unreachable AND no snapshot exists,
