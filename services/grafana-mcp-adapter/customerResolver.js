@@ -85,7 +85,10 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
 
   // Words that narrow neither route are refused, not dropped: both routes found
   // the customer only by ignoring them, so searching either would return more
-  // than was asked for. What exists is listed so the caller can retry.
+  // than was asked for. What exists is listed so the caller can retry. The
+  // likeliest such word is a component typed into the client ("ghd prod
+  // gateway"), so the note says where it belongs.
+  const componentHint = "If it names a component (gateway, api, ui...), pass it as component instead.";
   const refuseUnknownWords = () => {
     const labelPart = label.tail.length && skipped.length
       ? `"${label.tail.join(" ")}" is in none of the namespaces found for "${label.name}" (${skipped.join(", ")}).`
@@ -100,8 +103,8 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
         : {}),
       ...(skipped.length ? { skipped_namespaces: skipped } : {}),
       note: resolved.unknown_qualifiers
-        ? [labelPart, resolved.reason].filter(Boolean).join(" ")
-        : `${labelPart} Nothing was searched. Retry without it, or with one of those namespaces.`,
+        ? [labelPart, resolved.reason, componentHint].filter(Boolean).join(" ")
+        : `${labelPart} Nothing was searched. Retry without it, or with one of those namespaces. ${componentHint}`,
       map_source: map.source,
       map_warning: map.warning,
     };

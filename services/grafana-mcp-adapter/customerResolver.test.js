@@ -139,6 +139,7 @@ test("resolveClient: a word that narrows neither route is refused, with what eac
   assert.deepEqual(out.skipped_namespaces, ["acme-prod"]);
   assert.match(out.note, /"staging" is in none of the namespaces found for "acme" \(acme-prod\)/);
   assert.match(out.note, /does not describe any deployment of acme/);
+  assert.match(out.note, /pass it as component instead/);
 });
 
 test("resolveClient: a hosted namespace that carries every word is searched even when the map has no such deployment", () => {

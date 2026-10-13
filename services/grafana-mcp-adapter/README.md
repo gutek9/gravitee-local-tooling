@@ -102,7 +102,9 @@ The response also says how the customer was found:
   its deployments and none of its namespaces, e.g. `acme staging` when acme only
   has prod, dev and qa. Nothing is searched; retry without the word, or with one
   of the environments, regions or namespaces listed. A word only ever narrows; it
-  is never dropped to search more widely.
+  is never dropped to search more widely. A component typed into `client`
+  (`ghd prod gateway`) is refused the same way, and the note says to pass it as
+  `component`.
 - `skipped_namespaces`, `skipped_namespaces_note` — namespaces found for the
   customer name but not for the words after it, so not searched: `acme dev`
   searches acme's Cloud dev deployment, not its hosted `acme-prod`. To search

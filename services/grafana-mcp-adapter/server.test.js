@@ -338,6 +338,29 @@ test("grafana_logs_link: a hosted customer with a word none of its namespaces ca
   });
 });
 
+test("grafana_logs_link: a component typed into client is refused with a pointer to component", async () => {
+  // Seen in the live test: the model sent client "ghd prod gateway". The refusal
+  // must say where "gateway" belongs, so the retry narrows to the gateway rather
+  // than dropping the word and getting every service.
+  await withLokiStub(
+    {
+      [NS_VALUES]: ["ghd-prod"],
+      [SERIES]: [stream("ghd-prod", "graviteeio-apim3-gateway")],
+    },
+    async (calls) => {
+      const refused = await callTool("grafana_logs_link", { client: "ghd prod gateway" });
+      assert.equal(refused.refused, true);
+      assert.deepEqual(refused.unknown_qualifiers, ["gateway"]);
+      assert.match(refused.note, /pass it as component instead/);
+      assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+
+      const retried = await callTool("grafana_logs_link", { client: "ghd prod", component: "gateway" });
+      assert.deepEqual(retried.resolved_namespaces, ["ghd-prod"]);
+      assert.match(retried.query, /service_name=~"[^"]*gateway/);
+    },
+  );
+});
+
 test("grafana_logs_link: no streams for a mapped namespace Loki does not know -> stale-map note", async () => {
   // acme qa maps to dp0003, which Loki has never seen in this range. "No logs for
   // this customer" would be a false negative; the likelier cause is a stale map.

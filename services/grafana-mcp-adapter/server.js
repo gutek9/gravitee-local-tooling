@@ -193,7 +193,13 @@ registerTool(
     "explore_url for evidence — it honours the filter immediately. Ask the user before " +
     "widening the range since logs are large.",
   {
-    client: z.string().describe("Customer name fragment, e.g. 'april', 'alliander', 'apim-cloudgate'."),
+    client: z
+      .string()
+      .describe(
+        "Customer name fragment, e.g. 'april', 'alliander', 'apim-cloudgate', optionally followed by an " +
+          "environment or region ('april prod'). Put the component in `component`, not here: a word that " +
+          "describes none of the customer's deployments is refused.",
+      ),
     component: z.string().optional().describe("Component fragment, e.g. 'gateway', 'engine', 'ui'."),
     line_filter: z.string().optional().describe("Pre-fill the link's line filter with this substring (lines containing it)."),
     link_style: z
