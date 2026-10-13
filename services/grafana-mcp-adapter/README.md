@@ -336,6 +336,10 @@ Coverage:
   customer map) from given namespace values and map rows, what of that
   resolution reaches the caller, and finding which customers a name or an id
   matches. No network.
+- `scripts/validateCustomerMap.test.js` — the checks behind
+  `npm run validate-customers`, including its failure paths: an unavailable or
+  empty map, or no live namespaces, fails instead of passing with nothing
+  checked.
 - `server.test.js` — the `server.js` orchestration that talks to Loki, with
   `fetch` stubbed per Loki endpoint: `grafana_logs_link`'s namespace resolution
   through both routes (label and customer map), per-namespace drilldown
