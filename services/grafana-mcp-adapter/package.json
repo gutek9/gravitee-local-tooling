@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
-    "check": "node --check server.js grafanaClient.js helpers.js server.test.js"
+    "check": "node --check server.js grafanaClient.js helpers.js server.test.js",
+    "refresh-customers": "node scripts/refresh-customers.mjs",
+    "validate-customers": "node scripts/validate-customers.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.5",
