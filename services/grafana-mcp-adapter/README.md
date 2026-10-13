@@ -298,9 +298,9 @@ record it.
 
 Nothing breaks without it. The Dockerfile's `COPY customers-snapshot.jso[n]` is a
 no-op when the file is absent, so a fresh clone builds; the adapter fetches the
-map from GitHub at runtime and, if GitHub is unreachable AND no snapshot exists,
-reports that Gravitee Cloud customers cannot be resolved rather than failing or
-guessing. Hosted customers are unaffected either way — they resolve from Loki.
+map from GitHub at runtime and, if GitHub is unreachable AND no usable snapshot
+exists (missing, or with no customers), reports that Gravitee Cloud customers
+cannot be resolved rather than failing or guessing. Hosted customers are unaffected either way — they resolve from Loki.
 
 ### Customer-map environment variables
 

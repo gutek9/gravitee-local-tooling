@@ -120,6 +120,18 @@ test("loadCustomerMap: a snapshot from before the dates were split says its sour
   });
 });
 
+test("loadCustomerMap: an empty snapshot is not taken as a map, so the map is reported unavailable", async () => {
+  // Regression: a snapshot with zero customers loaded as `bundled_snapshot` with
+  // no rows, so no Cloud customer resolved and nothing said the map was empty.
+  await writeSnapshot(buildSnapshot({ customers: [], sourceGeneratedAt: CSV_COMMITTED_AT }));
+  await withGitHub({ csv: null }, async () => {
+    const map = await loadCustomerMap();
+    assert.equal(map.source, "unavailable");
+    assert.deepEqual(map.rows, []);
+    assert.match(map.warning, /Customer mapping is unavailable/);
+  });
+});
+
 test("buildSnapshot: records the CSV's date and the refresh date apart, and no customer hostnames", () => {
   const snap = buildSnapshot({ customers: [SNAPSHOT_ROW], sourceGeneratedAt: "2026-09-01T08:00:00Z", refreshedAt: "2026-10-09" });
   assert.equal(snap.source_generated_at, "2026-09-01T08:00:00Z");

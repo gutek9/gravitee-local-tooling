@@ -118,10 +118,16 @@ export function buildSnapshot({ customers, sourceGeneratedAt, refreshedAt = new 
 // A snapshot written before the two dates were split only has `generated_at`,
 // which was the copy date. It is kept as the refresh date and never passed off
 // as the CSV's.
+//
+// A snapshot with no customers is no map at all, the same as a fetched CSV that
+// parses to zero rows: taking it would report a fallback map that resolves
+// nobody instead of saying the map is unavailable.
 async function loadSnapshot() {
   const raw = JSON.parse(await readFile(SNAPSHOT_PATH, "utf8"));
+  const rows = Array.isArray(raw.customers) ? raw.customers : [];
+  if (!rows.length) throw new Error("bundled snapshot has no customers");
   return {
-    rows: raw.customers || [],
+    rows,
     source_generated_at: raw.source_generated_at || null,
     refreshed_at: raw.refreshed_at || raw.generated_at || null,
   };
