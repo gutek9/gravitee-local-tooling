@@ -6,7 +6,7 @@ Use this prompt after running setup:
 Use the local-tooling stack configured in this repository.
 
 For every non-trivial task:
-1. Check local repo instructions such as AGENTS.md.
+1. Read and follow the working repository's AGENTS.md before planning or editing. When changing local-tooling itself, its root AGENTS.md is the engineering standard, including module boundaries, focused PRs, scope safety, tests, and delivery checks.
 2. Call the `rag_prepare_task` MCP tool before analysis or edits, with hybrid retrieval and a limit of at least 8 for broad work. Use `rag_search` if the initial context is incomplete.
 3. Treat RAG hits as orientation and verify material claims with current repo files or authoritative live sources before acting.
 4. Check the MCP tools available for a target service before web search or browser access; use a suitable MCP tool first. Browser access is a fallback when MCP cannot perform the operation or fails.

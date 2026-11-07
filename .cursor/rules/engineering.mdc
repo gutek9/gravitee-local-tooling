@@ -1,0 +1,9 @@
+---
+description: Repository engineering standards and required agent workflow
+alwaysApply: true
+---
+
+Read and follow the repository-root `AGENTS.md` before planning or editing code.
+It is the single source of truth for engineering standards, the RAG/MCP workflow,
+testing, and delivery checks. Keep the rules there rather than duplicating them
+in this file.

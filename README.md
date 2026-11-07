@@ -27,6 +27,13 @@ It packages:
 - local repo bootstrap indexing, generated on each developer machine
 - lightweight task sessions for context, review, and reusable learning
 
+## Contributing
+
+Read [AGENTS.md](AGENTS.md) before changing this repository. It defines the
+engineering standards for module boundaries, focused PRs, customer scope,
+configuration, tests, and verification. Claude and Cursor instruction files
+point to the same rules so there is one source to maintain.
+
 ## Quick start
 
 Run these commands from the `local-tooling` repository. `CODE_REPO` must point
