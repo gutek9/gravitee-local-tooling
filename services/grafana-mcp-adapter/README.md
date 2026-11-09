@@ -348,6 +348,9 @@ npm run check     # syntax-check the source files
 Coverage:
 
 - `helpers.test.js` — the pure helpers (`helpers.js`).
+- `namespaceMatch.test.js` — which namespaces a client phrase names
+  (`namespaceMatch.js`): whole name, then segments, then substring, and giving
+  ground one trailing word at a time.
 - `grafanaClient.test.js` — the HTTP client (`grafanaClient.js`): config
   validation, auth headers, param handling.
 - `lokiDiscovery.test.js` / `logsLinks.test.js` — the Loki reads behind

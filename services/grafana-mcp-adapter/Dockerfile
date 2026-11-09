@@ -13,6 +13,7 @@ COPY logsLinks.js /app/logsLinks.js
 COPY customerCsv.js /app/customerCsv.js
 COPY customerMapLoader.js /app/customerMapLoader.js
 COPY customerMatch.js /app/customerMatch.js
+COPY namespaceMatch.js /app/namespaceMatch.js
 COPY customerResolver.js /app/customerResolver.js
 # Optional: the customer map snapshot is a LOCAL fallback cache and is
 # deliberately not committed (this repo is public; the customer list is not).

@@ -4,7 +4,7 @@
 // data they are given, so they can be unit-tested directly; resolveNamespaces()
 // and findCustomer() only fetch that data (Loki's namespace values and the
 // customer map) first.
-import { matchNamespaces, matchNamespacesPhrase } from "./helpers.js";
+import { matchNamespaces, matchNamespacesPhrase } from "./namespaceMatch.js";
 import { fetchLabelValues } from "./lokiDiscovery.js";
 import { loadCustomerMap } from "./customerMapLoader.js";
 import {
