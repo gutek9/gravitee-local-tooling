@@ -293,3 +293,80 @@ test("loadCustomerMap: a bad numeric setting stops the map loading, naming it, b
     assert.deepEqual(calls, []);
   });
 });
+
+// ---------------------------------------------------------------------------
+// How long a fallback is kept
+// ---------------------------------------------------------------------------
+
+// The tests move the clock with a stub of Date.now, so a minute passes at once.
+const MINUTE = 60_000;
+
+// Regression: "no map" was not kept at all, so during a GitHub outage every map
+// load, and every grafana_logs_link call, waited out the fetch timeout again.
+test("loadCustomerMap: with both sources down, GitHub is not asked again for a minute", async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
+  await withGitHub({ csv: null }, async (calls) => {
+    for (let i = 0; i < 3; i++) {
+      const map = await loadCustomerMap();
+      assert.equal(map.source, "unavailable");
+      assert.match(map.warning, /Customer mapping is unavailable/);
+    }
+    assert.equal(contentsCalls(calls), 1);
+    now += MINUTE + 1000;
+    await loadCustomerMap();
+    assert.equal(contentsCalls(calls), 2);
+  });
+});
+
+test("loadCustomerMap: an unavailable map recovers once GitHub answers again", async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
+  await withGitHub({ csv: null }, () => loadCustomerMap());
+  await withGitHub({}, async (calls) => {
+    // Within the minute the failure is remembered, and GitHub is left alone.
+    assert.equal((await loadCustomerMap()).source, "unavailable");
+    assert.equal(contentsCalls(calls), 0);
+    now += MINUTE + 1000;
+    assert.equal((await loadCustomerMap()).source, "github");
+  });
+});
+
+test("loadCustomerMap: refresh asks GitHub even while a failure is remembered", async () => {
+  await withGitHub({ csv: null }, () => loadCustomerMap());
+  await withGitHub({}, async () => {
+    assert.equal((await loadCustomerMap({ refresh: true })).source, "github");
+  });
+});
+
+// Regression: the snapshot was kept for the full TTL, so GitHub's return went
+// unnoticed for an hour.
+test("loadCustomerMap: a snapshot fallback is kept a minute, not the TTL, so GitHub's return is picked up", async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
+  await writeSnapshot();
+  await withGitHub({ csv: null }, async () => {
+    assert.equal((await loadCustomerMap()).source, "bundled_snapshot");
+  });
+  await withGitHub({}, async (calls) => {
+    now += MINUTE / 2;
+    assert.equal((await loadCustomerMap()).source, "bundled_snapshot");
+    assert.equal(contentsCalls(calls), 0);
+    now += MINUTE;
+    assert.equal((await loadCustomerMap()).source, "github");
+  });
+});
+
+test("loadCustomerMap: a live map is still kept for the whole TTL", async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
+  await withGitHub({}, async (calls) => {
+    await loadCustomerMap();
+    now += MINUTE + 1000;
+    await loadCustomerMap();
+    assert.equal(contentsCalls(calls), 1);
+    now += 60 * MINUTE;
+    await loadCustomerMap();
+    assert.equal(contentsCalls(calls), 2);
+  });
+});

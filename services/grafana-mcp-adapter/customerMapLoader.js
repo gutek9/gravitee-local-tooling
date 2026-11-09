@@ -88,10 +88,26 @@ function staleness(generatedAt) {
 }
 
 let cache = null;
-let cachedAt = 0;
+// When the cached map expires. A live map is kept for TTL_MS; a fallback (the
+// snapshot, or no map at all) only for RETRY_AFTER_MS.
+let cacheUntil = 0;
 // Concurrent tool calls on a cold cache must not each fetch: they await the same
 // request. Without this, a burst of calls at connect time all pay the round trip.
 let inFlight = null;
+
+// How long a fallback is kept before GitHub is asked again. Not keeping "no map"
+// at all made every map load during a GitHub outage, and so every
+// grafana_logs_link call, even for a hosted customer, wait out the fetch timeout
+// again; keeping the snapshot for the full TTL hid GitHub's return for an hour.
+// Fixed rather than a setting: it only bounds how often a failing GitHub is
+// asked. Never longer than the TTL, so a fallback never outlives a live map.
+const RETRY_AFTER_MS = 60_000;
+
+function remember(map, lifetimeMs) {
+  cache = map;
+  cacheUntil = Date.now() + lifetimeMs;
+  return map;
+}
 
 // How old the map may be before it is called out (STALE_AFTER_DAYS, above). The
 // summary is a GENERATED artifact committed to its repo, so "fetched from GitHub"
@@ -189,7 +205,7 @@ function describeSnapshotDates(snap, days) {
 // a caller can tell a live answer from a fallback one.
 export async function loadCustomerMap({ refresh = false } = {}) {
   requireValidSettings();
-  if (!refresh && cache && Date.now() - cachedAt < TTL_MS) return cache;
+  if (!refresh && cache && Date.now() < cacheUntil) return cache;
   if (!refresh && inFlight) return inFlight;
   inFlight = loadCustomerMapUncached();
   try {
@@ -205,7 +221,7 @@ async function loadCustomerMapUncached() {
     if (!rows.length) throw new Error("fetched customer CSV parsed to zero rows");
     const generatedAt = await fetchGeneratedAt((process.env.GITHUB_PERSONAL_ACCESS_TOKEN || "").trim());
     const age = staleness(generatedAt);
-    cache = {
+    const live = {
       rows,
       source: "github",
       generated_at: generatedAt,
@@ -221,8 +237,7 @@ async function loadCustomerMapUncached() {
           }
         : {}),
     };
-    cachedAt = Date.now();
-    return cache;
+    return remember(live, TTL_MS);
   } catch (err) {
     log("warn", "Customer map: GitHub fetch failed, falling back to bundled snapshot", {
       error: err instanceof Error ? err.message : String(err),
@@ -230,7 +245,7 @@ async function loadCustomerMapUncached() {
     try {
       const snap = await loadSnapshot();
       const { generated_days_ago: days } = staleness(snap.source_generated_at);
-      cache = {
+      const fallback = {
         rows: snap.rows,
         source: "bundled_snapshot",
         generated_at: snap.source_generated_at,
@@ -240,8 +255,7 @@ async function loadCustomerMapUncached() {
           `because GitHub could not be reached: ${err instanceof Error ? err.message : String(err)}. ` +
           "Customers created or moved since then will not resolve.",
       };
-      cachedAt = Date.now();
-      return cache;
+      return remember(fallback, Math.min(RETRY_AFTER_MS, TTL_MS));
     } catch (snapErr) {
       // Both sources gone: return an empty map rather than throwing, so the
       // logs tools still work for hosted customers, which need no mapping.
@@ -249,7 +263,7 @@ async function loadCustomerMapUncached() {
         github_error: err instanceof Error ? err.message : String(err),
         snapshot_error: snapErr instanceof Error ? snapErr.message : String(snapErr),
       });
-      return {
+      const none = {
         rows: [],
         source: "unavailable",
         generated_at: null,
@@ -258,6 +272,7 @@ async function loadCustomerMapUncached() {
           "Gravitee Cloud customers cannot be resolved by name. Hosted namespaces are still found by name, " +
           "but a customer that also runs on Gravitee Cloud gets only its hosted part.",
       };
+      return remember(none, Math.min(RETRY_AFTER_MS, TTL_MS));
     }
   }
 }
@@ -265,7 +280,7 @@ async function loadCustomerMapUncached() {
 // Test seam: drop the cache so a test or a refresh can start clean.
 export function resetCustomerMapCache() {
   cache = null;
-  cachedAt = 0;
+  cacheUntil = 0;
   inFlight = null;
 }
 
