@@ -47,11 +47,46 @@ test("resolveClient: a Cloud-only customer resolves through the map", () => {
   assert.deepEqual(out.label_namespaces, []);
 });
 
-test("resolveClient: a hosted-only customer resolves through the label, with no map details", () => {
+test("resolveClient: a hosted-only customer resolves through the label, and still reports the map's source and age", () => {
   const out = resolve("april", ["april-prod", "april-rec", "other-prod"]);
   assert.deepEqual(out.namespaces, ["april-prod", "april-rec"]);
   assert.equal(out.via, "namespace_label");
-  assert.equal(out.map_source, undefined);
+  assert.equal(out.map_source, "github");
+  assert.equal(out.map_generated_days_ago, 2);
+});
+
+// Regression: the map's source and warning were returned only when the map
+// itself resolved a namespace. When the label route alone answered, a failed or
+// fallback map vanished from the result, and a partial result read as complete.
+test("resolveClient: an unavailable map is reported even when the label route finds the customer", () => {
+  const unavailable = {
+    rows: [],
+    source: "unavailable",
+    generated_at: null,
+    warning: "Customer mapping is unavailable (GitHub unreachable and no usable bundled snapshot).",
+  };
+  // acme's data planes are in Loki, but without the map nothing ties them to acme.
+  const out = resolveClient({ phrase: "acme", namespaceValues: ["acme-prod", ...ACME_DATA_PLANES], map: unavailable });
+  assert.deepEqual(out.namespaces, ["acme-prod"]);
+  assert.equal(out.via, "namespace_label");
+  const report = resolutionReport(out);
+  assert.equal(report.map_source, "unavailable");
+  assert.match(report.map_warning, /Customer mapping is unavailable/);
+});
+
+test("resolveClient: a snapshot fallback's warning is kept when only the label route finds the customer", () => {
+  const snapshot = {
+    ...MAP,
+    source: "bundled_snapshot",
+    generated_days_ago: 45,
+    warning: "Customer mapping came from the bundled snapshot, because GitHub could not be reached.",
+  };
+  const out = resolveClient({ phrase: "april", namespaceValues: ["april-prod"], map: snapshot });
+  assert.equal(out.via, "namespace_label");
+  const report = resolutionReport(out);
+  assert.equal(report.map_source, "bundled_snapshot");
+  assert.equal(report.map_generated_days_ago, 45);
+  assert.match(report.map_warning, /bundled snapshot/);
 });
 
 test("resolveClient: an env word narrows the map to that deployment", () => {

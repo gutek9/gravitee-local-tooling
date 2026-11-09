@@ -303,7 +303,10 @@ Nothing breaks without it. The Dockerfile's `COPY customers-snapshot.jso[n]` is 
 no-op when the file is absent, so a fresh clone builds; the adapter fetches the
 map from GitHub at runtime and, if GitHub is unreachable AND no usable snapshot
 exists (missing, or with no customers), reports that Gravitee Cloud customers
-cannot be resolved rather than failing or guessing. Hosted customers are unaffected either way — they resolve from Loki.
+cannot be resolved rather than failing or guessing. Hosted namespaces still
+resolve from Loki by name, but a customer that also runs on Gravitee Cloud then
+gets only its hosted part, and the response says so (`map_source: "unavailable"`
+and `map_warning`).
 
 ### Customer-map environment variables
 

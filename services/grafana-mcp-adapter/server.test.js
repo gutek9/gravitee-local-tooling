@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // server.js imports grafanaClient.js, which reads env at import time and refuses
 // to make calls unless configured. Set a deterministic config before importing so
@@ -10,9 +12,12 @@ process.env.GRAFANA_TOKEN = "glsa_test";
 // Pin the Loki datasource uid so the proxy path is predictable in assertions.
 process.env.GRAFANA_LOGS_DATASOURCE_UID = "grafanacloud-logs";
 // The customer map is fetched from GitHub; the stub below answers that fetch
-// with CUSTOMERS_CSV. A token must be set or the map skips GitHub and reads the
-// local customers-snapshot.json, which holds real customers on some machines.
+// with CUSTOMERS_CSV. A token must be set or the map skips GitHub. When GitHub
+// fails the map falls back to the local customers-snapshot.json, which holds
+// real customers on some machines, so the snapshot path points at a file that
+// does not exist: a test with GitHub down then sees the map as unavailable.
 process.env.GITHUB_PERSONAL_ACCESS_TOKEN = "test-token";
+process.env.GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH = join(tmpdir(), `grafana-server-test-${process.pid}`, "customers-snapshot.json");
 
 // server.js only starts the stdio transport when run as the entrypoint, so this
 // import is side-effect-free apart from registering the tools. `tools` exposes the
@@ -61,12 +66,16 @@ const LOKI_DOWN = { lokiDown: true };
 // values are the JSON `data` array Loki would return under `{ status, data }`,
 // or LOKI_DOWN. The customer map is reloaded through the stub on every call, so
 // each test starts from CUSTOMERS_CSV rather than a map cached by an earlier test.
-function withLokiStub(routes, fn) {
+// `githubDown: true` makes GitHub answer 503 instead.
+function withLokiStub(routes, fn, { githubDown = false } = {}) {
   const calls = [];
   const origFetch = globalThis.fetch;
   resetCustomerMapCache();
   globalThis.fetch = (url) => {
-    if (String(url).startsWith("https://api.github.com/")) return githubResponse(String(url));
+    if (String(url).startsWith("https://api.github.com/")) {
+      if (githubDown) return Promise.resolve({ ok: false, status: 503, text: () => Promise.resolve("") });
+      return githubResponse(String(url));
+    }
     calls.push(String(url));
     const u = String(url);
     let data = [];
@@ -272,6 +281,29 @@ test("grafana_logs_link: a customer that is both hosted and Cloud is searched th
       // Streams matched, so no "empty result" note.
       assert.equal(out.note, undefined);
     },
+  );
+});
+
+test("grafana_logs_link: an unavailable map is reported when only the hosted namespace is found", async () => {
+  // Regression: with GitHub and the snapshot both gone, acme's hosted namespace
+  // still resolved by name, but the response dropped the map's source and
+  // warning, so acme-prod alone read as all of acme. Its Cloud data planes, in
+  // Loki but tied to acme only by the map, were never searched.
+  await withLokiStub(
+    {
+      [NS_VALUES]: ["acme-prod", "apim-dp-cp1111-dp0001"],
+      [SERIES]: [stream("acme-prod", "acme-gateway")],
+    },
+    async () => {
+      const out = await callTool("grafana_logs_link", { client: "acme" });
+      assert.deepEqual(out.resolved_namespaces, ["acme-prod"]);
+      assert.equal(out.resolved_via, "namespace_label");
+      assert.equal(out.map_source, "unavailable");
+      assert.match(out.map_warning, /Customer mapping is unavailable/);
+      // The warning must not call the hosted result complete: acme is on Cloud too.
+      assert.match(out.map_warning, /gets only its hosted part/);
+    },
+    { githubDown: true },
   );
 });
 

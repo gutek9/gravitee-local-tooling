@@ -209,7 +209,8 @@ async function loadCustomerMapUncached() {
         generated_at: null,
         warning:
           "Customer mapping is unavailable (GitHub unreachable and no usable bundled snapshot), so " +
-          "Gravitee Cloud customers cannot be resolved by name. Hosted customers are unaffected.",
+          "Gravitee Cloud customers cannot be resolved by name. Hosted namespaces are still found by name, " +
+          "but a customer that also runs on Gravitee Cloud gets only its hosted part.",
       };
     }
   }

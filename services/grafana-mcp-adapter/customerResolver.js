@@ -206,14 +206,13 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
         }
       : {}),
     ...(absent.length ? { mapped_namespaces_absent_in_range: absent } : {}),
-    ...(resolved.namespaces.length
-      ? {
-          map_source: map.source,
-          map_generated_at: map.generated_at,
-          map_generated_days_ago: map.generated_days_ago,
-          map_warning: map.warning,
-        }
-      : {}),
+    // Reported even when only the namespace label answered: a customer can be
+    // hosted and on Cloud at once, so with an unavailable or stale map this
+    // result may be missing its Cloud deployments, and the caller must know.
+    map_source: map.source,
+    map_generated_at: map.generated_at,
+    map_generated_days_ago: map.generated_days_ago,
+    map_warning: map.warning,
     label_namespaces: byLabel,
     matched_deployments: resolved.matched.map((r) => ({
       customer: r.customer,
