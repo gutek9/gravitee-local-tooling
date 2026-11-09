@@ -106,7 +106,21 @@ async function request(method, path, { params = {}, body } = {}) {
     if (!res.ok) {
       const retryAfter = res.headers.get("retry-after");
       const suffix = retryAfter ? `; retry-after=${retryAfter}` : "";
-      throw new Error(`Grafana ${method} ${path} failed with HTTP ${res.status}${suffix}`);
+      // Say WHY. A bare status code sent a P1 investigation to work around a
+      // broken tool instead of reading one line explaining it: Loki's 400 body
+      // named the exact label and value it could not parse. Grafana and Loki
+      // put the reason in `message`, `error` or the raw body depending on the
+      // path, so take whichever is present.
+      const reason = String(parsed?.message || parsed?.error || parsed?.raw || bodyText || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 600);
+      const err = new Error(
+        `Grafana ${method} ${path} failed with HTTP ${res.status}${suffix}${reason ? `: ${reason}` : ""}`,
+      );
+      err.status = res.status;
+      err.reason = reason;
+      throw err;
     }
     return parsed;
   } finally {
