@@ -313,7 +313,10 @@ and `map_warning`).
 The Gravitee Cloud customer map is fetched at runtime from a private GitHub repo.
 These variables control where it comes from and how it is cached. Set them in
 the repo's `.env`; `docker compose` forwards all of them to the adapter
-container, and an empty value means the default. Only the token is required for
+container, and an empty value means the default. A number that is set must be a
+whole number in the range given below: `local-tooling doctor` reports a bad one,
+and the map tools (`grafana_logs_link`, `grafana_find_customer`) refuse to run
+with it, naming the setting. Only the token is required for
 a live fetch. Without it, the adapter falls back to the local snapshot (if you
 generated one) or reports that Cloud customers cannot be resolved. Hosted
 namespaces still resolve by name, but a customer that also runs on Gravitee
@@ -325,9 +328,9 @@ Cloud then gets only its hosted part.
 | `GRAFANA_CUSTOMER_MAP_REPO` | `gravitee-io/cloud-deployments-configuration` | Repo holding the customer CSV. |
 | `GRAFANA_CUSTOMER_MAP_PATH` | `docs/summary/customers_summary.csv` | Path to the CSV inside that repo. |
 | `GRAFANA_CUSTOMER_MAP_REF` | `prod` | Branch or tag the CSV is read from. |
-| `GRAFANA_CUSTOMER_MAP_TTL_SECONDS` | `3600` | How long a successful fetch stays cached in memory. |
-| `GRAFANA_CUSTOMER_MAP_TIMEOUT_MS` | `5000` | Timeout for the GitHub fetch. |
-| `GRAFANA_CUSTOMER_MAP_STALE_DAYS` | `30` | Age after which the map is reported as stale. |
+| `GRAFANA_CUSTOMER_MAP_TTL_SECONDS` | `3600` | How long a successful fetch stays cached in memory. Whole number, 1 or more. |
+| `GRAFANA_CUSTOMER_MAP_TIMEOUT_MS` | `5000` | Timeout for the GitHub fetch. Whole number, 1 to 60000. |
+| `GRAFANA_CUSTOMER_MAP_STALE_DAYS` | `30` | Age after which the map is reported as stale. Whole number, 1 or more. |
 | `GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH` | `customers-snapshot.json` next to `server.js` (`/app/customers-snapshot.json` in the container) | Where the fallback snapshot is read from. Under Docker this is a path inside the container: leave it empty to use the snapshot built into the image, or mount another file and point this at it. The tests point it at a file of their own. |
 
 > **Token type.** The token needs read access to

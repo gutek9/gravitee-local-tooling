@@ -262,6 +262,45 @@ class LocalToolingTest(unittest.TestCase):
         # Disabled -> no errors at all, regardless of the uid.
         self.assertEqual(grafana_config_errors({"GRAFANA_ENABLED": "false"}), [])
 
+    def test_grafana_config_rejects_bad_customer_map_numbers(self) -> None:
+        """A customer-map number that is set must be a whole number in range, so
+        doctor names it instead of the adapter running on NaN (a timeout that
+        aborts at once, a cache that never holds, every map called stale)."""
+        from local_tooling.grafana import grafana_config_errors
+
+        base = {
+            "GRAFANA_ENABLED": "true",
+            "GRAFANA_BASE_URL": "https://grafana.example.com",
+            "GRAFANA_TOKEN": "glsa_x",
+            "GRAFANA_LOGS_DATASOURCE_UID": "grafanacloud-logs",
+        }
+
+        # Empty means the default, as .env.example lists them.
+        self.assertEqual(grafana_config_errors({**base, "GRAFANA_CUSTOMER_MAP_TTL_SECONDS": "  "}), [])
+        # Whole numbers in range are fine, the timeout up to 60000.
+        good = {
+            "GRAFANA_CUSTOMER_MAP_TTL_SECONDS": "120",
+            "GRAFANA_CUSTOMER_MAP_TIMEOUT_MS": "60000",
+            "GRAFANA_CUSTOMER_MAP_STALE_DAYS": "1",
+        }
+        self.assertEqual(grafana_config_errors({**base, **good}), [])
+
+        for bad in ["abc", "0", "-5", "1.5", "1e3", "12abc"]:
+            self.assertEqual(
+                grafana_config_errors({**base, "GRAFANA_CUSTOMER_MAP_TTL_SECONDS": bad}),
+                [f'GRAFANA_CUSTOMER_MAP_TTL_SECONDS must be a whole number of 1 or more, got "{bad}"'],
+                bad,
+            )
+        self.assertEqual(
+            grafana_config_errors({**base, "GRAFANA_CUSTOMER_MAP_TIMEOUT_MS": "60001"}),
+            ['GRAFANA_CUSTOMER_MAP_TIMEOUT_MS must be a whole number from 1 to 60000, got "60001"'],
+        )
+
+        # Disabled -> not checked, like the rest of the Grafana settings.
+        self.assertEqual(
+            grafana_config_errors({"GRAFANA_ENABLED": "false", "GRAFANA_CUSTOMER_MAP_TIMEOUT_MS": "abc"}), []
+        )
+
     def test_setup_bootstrap_skips_zendesk_when_disabled(self) -> None:
         cli = load_cli()
         with tempfile.TemporaryDirectory() as tmp:

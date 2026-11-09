@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from .env import bool_env
 
 GRAFANA_DISABLED_MESSAGE = (
@@ -37,6 +39,31 @@ def grafana_config_errors(env: dict[str, str]) -> list[str]:
             "GRAFANA_LOGS_DATASOURCE_UID is required (uid of the Loki datasource holding "
             "your logs; note the uid is not always the same as the display name)"
         )
+    errors.extend(customer_map_number_errors(env))
+    return errors
+
+
+# The customer map's numeric settings: (name, minimum, maximum or None). Empty
+# means the adapter's default; anything else must be a whole number in range.
+# The adapter (customerMapLoader.js) applies the same rule and refuses to load the
+# map with a bad value; checking here too lets doctor report it before start.
+CUSTOMER_MAP_NUMBER_SETTINGS = (
+    ("GRAFANA_CUSTOMER_MAP_TTL_SECONDS", 1, None),
+    ("GRAFANA_CUSTOMER_MAP_TIMEOUT_MS", 1, 60000),
+    ("GRAFANA_CUSTOMER_MAP_STALE_DAYS", 1, None),
+)
+
+
+def customer_map_number_errors(env: dict[str, str]) -> list[str]:
+    errors: list[str] = []
+    for name, low, high in CUSTOMER_MAP_NUMBER_SETTINGS:
+        raw = env.get(name, "").strip()
+        if not raw:
+            continue
+        value = int(raw) if re.fullmatch(r"[0-9]+", raw) else None
+        if value is None or value < low or (high is not None and value > high):
+            limits = f"of {low} or more" if high is None else f"from {low} to {high}"
+            errors.append(f'{name} must be a whole number {limits}, got "{raw}"')
     return errors
 
 

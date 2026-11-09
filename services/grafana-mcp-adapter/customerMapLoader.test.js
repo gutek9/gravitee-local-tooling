@@ -10,7 +10,9 @@ const DIR = await mkdtemp(join(tmpdir(), "customer-map-"));
 const SNAPSHOT = join(DIR, "customers-snapshot.json");
 process.env.GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH = SNAPSHOT;
 
-const { loadCustomerMap, resetCustomerMapCache, buildSnapshot, fetchGeneratedAt } = await import("./customerMapLoader.js");
+const { loadCustomerMap, resetCustomerMapCache, buildSnapshot, fetchGeneratedAt, readNumberSettings } = await import(
+  "./customerMapLoader.js"
+);
 
 const CSV = `Customer,ControlPlaneId,DataPlaneId,Region,Provider,Cloud Region,Custom DNS,URLs
 acme,cp1111,cp1111-dp0001,unitedstates,aws,us-east-1,None,prod-org-acme.us-aws-us-east-1.gateway.gravitee.io
@@ -214,5 +216,80 @@ test("loadCustomerMap: concurrent calls on a cold cache share one fetch", async 
     const maps = await Promise.all([loadCustomerMap(), loadCustomerMap(), loadCustomerMap()]);
     assert.equal(contentsCalls(calls), 1);
     assert.ok(maps.every((m) => m.source === "github"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Numeric settings
+// ---------------------------------------------------------------------------
+
+test("readNumberSettings: empty or unset settings take the documented defaults", () => {
+  assert.deepEqual(readNumberSettings({}), {
+    values: {
+      GRAFANA_CUSTOMER_MAP_TTL_SECONDS: 3600,
+      GRAFANA_CUSTOMER_MAP_TIMEOUT_MS: 5000,
+      GRAFANA_CUSTOMER_MAP_STALE_DAYS: 30,
+    },
+    errors: [],
+  });
+  // Compose forwards an unset variable as "", and .env.example lists them empty.
+  const blank = readNumberSettings({
+    GRAFANA_CUSTOMER_MAP_TTL_SECONDS: "",
+    GRAFANA_CUSTOMER_MAP_TIMEOUT_MS: "  ",
+    GRAFANA_CUSTOMER_MAP_STALE_DAYS: "",
+  });
+  assert.deepEqual(blank.errors, []);
+  assert.equal(blank.values.GRAFANA_CUSTOMER_MAP_TIMEOUT_MS, 5000);
+});
+
+test("readNumberSettings: whole numbers in range are used as given", () => {
+  const { values, errors } = readNumberSettings({
+    GRAFANA_CUSTOMER_MAP_TTL_SECONDS: "120",
+    GRAFANA_CUSTOMER_MAP_TIMEOUT_MS: "60000",
+    GRAFANA_CUSTOMER_MAP_STALE_DAYS: "1",
+  });
+  assert.deepEqual(errors, []);
+  assert.deepEqual(values, {
+    GRAFANA_CUSTOMER_MAP_TTL_SECONDS: 120,
+    GRAFANA_CUSTOMER_MAP_TIMEOUT_MS: 60000,
+    GRAFANA_CUSTOMER_MAP_STALE_DAYS: 1,
+  });
+});
+
+// Regression: these were read with Number() unchecked, so "abc" became NaN and
+// the fetch aborted at once, the cache never held, or every map read as stale.
+test("readNumberSettings: a value that is not a whole number in range is refused by name", () => {
+  for (const bad of ["abc", "0", "-5", "1.5", "1e3", "12abc"]) {
+    const { values, errors } = readNumberSettings({ GRAFANA_CUSTOMER_MAP_TTL_SECONDS: bad });
+    assert.equal(values.GRAFANA_CUSTOMER_MAP_TTL_SECONDS, undefined, bad);
+    assert.deepEqual(errors, [`GRAFANA_CUSTOMER_MAP_TTL_SECONDS must be a whole number of 1 or more, got "${bad}"`], bad);
+  }
+  // The timeout is bounded: a log lookup must not wait minutes for GitHub.
+  assert.deepEqual(readNumberSettings({ GRAFANA_CUSTOMER_MAP_TIMEOUT_MS: "60001" }).errors, [
+    'GRAFANA_CUSTOMER_MAP_TIMEOUT_MS must be a whole number from 1 to 60000, got "60001"',
+  ]);
+  // Every bad setting is reported, not only the first.
+  const both = readNumberSettings({ GRAFANA_CUSTOMER_MAP_TIMEOUT_MS: "x", GRAFANA_CUSTOMER_MAP_STALE_DAYS: "y" });
+  assert.equal(both.errors.length, 2);
+});
+
+test("loadCustomerMap: a bad numeric setting stops the map loading, naming it, before any GitHub call", async () => {
+  // The loader reads its settings at import, so load a separate copy of it with
+  // the bad value set, then put the environment back.
+  const before = process.env.GRAFANA_CUSTOMER_MAP_TIMEOUT_MS;
+  process.env.GRAFANA_CUSTOMER_MAP_TIMEOUT_MS = "abc";
+  let loader;
+  try {
+    loader = await import("./customerMapLoader.js?bad-timeout");
+  } finally {
+    if (before === undefined) delete process.env.GRAFANA_CUSTOMER_MAP_TIMEOUT_MS;
+    else process.env.GRAFANA_CUSTOMER_MAP_TIMEOUT_MS = before;
+  }
+  await withGitHub({}, async (calls) => {
+    const named = /GRAFANA_CUSTOMER_MAP_TIMEOUT_MS must be a whole number from 1 to 60000, got "abc"/;
+    await assert.rejects(loader.loadCustomerMap(), named);
+    // The refresh script's fetch is stopped the same way.
+    await assert.rejects(loader.fetchCustomerCsv(), named);
+    assert.deepEqual(calls, []);
   });
 });

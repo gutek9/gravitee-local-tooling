@@ -19,11 +19,56 @@ export const SNAPSHOT_PATH = process.env.GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH || j
 const REPO = process.env.GRAFANA_CUSTOMER_MAP_REPO || "gravitee-io/cloud-deployments-configuration";
 const PATH = process.env.GRAFANA_CUSTOMER_MAP_PATH || "docs/summary/customers_summary.csv";
 const REF = process.env.GRAFANA_CUSTOMER_MAP_REF || "prod";
-// Customers are added over days, not seconds; an hour of cache is plenty and
-// keeps GitHub out of the hot path for a burst of tool calls.
-const TTL_MS = Number(process.env.GRAFANA_CUSTOMER_MAP_TTL_SECONDS || 3600) * 1000;
-// A log lookup must not hang because GitHub is slow. Fall back fast instead.
-const FETCH_TIMEOUT_MS = Number(process.env.GRAFANA_CUSTOMER_MAP_TIMEOUT_MS || 5000);
+
+// The numeric settings, with their defaults and the range a value must fall in.
+// Defaults: customers are added over days, not seconds, so an hour of cache is
+// plenty and keeps GitHub out of the hot path for a burst of tool calls; a log
+// lookup must not hang because GitHub is slow, so the fetch gives up fast; a map
+// older than 30 days is called out as stale.
+// local_tooling/grafana.py applies the same rule, so `doctor` reports a bad value
+// before the adapter starts.
+const NUMBER_SETTINGS = [
+  { name: "GRAFANA_CUSTOMER_MAP_TTL_SECONDS", fallback: 3600, min: 1 },
+  { name: "GRAFANA_CUSTOMER_MAP_TIMEOUT_MS", fallback: 5000, min: 1, max: 60000 },
+  { name: "GRAFANA_CUSTOMER_MAP_STALE_DAYS", fallback: 30, min: 1 },
+];
+
+// Empty or unset means the default; anything else must be a whole number in
+// range. A value read as-is with Number() fails quietly: "abc" is NaN, and a NaN
+// timeout aborts the GitHub fetch at once, a NaN TTL never caches, a NaN stale
+// threshold calls every map stale. Returns the values by name, and one message
+// per bad setting.
+export function readNumberSettings(env = process.env) {
+  const values = {};
+  const errors = [];
+  for (const { name, fallback, min, max } of NUMBER_SETTINGS) {
+    const raw = String(env[name] ?? "").trim();
+    const value = raw === "" ? fallback : /^[0-9]+$/.test(raw) ? Number(raw) : NaN;
+    if (Number.isSafeInteger(value) && value >= min && (max === undefined || value <= max)) {
+      values[name] = value;
+    } else {
+      const range = max === undefined ? `of ${min} or more` : `from ${min} to ${max}`;
+      errors.push(`${name} must be a whole number ${range}, got "${raw}"`);
+    }
+  }
+  return { values, errors };
+}
+
+const SETTINGS = readNumberSettings();
+const TTL_MS = SETTINGS.values.GRAFANA_CUSTOMER_MAP_TTL_SECONDS * 1000;
+const FETCH_TIMEOUT_MS = SETTINGS.values.GRAFANA_CUSTOMER_MAP_TIMEOUT_MS;
+const STALE_AFTER_DAYS = SETTINGS.values.GRAFANA_CUSTOMER_MAP_STALE_DAYS;
+
+// A bad setting stops every map load, and the refresh script's fetch, with the
+// setting's name, instead of running on a value it cannot use. Tools that do
+// not use the map are unaffected.
+function requireValidSettings() {
+  if (!SETTINGS.errors.length) return;
+  throw new Error(
+    `Invalid customer map configuration: ${SETTINGS.errors.join("; ")}. Fix it in .env, or leave it ` +
+      "empty for the default, then recreate the container: docker compose up -d --force-recreate grafana-mcp-adapter",
+  );
+}
 
 // A map fetched live can still be months out of date. Report the age rather than
 // letting `source: "github"` imply currency.
@@ -48,11 +93,10 @@ let cachedAt = 0;
 // request. Without this, a burst of calls at connect time all pay the round trip.
 let inFlight = null;
 
-// How old the map may be before it is called out. The summary is a GENERATED
-// artifact committed to its repo, so "fetched from GitHub" says nothing about
-// when it was last regenerated — and a stale map fails by omission, which is the
-// hardest kind of wrong to notice.
-const STALE_AFTER_DAYS = Number(process.env.GRAFANA_CUSTOMER_MAP_STALE_DAYS || 30);
+// How old the map may be before it is called out (STALE_AFTER_DAYS, above). The
+// summary is a GENERATED artifact committed to its repo, so "fetched from GitHub"
+// says nothing about when it was last regenerated — and a stale map fails by
+// omission, which is the hardest kind of wrong to notice.
 
 // The date the source file was last COMMITTED, i.e. last regenerated. Best-effort:
 // a failure here must not stop the map loading.
@@ -80,6 +124,7 @@ export async function fetchGeneratedAt(token) {
 }
 
 export async function fetchCustomerCsv() {
+  requireValidSettings();
   const token = (process.env.GITHUB_PERSONAL_ACCESS_TOKEN || "").trim();
   if (!token) throw new Error("GITHUB_PERSONAL_ACCESS_TOKEN is not set");
   const url = `https://api.github.com/repos/${REPO}/contents/${PATH}?ref=${encodeURIComponent(REF)}`;
@@ -143,6 +188,7 @@ function describeSnapshotDates(snap, days) {
 // Returns { rows, source, generated_at, warning }. `source` is always reported so
 // a caller can tell a live answer from a fallback one.
 export async function loadCustomerMap({ refresh = false } = {}) {
+  requireValidSettings();
   if (!refresh && cache && Date.now() - cachedAt < TTL_MS) return cache;
   if (!refresh && inFlight) return inFlight;
   inFlight = loadCustomerMapUncached();
@@ -227,5 +273,9 @@ export function resetCustomerMapCache() {
 // than landing in the middle of someone's first query. Fire-and-forget: a failure
 // here is not fatal, the next call falls back to the snapshot as usual.
 export function warmCustomerMap() {
-  loadCustomerMap().catch(() => {});
+  // An unreachable map resolves as unavailable, so what throws here is a bad
+  // setting. Logged so it shows at startup, not only on the first map tool call.
+  loadCustomerMap().catch((err) => {
+    log("error", "Customer map not loaded", { error: err instanceof Error ? err.message : String(err) });
+  });
 }
