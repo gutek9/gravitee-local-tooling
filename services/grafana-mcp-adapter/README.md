@@ -311,10 +311,13 @@ and `map_warning`).
 ### Customer-map environment variables
 
 The Gravitee Cloud customer map is fetched at runtime from a private GitHub repo.
-These variables control where it comes from and how it is cached. Only the token
-is required for a live fetch. Without it, the adapter falls back to the local
-snapshot (if you generated one) or reports that Cloud customers cannot be
-resolved. Hosted customers are not affected.
+These variables control where it comes from and how it is cached. Set them in
+the repo's `.env`; `docker compose` forwards all of them to the adapter
+container, and an empty value means the default. Only the token is required for
+a live fetch. Without it, the adapter falls back to the local snapshot (if you
+generated one) or reports that Cloud customers cannot be resolved. Hosted
+namespaces still resolve by name, but a customer that also runs on Gravitee
+Cloud then gets only its hosted part.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -325,7 +328,7 @@ resolved. Hosted customers are not affected.
 | `GRAFANA_CUSTOMER_MAP_TTL_SECONDS` | `3600` | How long a successful fetch stays cached in memory. |
 | `GRAFANA_CUSTOMER_MAP_TIMEOUT_MS` | `5000` | Timeout for the GitHub fetch. |
 | `GRAFANA_CUSTOMER_MAP_STALE_DAYS` | `30` | Age after which the map is reported as stale. |
-| `GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH` | `customers-snapshot.json` next to `server.js` | Where the fallback snapshot is read from. The tests point it at a file of their own. |
+| `GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH` | `customers-snapshot.json` next to `server.js` (`/app/customers-snapshot.json` in the container) | Where the fallback snapshot is read from. Under Docker this is a path inside the container: leave it empty to use the snapshot built into the image, or mount another file and point this at it. The tests point it at a file of their own. |
 
 > **Token type.** The token needs read access to
 > `gravitee-io/cloud-deployments-configuration`. In our tests a classic token
