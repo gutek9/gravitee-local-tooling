@@ -589,6 +589,34 @@ test("grafana_logs_link: a failed namespace lookup is reported, not blamed on a 
   });
 });
 
+test("grafana_logs_link: nothing found with a source down is refused, and Loki /series is never queried", async () => {
+  // Regression: "orbit dev" with Loki's namespace list down fell to a
+  // service_name search, which linked another customer's orbitalpay-dev.
+  await withLokiStub(
+    { [NS_VALUES]: LOKI_DOWN, [SERIES]: [stream("prod", "graviteeio-apim-orbitalpay-dev-gateway")] },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "orbit dev" });
+      assert.equal(out.refused, true);
+      assert.equal(out.namespace_lookup_failed, true);
+      assert.match(out.customer_note, /Loki did not return its namespace list/);
+      assert.deepEqual(out.links, []);
+      assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+    },
+  );
+  // The map unavailable, and no hosted namespace for the phrase.
+  await withLokiStub(
+    { [NS_VALUES]: ["april-prod", "prod"], [SERIES]: [stream("prod", "graviteeio-apim-zzxqq-gateway")] },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "zzxqq" });
+      assert.equal(out.refused, true);
+      assert.equal(out.map_source, "unavailable");
+      assert.match(out.customer_note, /customer map could not be read/);
+      assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+    },
+    { githubDown: true },
+  );
+});
+
 test("grafana_logs_link: a fragment matching several Cloud customers is refused, and Loki is never queried", async () => {
   // "beac" matches beacon AND beaconlabs. Merging them would return one
   // customer's logs under the other's name, so the map withholds both.

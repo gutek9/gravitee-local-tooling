@@ -155,11 +155,14 @@ function scopeToOneCustomer({ phrase, found, split, mapMatched, controlPlaneId, 
 //     ones it could not find.
 //
 // Returns which route answered, and any warning about the map's freshness, so a
-// caller can tell a live mapping from a fallback one. An empty `namespaces`
-// tells the caller to fall back to a plain `service_name` match.
+// caller can tell a live mapping from a fallback one. An empty `namespaces` that
+// is not `refused` means both sources answered and neither found the client: the
+// caller may then search `service_name`, outside Cloud namespaces.
 export async function resolveNamespaces(client, { datasourceUid, from, controlPlaneId } = {}) {
   const phrase = String(client || "").trim();
-  if (!phrase) return { namespaces: [], via: "none" };
+  // Nothing to resolve is not "both sources found nothing" (the tool schema
+  // already refuses a blank client).
+  if (!phrase) throw new Error("client is required");
 
   let namespaceValues = null;
   try {
@@ -463,6 +466,36 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
             : `"${phrase}" is the id of ${dataPlanes.length} data planes: ${listNames(named)}. `) +
           "Nothing was searched: pass the full namespace " +
           (dataPlanes.length === 1 ? "to search that data plane." : "of the one you mean."),
+        map_source: map.source,
+        map_warning: map.warning,
+      };
+    }
+    // The service_name search is the last resort for a customer with no
+    // namespace of its own (one living in a shared `prod`), and only once both
+    // sources answered: with Loki's namespace list or the map missing, finding
+    // nothing is not "no such customer", and service_name alone could return
+    // another customer's logs. A stale snapshot did answer, and says how old.
+    const mapUnavailable = map.source === "unavailable";
+    if (!liveNamespacesKnown || mapUnavailable) {
+      const failed =
+        !liveNamespacesKnown && mapUnavailable
+          ? `Neither Loki's namespace list nor the customer map could be read, so "${phrase}" could not be matched to any customer`
+          : !liveNamespacesKnown
+            ? `Loki did not return its namespace list, so "${phrase}" could not be matched to a customer's namespaces`
+            : `The customer map could not be read and no hosted namespace is called "${phrase}", so whether it is a ` +
+              "Gravitee Cloud customer cannot be checked";
+      return {
+        namespaces: [],
+        via: "none",
+        refused: true,
+        note:
+          `${failed}. Nothing was searched: a service_name search alone could return another customer's logs. ` +
+          (!mapUnavailable
+            ? "Retry in a moment."
+            : liveNamespacesKnown
+              ? "Retry once the map can be read (map_warning says why), or pass a data plane's full namespace " +
+                "(apim-dp-...), which is searched without the map."
+              : "Retry once both can be read (map_warning says why the map could not)."),
         map_source: map.source,
         map_warning: map.warning,
       };

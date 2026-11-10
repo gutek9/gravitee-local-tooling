@@ -205,6 +205,42 @@ test("resolveClient: part of a name is not trusted when one source could not be 
   assert.deepEqual(resolve("acme", null).namespaces, ACME_DATA_PLANES);
 });
 
+test("resolveClient: nothing found with a source down is refused, not left to a service_name search", () => {
+  // Regression: a phrase neither route found fell to the service_name search
+  // even when a route could not run: "orbit dev" with Loki's namespace list
+  // down linked another customer's orbitalpay-dev in a shared namespace.
+  const unavailable = { rows: [], source: "unavailable", generated_at: null, warning: "map unavailable" };
+  const lokiDown = resolve("orbit dev", null);
+  assert.equal(lokiDown.refused, true);
+  assert.deepEqual(lokiDown.namespaces, []);
+  assert.equal(lokiDown.namespace_lookup_failed, true);
+  assert.match(lokiDown.note, /^Loki did not return its namespace list, so "orbit dev" could not be matched/);
+  assert.match(lokiDown.note, /Nothing was searched/);
+  const mapDown = resolveClient({ phrase: "zzxqq", namespaceValues: ["orbit-prod"], map: unavailable });
+  assert.equal(mapDown.refused, true);
+  assert.equal(mapDown.map_source, "unavailable");
+  assert.match(mapDown.note, /^The customer map could not be read/);
+  assert.match(mapDown.note, /pass a data plane's full namespace/);
+  const bothDown = resolveClient({ phrase: "zzxqq", namespaceValues: null, map: unavailable });
+  assert.equal(bothDown.refused, true);
+  assert.match(bothDown.note, /^Neither Loki's namespace list nor the customer map could be read/);
+  // A data plane's own id the map knows still gets its full namespace, not this refusal.
+  assert.deepEqual(resolve("dp0002", null).matched_by_id.data_planes, [
+    { namespace: "apim-dp-cp1111-dp0002", customer: "acme" },
+  ]);
+});
+
+test("resolveClient: a stale snapshot counts as an answer, so the service_name search stays open", () => {
+  // Guards the rule: only an unavailable map blocks it. A snapshot answered,
+  // and its warning says how old it is.
+  const snapshot = { ...MAP, source: "bundled_snapshot", warning: "from the snapshot" };
+  const out = resolveClient({ phrase: "ghd", namespaceValues: ["prod", "orbit-prod"], map: snapshot });
+  assert.equal(out.refused, undefined);
+  assert.deepEqual(out.namespaces, []);
+  assert.equal(out.via, "none");
+  assert.equal(out.map_warning, "from the snapshot");
+});
+
 test("resolveClient: part of a name that names one customer is searched, and says so", () => {
   // beaconlabs is hosted and on Cloud: one customer, both routes.
   const out = resolve("beaconl", ["beaconlabs-prod", "apim-dp-cp3333-dp0001"]);
@@ -498,6 +534,7 @@ test("resolutionReport: every field a resolution sets reaches the report", () =>
     resolve("cp9999-dp0001", ["apim-dp-cp9999-dp0001"]),
     resolve("cp1111-dp0002", ACME_DATA_PLANES, { controlPlaneId: "cp5555" }),
     resolve("dp0002", ACME_DATA_PLANES),
+    resolve("orbit dev", null),
   ];
   const renamed = { via: "resolved_via", note: "customer_note" };
   for (const resolution of resolutions) {

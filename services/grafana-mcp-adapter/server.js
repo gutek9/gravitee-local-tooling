@@ -227,14 +227,16 @@ registerTool(
       // `blueyonder-plt-live`): the namespace names the customer reliably,
       // whereas `service_name` doesn't for every tenant. Customers that only
       // live in a shared namespace (`prod`) resolve to [] and fall back to the
-      // plain service_name match.
+      // plain service_name match, once the map and Loki's namespace list have
+      // both answered; otherwise the resolution is refused.
       const resolution = await resolveNamespaces(client, {
         datasourceUid: LOGS_DATASOURCE_UID,
         from,
         controlPlaneId: control_plane_id,
       });
       // Refused before any stream discovery: with no namespaces the selector
-      // below would fall back to a service_name match across all of Loki.
+      // below would fall back to a service_name match across every namespace
+      // outside Gravitee Cloud.
       if (resolution.refused) {
         return textResult({
           refused: true,

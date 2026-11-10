@@ -139,6 +139,14 @@ The response also says how the customer was found:
 - `namespace_lookup_failed`, `namespace_lookup_note` — Loki did not return its
   namespace list. Hosted customers could not be matched by namespace, and mapped
   namespaces were not checked against Loki, so none is reported as absent.
+- `refused` with `namespace_lookup_failed` or `map_source: "unavailable"` —
+  neither route found `client`, and one of them could not run. A customer with
+  no namespace of its own (one in a shared `prod`) is found by a `service_name`
+  search, but only once both the map and Loki's namespace list answered: without
+  them, finding nothing is not "no such customer", and `service_name` alone
+  could return another customer's logs. Nothing is searched; retry in a moment.
+  With only the map down, a data plane can still be searched by its full
+  namespace. A map from the bundled snapshot counts as an answer.
 - `suggestions` — close `service_name` values (see above), only when the `client`
   matched no namespace **and** no streams.
 
@@ -347,14 +355,17 @@ refreshing an old CSV today does not make the map look current. A snapshot from
 before this split says its source date is unknown; run the command again to
 record it.
 
-Nothing breaks without it. The Dockerfile's `COPY customers-snapshot.jso[n]` is a
+The build does not need it. The Dockerfile's `COPY customers-snapshot.jso[n]` is a
 no-op when the file is absent, so a fresh clone builds; the adapter fetches the
 map from GitHub at runtime and, if GitHub is unreachable AND no usable snapshot
 exists (missing, or with no customers), reports that Gravitee Cloud customers
 cannot be resolved rather than failing or guessing. Hosted namespaces still
 resolve from Loki by name, but a customer that also runs on Gravitee Cloud then
 gets only its hosted part, and the response says so (`map_source: "unavailable"`
-and `map_warning`).
+and `map_warning`). A `client` that names no hosted namespace is refused rather
+than searched by `service_name` alone, because without the map nobody can tell
+it is not a Gravitee Cloud customer; this includes customers that live only in a
+shared namespace, for as long as the map cannot be read.
 
 ### Customer-map environment variables
 
