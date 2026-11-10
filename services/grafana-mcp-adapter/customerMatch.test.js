@@ -143,7 +143,7 @@ test("resolveCustomerNamespaces: candidates carry enough to choose between them"
   const out = resolveCustomerNamespaces(parseCustomerCsv(AMBIG), { core: "wind" });
   const northwind = out.candidates.find((c) => c.customer === "northwind");
   assert.equal(northwind.deployments, 1);
-  assert.deepEqual(northwind.control_planes, ["cp3333"]);
+  assert.deepEqual(northwind.control_plane_ids, ["cp3333"]);
   assert.deepEqual(northwind.regions, ["europe"]);
 });
 

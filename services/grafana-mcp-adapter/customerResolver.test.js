@@ -639,12 +639,26 @@ test("findCustomerMatches: a name gives the customer's deployments, organization
   const [acme] = out.gravitee_cloud_customers;
   assert.equal(acme.customer, "acme");
   assert.equal(acme.deployments, 3);
-  assert.deepEqual(acme.organizations, ["cp1111"]);
+  assert.deepEqual(acme.control_plane_ids, ["cp1111"]);
   assert.deepEqual(acme.envs, ["dev", "prod", "qa"]);
   assert.deepEqual(acme.namespaces, ACME_DATA_PLANES);
   assert.deepEqual(acme.shared_control_plane_namespaces, ["apim-cp-cp1111"]);
   assert.deepEqual(out.hosted_namespaces, ["acme-prod"]);
   assert.equal(out.map_source, "github");
+});
+
+test("a Cloud customer is described the same way in a refusal's candidates and in findCustomerMatches", () => {
+  // Regression: the same control plane ids were `control_planes` in a refusal's
+  // candidates and `organizations` in find_customer.
+  const refused = resolve("beac");
+  assert.equal(refused.ambiguous_customer, true);
+  assert.deepEqual(refused.candidates.map((c) => c.customer), ["beacon", "beaconlabs"]);
+  assert.deepEqual(refused.candidates[0].control_plane_ids, ["cp2222"]);
+  const found = find("beac").gravitee_cloud_customers;
+  for (const candidate of refused.candidates) {
+    const entry = found.find((f) => f.customer === candidate.customer);
+    for (const [key, value] of Object.entries(candidate)) assert.deepEqual(entry[key], value, `${candidate.customer}.${key}`);
+  }
 });
 
 test("findCustomerMatches: one name over two organizations says to pass control_plane_id", () => {

@@ -669,14 +669,9 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
   // Ask the map where the name ends, so "acme recette" finds acme.
   const { core: mapName } = splitNameAndTail(map.rows, needle);
   const groups = groupByCustomer(matchCustomers(map.rows, mapName));
-  const cockpit = [...groups.entries()]
-    .map(([customer, rows]) => ({
-      customer,
-      kind: "gravitee_cloud",
-      deployments: rows.length,
-      organizations: [...new Set(rows.map((r) => r.control_plane_id).filter(Boolean))],
-      envs: [...new Set(rows.map((r) => r.env).filter(Boolean))].sort(),
-      regions: [...new Set(rows.map((r) => r.region).filter(Boolean))].sort(),
+  const cockpit = [...groups.values()]
+    .map((rows) => ({
+      ...describeCustomer(rows),
       namespaces: [...new Set(rows.map((r) => dataPlaneNamespace(r.data_plane_id)))],
       shared_control_plane_namespaces: [
         ...new Set(rows.map((r) => r.control_plane_id).filter(Boolean).map(controlPlaneNamespace)),
@@ -701,7 +696,7 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
     const unattributed = namespaceValues.filter(
       (n) =>
         n.startsWith("apim-dp-") &&
-        entry.organizations.includes(controlPlaneOf(n.slice("apim-dp-".length))) &&
+        entry.control_plane_ids.includes(controlPlaneOf(n.slice("apim-dp-".length))) &&
         !mappedNs.has(n),
     );
     if (unattributed.length) {
@@ -747,10 +742,10 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
     result.note =
       `"${query}" matches ${cockpit.length} different Gravitee Cloud customers. The log tools will not ` +
       "search them together — pass one exact customer name.";
-  } else if (cockpit.length === 1 && cockpit[0].organizations.length > 1) {
+  } else if (cockpit.length === 1 && cockpit[0].control_plane_ids.length > 1) {
     result.note =
-      `"${cockpit[0].customer}" spans ${cockpit[0].organizations.length} separate Cockpit organizations ` +
-      `(${cockpit[0].organizations.join(", ")}). Pass control_plane_id to narrow to one.`;
+      `"${cockpit[0].customer}" spans ${cockpit[0].control_plane_ids.length} separate Cockpit organizations ` +
+      `(${cockpit[0].control_plane_ids.join(", ")}). Pass control_plane_id to narrow to one.`;
   } else if (byId && byId.kind === "unknown" && !cockpit.length && ID_SHAPED.test(query.trim())) {
     // A live namespace the map cannot attribute. Such namespaces exist, some on
     // control planes the CSV has never heard of. Saying nothing here would

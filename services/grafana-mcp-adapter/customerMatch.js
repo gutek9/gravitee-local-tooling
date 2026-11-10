@@ -143,14 +143,15 @@ export function lookupById(rows = [], query = "") {
   return { kind: "unknown", id, note: `Neither ${id} nor its control plane appears in the customer map.` };
 }
 
-// Summarise one customer for a disambiguation prompt: enough to choose between
-// candidates without dumping every deployment.
+// Summarise one Gravitee Cloud customer, the same way in a refusal's candidates
+// and in grafana_find_customer: enough to choose between them without dumping
+// every deployment. control_plane_ids are what control_plane_id accepts.
 export function describeCustomer(rows) {
   return {
     customer: rows[0].customer,
     kind: "gravitee_cloud",
     deployments: rows.length,
-    control_planes: [...new Set(rows.map((r) => r.control_plane_id).filter(Boolean))],
+    control_plane_ids: [...new Set(rows.map((r) => r.control_plane_id).filter(Boolean))],
     envs: [...new Set(rows.map((r) => r.env).filter(Boolean))].sort(),
     regions: [...new Set(rows.map((r) => r.region).filter(Boolean))].sort(),
   };

@@ -307,7 +307,7 @@ registerTool(
     "ambiguous_customer, or simply to see what a customer has. Searches both populations: " +
     "Gravitee Cloud (Cockpit) customers via the deployment map, and hosted customers via " +
     "Loki's namespace label. Returns per customer: deployment count, Cockpit organizations " +
-    "(control plane ids), environments, regions and the exact namespaces — so the caller can " +
+    "(control_plane_ids), environments, regions and the exact namespaces — so the caller can " +
     "pass a precise client (or control_plane_id) to grafana_logs_link. Namespaces that match by " +
     "name are listed as hosted_namespaces, and Gravitee Cloud ones (apim-dp-*, apim-cp-*) apart as " +
     "cloud_namespaces: their name carries ids, not their owner, so look one up by its full id.",

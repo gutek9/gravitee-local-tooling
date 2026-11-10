@@ -766,7 +766,7 @@ test("grafana_find_customer: a name returns the customer's deployments in both p
       const acme = out.gravitee_cloud_customers[0];
       assert.equal(acme.customer, "acme");
       assert.equal(acme.deployments, 3);
-      assert.deepEqual(acme.organizations, ["cp1111"]);
+      assert.deepEqual(acme.control_plane_ids, ["cp1111"]);
       assert.deepEqual(acme.envs, ["dev", "prod", "qa"]);
       assert.deepEqual(acme.namespaces, ["apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp0002", "apim-dp-cp1111-dp0003"]);
       assert.deepEqual(acme.shared_control_plane_namespaces, ["apim-cp-cp1111"]);

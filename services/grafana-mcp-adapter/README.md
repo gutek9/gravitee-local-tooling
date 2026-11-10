@@ -93,7 +93,9 @@ The response also says how the customer was found:
   Unless a hosted namespace carries the whole fragment, nothing is searched at all
   (`refused`): a `service_name` match across all of Loki would search the same
   ambiguous fragment. Each candidate says its `kind` (`gravitee_cloud` or
-  `hosted`); at most ten are listed. Pass the exact name.
+  `hosted`); a Cloud one also has the same `deployments`, `control_plane_ids`,
+  `envs` and `regions` as in `grafana_find_customer`. At most ten are listed.
+  Pass the exact name.
 - `similar_names_not_searched`, `customer_note` — names that only contain the
   one asked for, while another customer has it as a whole name: `acme` searches
   the Cloud customer acme, not the hosted `acmecorp-*`. Name one to search it.
@@ -294,7 +296,7 @@ alert, pod name or dashboard (`apim-dp-cp1111-dp0001`, `cp1111-dp0001`,
 alert tells you whose it is. A blank `query` is refused.
 
 It returns, per Gravitee Cloud customer: deployment count, Cockpit
-organizations (control plane ids, to pass as `control_plane_id`), environments,
+organizations (`control_plane_ids`, to pass as `control_plane_id`), environments,
 regions, the exact data-plane namespaces, and the shared control-plane
 namespaces. Hosted customers come back as `hosted_namespaces`. Gravitee Cloud
 namespaces whose name matches (`apim-dp-*`, `apim-cp-*`, for example every data
