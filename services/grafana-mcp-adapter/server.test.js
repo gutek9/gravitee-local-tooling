@@ -356,6 +356,59 @@ test("grafana_logs_link: prod is not read inside nonprod or preprod, and Loki is
   );
 });
 
+test("grafana_logs_link: hosted namespaces of two customers are refused, and Loki is never queried", async () => {
+  // Regression: "plt live" searched two customers' namespaces together.
+  await withLokiStub(
+    { [NS_VALUES]: ["nova-plt-live", "vega-plt-live"], [SERIES]: [stream("nova-plt-live", "nova-gateway")] },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "plt live" });
+      assert.equal(out.refused, true);
+      assert.deepEqual(out.resolved_namespaces, []);
+      assert.equal(out.ambiguous_customer, true);
+      assert.deepEqual(out.candidates.map((c) => c.customer), ["nova", "vega"]);
+      assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+    },
+  );
+});
+
+test("grafana_logs_link: a hosted name that only contains a Cloud customer's is not searched", async () => {
+  // Regression: "acme" searched another customer's acmecorp-prod with acme's data plane.
+  await withLokiStub(
+    {
+      [NS_VALUES]: ["acmecorp-prod", "apim-dp-cp1111-dp0001"],
+      [SERIES]: [stream("apim-dp-cp1111-dp0001", "acme-gateway")],
+    },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "acme" });
+      // acme's three mapped data planes (two absent from Loki are flagged, not dropped).
+      assert.deepEqual(out.resolved_namespaces, [
+        "apim-dp-cp1111-dp0001",
+        "apim-dp-cp1111-dp0002",
+        "apim-dp-cp1111-dp0003",
+      ]);
+      assert.deepEqual(out.similar_names_not_searched, [{ customer: "acmecorp", kind: "hosted" }]);
+      const series = decodeURIComponent(calls.find((u) => u.includes(SERIES)));
+      assert.ok(!series.includes("acmecorp"), series);
+    },
+  );
+});
+
+test("grafana_logs_link: part of a name with the map unavailable is refused, and Loki is never queried", async () => {
+  // Without the map, "acme" could be a Cloud customer's whole name; searching the
+  // hosted acmecorp-prod would answer for the wrong customer.
+  await withLokiStub(
+    { [NS_VALUES]: ["acmecorp-prod"], [SERIES]: [stream("acmecorp-prod", "acmecorp-gateway")] },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "acme" });
+      assert.equal(out.refused, true);
+      assert.equal(out.partial_match_unchecked, true);
+      assert.equal(out.map_source, "unavailable");
+      assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+    },
+    { githubDown: true },
+  );
+});
+
 test("grafana_logs_link: an env word matching none of the customer's deployments is refused, and Loki is never queried", async () => {
   // Regression (#9 review): "acme staging" with only prod, dev and qa searched all
   // of them, and the hosted acme-prod too, with no staging constraint at all.

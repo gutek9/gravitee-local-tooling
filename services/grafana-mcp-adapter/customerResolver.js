@@ -12,10 +12,125 @@ import {
   resolveCustomerNamespaces,
   matchCustomers,
   groupByCustomer,
+  describeCustomer,
+  sameName,
+  listNames,
+  MAX_NAMES,
   lookupById,
   dataPlaneNamespace,
   controlPlaneNamespace,
 } from "./customerMatch.js";
+
+// A hosted customer's namespaces are named after it by their first segment
+// (`acmecorp-prod`, `acmecorp-dev` -> acmecorp); checked against the live
+// namespace list, this holds for every hosted customer. Infrastructure named
+// per tenant (`logstash-<tenant>`) is the exception, see the README.
+const hostedName = (namespace) => String(namespace).toLowerCase().split("-")[0];
+
+// What a map answer set aside contributes.
+const NOTHING = { matched: [], namespaces: [], control_plane_namespaces: [] };
+
+// At most MAX_NAMES candidates, and how many were left out.
+function cappedCandidates(candidates = []) {
+  return {
+    candidates: candidates.slice(0, MAX_NAMES),
+    ...(candidates.length > MAX_NAMES ? { candidates_truncated: candidates.length - MAX_NAMES } : {}),
+  };
+}
+
+// One customer per answer. Decides, before anything is searched, which route's
+// matches count:
+//
+//  - Part of a name is trusted only when both sources answered. Without the map
+//    or Loki's namespace list, nobody can check that the phrase is not another
+//    customer's whole name.
+//  - A whole name on one route outranks part of a name on the other: "acme" is
+//    a Cloud customer's whole name, so the hosted `acmecorp-*`, which only
+//    contains it, is set aside and named, not searched. Not a hosted whole name
+//    with a control_plane_id, though: the id asks for a Cloud organization, a
+//    hosted namespace is on none, and the id itself confirms the customer.
+//  - What is searched belongs to one customer. Hosted namespaces of two
+//    customers ("beac" -> beacon and beaconlabs, "plt live" -> two customers'
+//    `plt-live`), or a hosted customer plus a different Cloud one, are refused
+//    with the candidates, as the map already does with its own matches.
+//
+// `labelSearched` is false when the label route's namespaces will not be
+// searched anyway: a trailing word they lack, or a control_plane_id.
+function scopeToOneCustomer({ phrase, found, split, mapMatched, controlPlaneId, labelSearched, bothAnswered }) {
+  const labelNames = [...new Set(found.namespaces.map(hostedName))];
+  const mapNames = [...new Set(mapMatched.map((r) => r.customer))];
+  const hasLabel = labelNames.length > 0;
+  const hasMap = mapNames.length > 0;
+
+  const partialMap = hasMap && split.partial;
+  if (!bothAnswered && ((labelSearched && hasLabel && found.partial) || partialMap)) {
+    // Whichever route answered, the other one is the source that failed.
+    const [name, whose, unchecked] = partialMap
+      ? [split.core, `Gravitee Cloud customer ${listNames(mapNames)}`, "Loki did not return its namespace list, so it cannot be checked that no hosted customer"]
+      : [found.name, `hosted ${listNames(labelNames)}`, "the customer map could not be read, so it cannot be checked that no Gravitee Cloud customer"];
+    return {
+      refusal: {
+        partial_match_unchecked: true,
+        note: `"${name}" is only part of the name of ${whose}, and ${unchecked} is called "${name}" exactly. Nothing was searched. Use the full name.`,
+      },
+    };
+  }
+
+  let useLabel = hasLabel;
+  let useMap = hasMap;
+  let setAside = [];
+  if (hasLabel && hasMap && found.partial !== split.partial) {
+    if (found.partial) {
+      useLabel = false;
+      setAside = labelNames.map((customer) => ({ customer, kind: "hosted" }));
+    } else if (!controlPlaneId) {
+      useMap = false;
+      setAside = mapNames.map((customer) => ({ customer, kind: "gravitee_cloud" }));
+    }
+  }
+
+  if (useLabel && labelSearched) {
+    const names = [...labelNames];
+    if (useMap) for (const m of mapNames) if (!names.some((n) => sameName(n, m))) names.push(m);
+    if (names.length > 1) {
+      const hosted = labelNames.map((customer) => ({
+        customer,
+        kind: "hosted",
+        namespace_count: found.namespaces.filter((n) => hostedName(n) === customer).length,
+      }));
+      const cloud = useMap ? [...groupByCustomer(mapMatched).values()].map(describeCustomer) : [];
+      const candidates = [...hosted, ...cloud].sort(
+        (a, b) => a.customer.localeCompare(b.customer) || a.kind.localeCompare(b.kind),
+      );
+      return {
+        refusal: {
+          ambiguous_customer: true,
+          ...cappedCandidates(candidates),
+          note:
+            `"${phrase}" matches ${names.length} different customers (${listNames(names.sort())}). ` +
+            "Searching them together would return one customer's logs under another's name, so none of them was searched. " +
+            "Use the exact customer name.",
+        },
+      };
+    }
+  }
+
+  // Part of a name that names one customer is searched, as that customer.
+  const partialName =
+    useLabel && labelSearched && found.partial
+      ? labelNames[0]
+      : useMap && split.partial && mapNames.length === 1
+        ? mapNames[0]
+        : null;
+  return {
+    useLabel,
+    useMap,
+    setAside,
+    exactName: found.partial ? split.core : found.name,
+    partialName,
+    asked: found.partial ? found.name : split.core,
+  };
+}
 
 // Resolve a free-text client to the namespaces holding its logs, by two routes:
 //
@@ -69,7 +184,28 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
   // typed and gives ground one trailing word at a time; the map route asks the
   // map where the customer name ends. What the caller meant by the last word is
   // decided by what exists, not by a list of known environment names.
-  const label = matchNamespacesPhrase(namespaceValues, phrase);
+  const found = matchNamespacesPhrase(namespaceValues, phrase);
+  const split = splitNameAndTail(map.rows, phrase);
+  const scope = scopeToOneCustomer({
+    phrase,
+    found,
+    split,
+    mapMatched: matchCustomers(map.rows, split.core),
+    controlPlaneId,
+    labelSearched: !found.tail.length && !controlPlaneId,
+    bothAnswered: liveNamespacesKnown && map.source !== "unavailable",
+  });
+  if (scope.refusal) {
+    return {
+      namespaces: [],
+      via: "none",
+      refused: true,
+      ...scope.refusal,
+      map_source: map.source,
+      map_warning: map.warning,
+    };
+  }
+  const label = scope.useLabel ? found : { ...found, namespaces: [] };
   // The label route only counts when it matched every word typed. Namespaces it
   // found by dropping trailing words ignore those words: "acme dev" has no
   // `acme-dev`, so it drops "dev" and finds `acme-prod`, and dev would also
@@ -79,8 +215,10 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
   // searching them would widen past the organization asked for.
   const byLabel = label.tail.length || controlPlaneId ? [] : label.namespaces;
   const skipped = byLabel.length ? [] : label.namespaces;
-  const { core, tail } = splitNameAndTail(map.rows, phrase);
-  const resolved = resolveCustomerNamespaces(map.rows, { core, qualifiers: tail, controlPlaneId });
+  const answer = resolveCustomerNamespaces(map.rows, { core: split.core, qualifiers: split.tail, controlPlaneId });
+  // A map answer set aside contributes nothing. An ambiguous one already
+  // contributes nothing, and is kept so its candidates are reported.
+  const resolved = scope.useMap || answer.ambiguous ? answer : NOTHING;
   const namespaces = [...new Set([...byLabel, ...resolved.namespaces])];
 
   // Words that narrow neither route are refused, not dropped: both routes found
@@ -131,7 +269,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
       unknown_control_plane: true,
       requested_control_plane_id: controlPlaneId,
       control_plane_ids: resolved.control_plane_ids || [],
-      ...(resolved.ambiguous ? { ambiguous_customer: true, candidates: resolved.candidates } : {}),
+      ...(resolved.ambiguous ? { ambiguous_customer: true, ...cappedCandidates(resolved.candidates) } : {}),
       note,
       map_source: map.source,
       map_warning: map.warning,
@@ -153,7 +291,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
       via: byLabel.length ? "namespace_label" : "none",
       ...(byLabel.length ? {} : { refused: true }),
       ambiguous_customer: true,
-      candidates: resolved.candidates,
+      ...cappedCandidates(resolved.candidates),
       ...(skipped.length ? { skipped_namespaces: skipped } : {}),
       note: byLabel.length
         ? `${resolved.reason} Only the namespaces named after "${label.name}" (${byLabel.join(", ")}) were searched.`
@@ -206,6 +344,26 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
         }
       : {}),
     ...(absent.length ? { mapped_namespaces_absent_in_range: absent } : {}),
+    // Names that only contain the one asked for, set aside because another
+    // customer has it as a whole name. Said, so a caller who meant one of them
+    // knows to name it.
+    ...(scope.setAside.length
+      ? {
+          similar_names_not_searched: scope.setAside.slice(0, MAX_NAMES),
+          note:
+            `${listNames(scope.setAside.map((c) => c.customer))} only partly match "${scope.exactName}", ` +
+            `which is another customer's whole name, so ${scope.setAside.length > 1 ? "they were" : "it was"} ` +
+            "not searched. Use the full name to search one.",
+        }
+      : {}),
+    ...(scope.partialName
+      ? {
+          partial_name_match: true,
+          note:
+            `"${scope.asked}" is only part of a customer name, so it was searched as ${scope.partialName}. ` +
+            "Use the full name if another customer was meant.",
+        }
+      : {}),
     // Reported even when only the namespace label answered: a customer can be
     // hosted and on Cloud at once, so with an unavailable or stale map this
     // result may be missing its Cloud deployments, and the caller must know.
@@ -253,6 +411,10 @@ export function resolutionReport(resolution = {}) {
     "shared_control_plane_namespaces",
     "ambiguous_customer",
     "candidates",
+    "candidates_truncated",
+    "similar_names_not_searched",
+    "partial_match_unchecked",
+    "partial_name_match",
     "spans_multiple_organizations",
     "organizations_note",
     "control_plane_ids",

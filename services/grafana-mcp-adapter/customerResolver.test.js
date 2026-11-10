@@ -120,6 +120,112 @@ test("resolveClient: prod is not read inside nonprod or preprod", () => {
   assert.deepEqual(out.skipped_namespaces, ["orbit-nonprod", "orbit-preprod"]);
 });
 
+// ---------------------------------------------------------------------------
+// One customer per answer
+// ---------------------------------------------------------------------------
+
+test("resolveClient: a hosted name that only contains a Cloud customer's whole name is set aside, not searched", () => {
+  // Regression: "acme" also searched another customer's acmecorp-*, and "acme
+  // dev" searched acmecorp-dev next to acme's dev deployment.
+  const values = ["acmecorp-prod", "acmecorp-dev", ...ACME_DATA_PLANES];
+  const out = resolve("acme", values);
+  assert.deepEqual(out.namespaces, ACME_DATA_PLANES);
+  assert.equal(out.via, "customer_map");
+  assert.deepEqual(out.similar_names_not_searched, [{ customer: "acmecorp", kind: "hosted" }]);
+  assert.match(out.note, /acmecorp only partly match "acme", which is another customer's whole name/);
+  assert.deepEqual(resolve("acme dev", values).namespaces, ["apim-dp-cp1111-dp0002"]);
+  // Nor is it named as skipped when a word is refused.
+  const refused = resolve("acme staging", values);
+  assert.equal(refused.refused, true);
+  assert.equal(refused.skipped_namespaces, undefined);
+});
+
+test("resolveClient: a Cloud name that only contains a hosted customer's whole name is set aside, not searched", () => {
+  // "north" is a hosted customer's whole name; northwind on Cloud only contains it.
+  const out = resolve("north", ["north-prod", "apim-dp-cp5555-dp0001", "apim-dp-cp6666-dp0001"]);
+  assert.deepEqual(out.namespaces, ["north-prod"]);
+  assert.equal(out.via, "namespace_label");
+  assert.deepEqual(out.similar_names_not_searched, [{ customer: "northwind", kind: "gravitee_cloud" }]);
+});
+
+test("resolveClient: with a control_plane_id, a hosted whole name does not set the Cloud customer aside", () => {
+  // The id asks for a Cloud organization and confirms the customer; a hosted
+  // namespace is on none, so "north" here can only mean northwind's.
+  const out = resolve("north", ["north-prod", "apim-dp-cp5555-dp0001"], { controlPlaneId: "cp5555" });
+  assert.deepEqual(out.namespaces, ["apim-dp-cp5555-dp0001"]);
+  assert.equal(out.partial_name_match, true);
+  assert.deepEqual(out.skipped_namespaces, ["north-prod"]);
+  // An id that is not the customer's is still refused.
+  assert.equal(resolve("north", ["north-prod"], { controlPlaneId: "cp9999" }).refused, true);
+});
+
+test("resolveClient: hosted namespaces of two customers are refused, with the candidates", () => {
+  // Regression: whole segments shared by two customers searched both.
+  const out = resolve("plt live", ["nova-plt-live", "nova-plt-live-ap", "vega-plt-live"]);
+  assert.deepEqual(out.namespaces, []);
+  assert.equal(out.refused, true);
+  assert.equal(out.ambiguous_customer, true);
+  assert.deepEqual(out.candidates, [
+    { customer: "nova", kind: "hosted", namespace_count: 2 },
+    { customer: "vega", kind: "hosted", namespace_count: 1 },
+  ]);
+  assert.match(out.note, /matches 2 different customers \(nova, vega\)/);
+  // Regression: part of a name searched two hosted customers while the note said
+  // only the namespaces named after it were searched.
+  const beac = resolve("beac", ["beacon-hosted-prod", "beaconlabs-prod"]);
+  assert.equal(beac.refused, true);
+  assert.deepEqual(beac.namespaces, []);
+});
+
+test("resolveClient: part of a name matching a hosted and a different Cloud customer is refused", () => {
+  // Regression: "acm" searched hosted acmecorp and Cloud acme together.
+  const out = resolve("acm", ["acmecorp-prod", ...ACME_DATA_PLANES]);
+  assert.deepEqual(out.namespaces, []);
+  assert.equal(out.refused, true);
+  assert.deepEqual(
+    out.candidates.map((c) => [c.customer, c.kind]),
+    [["acme", "gravitee_cloud"], ["acmecorp", "hosted"]],
+  );
+});
+
+test("resolveClient: part of a name is not trusted when one source could not be read", () => {
+  const unavailable = { rows: [], source: "unavailable", generated_at: null, warning: "map unavailable" };
+  // Without the map, nothing shows that "acme" is not a Cloud customer's whole name.
+  const mapDown = resolveClient({ phrase: "acme", namespaceValues: ["acmecorp-prod"], map: unavailable });
+  assert.equal(mapDown.refused, true);
+  assert.equal(mapDown.partial_match_unchecked, true);
+  assert.deepEqual(mapDown.namespaces, []);
+  assert.match(mapDown.note, /customer map could not be read/);
+  // Without Loki's list, nothing shows that "acm" is not a hosted customer's.
+  const lokiDown = resolve("acm", null);
+  assert.equal(lokiDown.refused, true);
+  assert.equal(lokiDown.partial_match_unchecked, true);
+  assert.match(lokiDown.note, /Loki did not return its namespace list/);
+  // A whole name still resolves with one source down.
+  assert.deepEqual(resolve("acme", null).namespaces, ACME_DATA_PLANES);
+});
+
+test("resolveClient: part of a name that names one customer is searched, and says so", () => {
+  // beaconlabs is hosted and on Cloud: one customer, both routes.
+  const out = resolve("beaconl", ["beaconlabs-prod", "apim-dp-cp3333-dp0001"]);
+  assert.deepEqual(out.namespaces, ["beaconlabs-prod", "apim-dp-cp3333-dp0001"]);
+  assert.equal(out.partial_name_match, true);
+  assert.match(out.note, /"beaconl" is only part of a customer name, so it was searched as beaconlabs/);
+});
+
+test("resolveClient: candidates are capped, and say how many were left out", () => {
+  const rows = Array.from({ length: 12 }, (_, i) => {
+    const name = `zed${String(i).padStart(2, "0")}`;
+    return `${name},cp9${i},cp9${i}-dp0001,europe,az,westeurope,None,prod-org-${name}.eu-az-westeurope.gateway.gravitee.io`;
+  });
+  const map = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV + rows.join("\n") + "\n") };
+  const out = resolveClient({ phrase: "zed", namespaceValues: [], map });
+  assert.equal(out.refused, true);
+  assert.equal(out.candidates.length, 10);
+  assert.equal(out.candidates_truncated, 2);
+  assert.match(out.note, /zed09 and 2 more\)/);
+});
+
 test("resolveClient: an ambiguous fragment takes nothing from the map, and names the withheld customers", () => {
   const out = resolve("beac", ["apim-dp-cp2222-dp0001", "apim-dp-cp3333-dp0001"]);
   assert.deepEqual(out.namespaces, []);
@@ -274,6 +380,10 @@ test("resolutionReport: every field a resolution sets reaches the report", () =>
     resolve("acme", null),
     resolve("acme", ["acme-prod", ...ACME_DATA_PLANES], { controlPlaneId: "cp1111" }),
     { ...resolve("acme", ACME_DATA_PLANES), map_warning: "stale" },
+    resolve("acme", ["acmecorp-prod", ...ACME_DATA_PLANES]),
+    resolve("plt live", ["nova-plt-live", "vega-plt-live"]),
+    resolve("acm", null),
+    resolve("beaconl", ["beaconlabs-prod"]),
   ];
   const renamed = { via: "resolved_via", note: "customer_note" };
   for (const resolution of resolutions) {

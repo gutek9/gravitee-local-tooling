@@ -77,12 +77,14 @@ test("matchNamespaces: an environment word is never matched inside another word"
     namespaces: ["orbit-nonprod", "orbit-preprod"],
     name: "orbit",
     tail: ["prod"],
+    partial: false,
   });
   // Regression: "dev" matched inside another customer's name.
   assert.deepEqual(matchNamespacesPhrase(["zeta-prod", "zetadevtools-prod"], "zeta dev"), {
     namespaces: ["zeta-prod"],
     name: "zeta",
     tail: ["dev"],
+    partial: false,
   });
 });
 
@@ -93,6 +95,7 @@ test("matchNamespacesPhrase: every cut is tried exactly before any is tried part
     namespaces: ["acme-dev"],
     name: "acme",
     tail: ["prod"],
+    partial: false,
   });
 });
 
@@ -107,13 +110,31 @@ test("matchNamespaces: separators do not count", () => {
 });
 
 test("matchNamespacesPhrase: drops the tail only when the whole phrase names nothing, and returns it", () => {
-  assert.deepEqual(matchNamespacesPhrase(FLEET, "acme rec"), { namespaces: ["acme-rec"], name: "acme rec", tail: [] });
+  assert.deepEqual(matchNamespacesPhrase(FLEET, "acme rec"), {
+    namespaces: ["acme-rec"],
+    name: "acme rec",
+    tail: [],
+    partial: false,
+  });
   // "gatewaytesting" is a Cockpit environment: no hosted namespace has it, so the
   // tail comes back for the map to explain rather than being thrown away.
   assert.deepEqual(matchNamespacesPhrase(FLEET, "acme gatewaytesting"), {
     namespaces: ["acme-int", "acme-ppr", "acme-prod", "acme-rec", "acme-sandbox"],
     name: "acme",
     tail: ["gatewaytesting"],
+    partial: false,
   });
-  assert.deepEqual(matchNamespacesPhrase(FLEET, "nobody here"), { namespaces: [], name: "", tail: ["nobody", "here"] });
+  assert.deepEqual(matchNamespacesPhrase(FLEET, "nobody here"), {
+    namespaces: [],
+    name: "",
+    tail: ["nobody", "here"],
+    partial: false,
+  });
+  // Part of a name is said to be part of one.
+  assert.deepEqual(matchNamespacesPhrase(FLEET, "multiten"), {
+    namespaces: ["orbit-multitenant"],
+    name: "multiten",
+    tail: [],
+    partial: true,
+  });
 });

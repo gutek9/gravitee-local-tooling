@@ -83,11 +83,23 @@ The response also says how the customer was found:
   the Cloud deployments behind the namespaces. Control-plane namespaces are
   shared by every customer on that control plane, so they are reported but never
   searched under one customer's name.
-- `ambiguous_customer`, `candidates`, `customer_note` — the fragment matched
-  several Cloud customers, so the map contributed nothing. Unless a hosted
-  namespace carries the whole fragment, nothing is searched (`refused`): a
-  `service_name` match across all of Loki would search the same ambiguous
-  fragment. Pass the exact name.
+- `ambiguous_customer`, `candidates`, `candidates_truncated`, `customer_note` —
+  the fragment matched several customers: several Cloud ones, hosted namespaces
+  of more than one customer (`plt live` in `nova-plt-live` and `vega-plt-live`),
+  or a hosted customer and a different Cloud one. Nothing from them is searched.
+  Unless a hosted namespace carries the whole fragment, nothing is searched at all
+  (`refused`): a `service_name` match across all of Loki would search the same
+  ambiguous fragment. Each candidate says its `kind` (`gravitee_cloud` or
+  `hosted`); at most ten are listed. Pass the exact name.
+- `similar_names_not_searched`, `customer_note` — names that only contain the
+  one asked for, while another customer has it as a whole name: `acme` searches
+  the Cloud customer acme, not the hosted `acmecorp-*`. Name one to search it.
+- `partial_name_match`, `customer_note` — the name was only part of one
+  customer's name (`beaconl`), so it was searched as that customer.
+- `refused`, `partial_match_unchecked` — the name was only part of a customer's
+  name and the map or Loki's namespace list could not be read, so it cannot be
+  checked that no other customer has it as a whole name. Nothing is searched; use
+  the full name.
 - `spans_multiple_organizations`, `organizations_note` — one name, several Cockpit
   organizations. Pass `control_plane_id` to narrow to one.
 - `refused`, `unknown_control_plane`, `requested_control_plane_id` — the
@@ -225,6 +237,21 @@ Both routes try every cut of the phrase as a whole name before any as part of
 one. A phrase can still resolve to several deployments when they really are
 several: a customer can run more than one data plane per environment, and a
 region or provider word narrows those.
+
+What is searched belongs to one customer. A hosted customer is the first segment
+of its namespaces (`acmecorp-prod` → acmecorp), and a whole name on either route
+outranks part of a name on the other. Two limits follow from reading names off
+namespaces:
+
+- Infrastructure named per tenant (`apim-cloudgate-<id>`, `logstash-<id>`) or
+  shared (`redis-*`, `ingress-*`) has no customer in its first segment, so a
+  phrase naming the infrastructure (`cloudgate`) is treated as one customer and
+  searches every tenant's. A tenant id alone (`<id>`) matches both its
+  `apim-cloudgate-` and `logstash-` namespaces, reads as two customers, and is
+  refused; name the full namespace instead.
+- A namespace called just like an environment (`prod`, `staging`) is shared by
+  many customers' services, yet `client: "prod"` searches it, because nothing in
+  the namespace list tells it apart from a customer with a single namespace.
 
 One consequence: a pinned namespace already expresses the environment, so
 `service_name` no longer repeats it — and the "drop the env token and retry"

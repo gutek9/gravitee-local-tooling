@@ -17,6 +17,17 @@ export const controlPlaneNamespace = (controlPlaneId) => `apim-cp-${controlPlane
 // "northstar" are the same name.
 const normalise = (v) => String(v || "").toLowerCase().replace(/[\s_-]/g, "");
 const nameWords = (v) => String(v || "").trim().split(/[\s_-]+/).filter(Boolean);
+export const sameName = (a, b) => normalise(a) === normalise(b);
+
+// At most this many names in a refusal or a note: a one-letter fragment can
+// match most of the map.
+export const MAX_NAMES = 10;
+
+// "a, b, c" or "a, b, c and 7 more".
+export function listNames(names = []) {
+  const shown = names.slice(0, MAX_NAMES).join(", ");
+  return names.length > MAX_NAMES ? `${shown} and ${names.length - MAX_NAMES} more` : shown;
+}
 
 function matchCustomersExactly(rows, core) {
   const needle = normalise(core);
@@ -98,9 +109,10 @@ export function lookupById(rows = [], query = "") {
 
 // Summarise one customer for a disambiguation prompt: enough to choose between
 // candidates without dumping every deployment.
-function describeCustomer(rows) {
+export function describeCustomer(rows) {
   return {
     customer: rows[0].customer,
+    kind: "gravitee_cloud",
     deployments: rows.length,
     control_planes: [...new Set(rows.map((r) => r.control_plane_id).filter(Boolean))],
     envs: [...new Set(rows.map((r) => r.env).filter(Boolean))].sort(),
@@ -144,16 +156,18 @@ export function groupByCustomer(rows = []) {
 //
 // Every cut is tried for a whole name before any is tried for part of one:
 // "acme dev" cuts after "acme", a whole name, rather than keeping both words as
-// part of `acmedevices`.
+// part of `acmedevices`. `partial` says which it was.
 export function splitNameAndTail(rows = [], phrase = "") {
   const words = String(phrase || "").trim().split(/\s+/).filter(Boolean);
   for (const match of [matchCustomersExactly, matchCustomersPartly]) {
     for (let n = words.length; n > 0; n--) {
       const core = words.slice(0, n).join(" ");
-      if (match(rows, core).length) return { core, tail: words.slice(n) };
+      if (match(rows, core).length) {
+        return { core, tail: words.slice(n), partial: match === matchCustomersPartly };
+      }
     }
   }
-  return { core: words.join(" "), tail: [] };
+  return { core: words.join(" "), tail: [], partial: false };
 }
 
 // Does this deployment answer to that word? Environment, region and provider are
@@ -183,7 +197,7 @@ export function resolveCustomerNamespaces(rows = [], { core, envs = [], qualifie
       ambiguous: true,
       candidates,
       reason:
-        `"${core}" matches ${candidates.length} different customers (${candidates.map((c) => c.customer).join(", ")}). ` +
+        `"${core}" matches ${candidates.length} different customers (${listNames(candidates.map((c) => c.customer))}). ` +
         "Searching them together would return one customer's logs under another's name, so none of them was searched. " +
         "Use the exact customer name.",
     };

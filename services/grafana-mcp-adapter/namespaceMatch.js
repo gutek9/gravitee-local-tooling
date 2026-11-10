@@ -73,15 +73,18 @@ export function matchNamespaces(namespaceValues = [], phrase = "") {
 // Every cut is tried exactly before any is tried partly. With `acme-dev` and
 // another customer's `acmecorp-prod`, "acme prod" names acme exactly once
 // "prod" is dropped; reading "acme" as part of `acmecorp` first would search
-// the other customer's prod instead of saying acme has none.
+// the other customer's prod instead of saying acme has none. `partial` says
+// which it was, so a caller can let a whole name elsewhere outrank it.
 export function matchNamespacesPhrase(namespaceValues = [], phrase = "") {
   const all = String(phrase || "").trim().split(/\s+/).filter(Boolean);
   for (const match of [matchNamespacesExactly, matchNamespacesPartly]) {
     for (let n = all.length; n > 0; n--) {
       const name = all.slice(0, n).join(" ");
       const namespaces = match(namespaceValues, name);
-      if (namespaces.length) return { namespaces, name, tail: all.slice(n) };
+      if (namespaces.length) {
+        return { namespaces, name, tail: all.slice(n), partial: match === matchNamespacesPartly };
+      }
     }
   }
-  return { namespaces: [], name: "", tail: all };
+  return { namespaces: [], name: "", tail: all, partial: false };
 }

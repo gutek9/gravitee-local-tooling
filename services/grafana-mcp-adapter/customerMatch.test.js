@@ -8,6 +8,7 @@ import {
   lookupById,
   resolveCustomerNamespaces,
   splitNameAndTail,
+  listNames,
   dataPlaneNamespace,
   controlPlaneNamespace,
 } from "./customerMatch.js";
@@ -253,19 +254,25 @@ test("splitNameAndTail: a whole name on a shorter cut wins over part of a name o
   // Regression: "acme dev" kept both words as part of acmedevices, so the dev
   // word was absorbed into another customer's name and acme was never searched.
   const rows = parseCustomerCsv(ACMEDEVICES_CSV);
-  assert.deepEqual(splitNameAndTail(rows, "acme dev"), { core: "acme", tail: ["dev"] });
+  assert.deepEqual(splitNameAndTail(rows, "acme dev"), { core: "acme", tail: ["dev"], partial: false });
   assert.deepEqual(
     resolveCustomerNamespaces(rows, { core: "acme", qualifiers: ["dev"] }).namespaces,
     ["apim-dp-cp1111-dp0002"],
   );
-  // A single word may still be part of a name.
-  assert.deepEqual(splitNameAndTail(rows, "acmed"), { core: "acmed", tail: [] });
+  // A single word may still be part of a name, and is said to be.
+  assert.deepEqual(splitNameAndTail(rows, "acmed"), { core: "acmed", tail: [], partial: true });
 });
 
 test("matchCustomers: several words are never read as parts of one name", () => {
   const rows = parseCustomerCsv(ACMEDEVICES_CSV);
   assert.deepEqual(matchCustomers(rows, "acme dev"), []);
   assert.deepEqual([...new Set(matchCustomers(rows, "acmed").map((r) => r.customer))], ["acmedevices"]);
+});
+
+test("listNames: lists at most ten names and says how many more there are", () => {
+  const names = Array.from({ length: 12 }, (_, i) => `c${i}`);
+  assert.equal(listNames(names.slice(0, 3)), "c0, c1, c2");
+  assert.equal(listNames(names), "c0, c1, c2, c3, c4, c5, c6, c7, c8, c9 and 2 more");
 });
 
 test("matchCustomers: separators do not count", () => {
@@ -277,11 +284,19 @@ test("matchCustomers: separators do not count", () => {
 
 test("splitNameAndTail: the map decides where the name ends", () => {
   const rows = parseCustomerCsv(CSV);
-  assert.deepEqual(splitNameAndTail(rows, "acme"), { core: "acme", tail: [] });
-  assert.deepEqual(splitNameAndTail(rows, "acme prod"), { core: "acme", tail: ["prod"] });
+  assert.deepEqual(splitNameAndTail(rows, "acme"), { core: "acme", tail: [], partial: false });
+  assert.deepEqual(splitNameAndTail(rows, "acme prod"), { core: "acme", tail: ["prod"], partial: false });
   // The point of the change: an environment nobody listed is still a tail.
-  assert.deepEqual(splitNameAndTail(rows, "acme gatewaytesting"), { core: "acme", tail: ["gatewaytesting"] });
-  assert.deepEqual(splitNameAndTail(rows, "nosuchcustomer at all"), { core: "nosuchcustomer at all", tail: [] });
+  assert.deepEqual(splitNameAndTail(rows, "acme gatewaytesting"), {
+    core: "acme",
+    tail: ["gatewaytesting"],
+    partial: false,
+  });
+  assert.deepEqual(splitNameAndTail(rows, "nosuchcustomer at all"), {
+    core: "nosuchcustomer at all",
+    tail: [],
+    partial: false,
+  });
 });
 
 test("resolveCustomerNamespaces: a qualifier narrows by environment, region or provider", () => {
