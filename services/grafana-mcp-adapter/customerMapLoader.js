@@ -263,14 +263,17 @@ async function loadCustomerMapUncached() {
         github_error: err instanceof Error ? err.message : String(err),
         snapshot_error: snapErr instanceof Error ? snapErr.message : String(snapErr),
       });
+      // The GitHub reason is said: the map is also unavailable for good when it
+      // was never configured (no token), and "retry" would not help then.
       const none = {
         rows: [],
         source: "unavailable",
         generated_at: null,
         warning:
-          "Customer mapping is unavailable (GitHub unreachable and no usable bundled snapshot), so " +
-          "Gravitee Cloud customers cannot be resolved by name. Hosted namespaces are still found by name, " +
-          "but a customer that also runs on Gravitee Cloud gets only its hosted part.",
+          `Customer mapping is unavailable: GitHub could not be read (${err instanceof Error ? err.message : String(err)}) ` +
+          "and there is no usable bundled snapshot, so Gravitee Cloud customers cannot be resolved by name. " +
+          "Hosted namespaces are still found by name, but a customer that also runs on Gravitee Cloud gets only " +
+          "its hosted part.",
       };
       return remember(none, Math.min(RETRY_AFTER_MS, TTL_MS));
     }

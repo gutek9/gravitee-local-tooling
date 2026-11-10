@@ -241,6 +241,35 @@ test("resolveClient: a stale snapshot counts as an answer, so the service_name s
   assert.equal(out.map_warning, "from the snapshot");
 });
 
+test("resolveClient: an unreadable map is never reported as a name or an id missing from it", () => {
+  // Regression: with the map unavailable the notes said "not in the customer
+  // map" or "the map does not say whose", and "Drop control_plane_id" invited
+  // the broader search the id was there to prevent.
+  const unavailable = { rows: [], source: "unavailable", generated_at: null, warning: "map unavailable" };
+  const mapDown = (phrase, namespaceValues, extra = {}) =>
+    resolveClient({ phrase, namespaceValues, map: unavailable, ...extra });
+  const [withId, dataPlane, dataPlaneWithId, controlPlane] = [
+    mapDown("acme", ["acme-prod", ...ACME_DATA_PLANES], { controlPlaneId: "cp1111" }),
+    mapDown("apim-dp-cp1111-dp0001", ACME_DATA_PLANES),
+    mapDown("apim-dp-cp1111-dp0001", ACME_DATA_PLANES, { controlPlaneId: "cp1111" }),
+    mapDown("cp1111", ["apim-cp-cp1111", ...ACME_DATA_PLANES]),
+  ];
+  for (const out of [withId, dataPlane, dataPlaneWithId, controlPlane]) {
+    assert.match(out.note, /customer map could not be read \(map_warning says why\)/, out.note);
+    assert.doesNotMatch(
+      out.note,
+      /not in the customer map|not one in the customer map|does not say whose|Drop control_plane_id|Pass the customer's name/,
+      out.note,
+    );
+  }
+  // What each one does is unchanged: only the data plane alone is searched.
+  assert.equal(withId.refused, true);
+  assert.deepEqual(dataPlane.namespaces, ["apim-dp-cp1111-dp0001"]);
+  assert.equal(dataPlane.owner_unknown, true);
+  assert.equal(dataPlaneWithId.refused, true);
+  assert.equal(controlPlane.refused, true);
+});
+
 test("resolveClient: part of a name that names one customer is searched, and says so", () => {
   // beaconlabs is hosted and on Cloud: one customer, both routes.
   const out = resolve("beaconl", ["beaconlabs-prod", "apim-dp-cp3333-dp0001"]);
@@ -583,6 +612,28 @@ test("findCustomerMatches: a failed namespace lookup is not reported as nothing 
   const acme = find("acme", null);
   assert.equal(acme.gravitee_cloud_customers[0].customer, "acme");
   assert.equal(acme.namespace_lookup_failed, true);
+});
+
+test("findCustomerMatches: an unreadable map is not reported as nothing matched", () => {
+  // Regression: with the map unavailable it answered "No Gravitee Cloud
+  // customer, hosted namespace, or known id matched", called a live data plane
+  // "a real deployment the map does not cover", or said nothing at all.
+  const unavailable = { rows: [], source: "unavailable", generated_at: null, warning: "map unavailable" };
+  const mapDown = (query, namespaceValues) => findCustomerMatches({ query, namespaceValues, map: unavailable });
+  const nothing = mapDown("orbitalis", ["acmecorp-prod"]);
+  const hosted = mapDown("acmecorp", ["acmecorp-prod"]);
+  const dataPlane = mapDown("apim-dp-cp1111-dp0001", ACME_DATA_PLANES);
+  const bothDown = mapDown("acme", null);
+  for (const out of [nothing, hosted, dataPlane, bothDown]) {
+    assert.match(out.note, /^The customer map could not be read \(map_warning says why\), so Gravitee Cloud customers and ids were not checked/);
+    assert.doesNotMatch(out.note, /No Gravitee Cloud customer|does not cover|appears in the customer map/, out.note);
+  }
+  assert.match(nothing.note, /No namespace in Loki matched "orbitalis"/);
+  assert.deepEqual(hosted.hosted_namespaces, ["acmecorp-prod"]);
+  assert.match(hosted.note, /Only namespaces found in Loki by name are listed\.$/);
+  assert.deepEqual(dataPlane.hosted_namespaces, ["apim-dp-cp1111-dp0001"]);
+  assert.match(dataPlane.note, /whose the Cloud ones are cannot be said without the map/);
+  assert.match(bothDown.note, /Loki did not return its namespace list either/);
 });
 
 test("findCustomerMatches: a live data plane the map does not attribute is reported apart, never claimed", () => {

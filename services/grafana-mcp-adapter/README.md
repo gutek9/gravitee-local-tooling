@@ -79,7 +79,9 @@ The response also says how the customer was found:
   deployment map), both joined with `+`, or `none`.
 - `map_source`, `map_generated_at`, `map_warning` — where the map came from
   (`github`, `bundled_snapshot`, `unavailable`) and whether it is stale, or
-  whether its age could not be read.
+  whether its age could not be read. When it is `unavailable`, `map_warning`
+  says why GitHub could not be read (e.g. `GITHUB_PERSONAL_ACCESS_TOKEN is not
+  set`), and no note calls a name or an id "not in the map".
 - `matched_deployments`, `control_plane_ids`, `shared_control_plane_namespaces` —
   the Cloud deployments behind the namespaces. Control-plane namespaces are
   shared by every customer on that control plane, so they are reported but never
@@ -302,7 +304,9 @@ are live on a customer's control plane but missing from the map are listed as
 they may belong to another customer and are never searched as this one. When
 Loki does not return its namespace list, `namespace_lookup_failed` says hosted
 namespaces and unattributed data planes could not be checked, rather than
-reporting that none matched.
+reporting that none matched. Likewise, when the customer map cannot be read, the
+note says Gravitee Cloud customers and ids were not checked (`map_warning` says
+why), rather than that none matched.
 
 ## Setup
 

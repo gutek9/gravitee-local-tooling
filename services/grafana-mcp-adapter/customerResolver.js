@@ -205,6 +205,8 @@ function resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKn
   const lookup = lookupById(map.rows, phrase);
   if (!lookup) return null;
   const live = new Set(namespaceValues);
+  // An unreadable map looked nothing up: never say an id is not in it.
+  const mapUnreadable = map.source === "unavailable";
   const mapAge = {
     map_source: map.source,
     map_generated_at: map.generated_at,
@@ -273,7 +275,9 @@ function resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKn
     if (controlPlaneId) {
       return refuse(
         matchedById,
-        `${lookup.id} is not in the customer map, so its organization cannot be checked against ` +
+        (mapUnreadable
+          ? `The customer map could not be read (map_warning says why), so the organization of ${lookup.id} cannot be checked against `
+          : `${lookup.id} is not in the customer map, so its organization cannot be checked against `) +
           `control_plane_id "${controlPlaneId}". Nothing was searched. Pass the id alone.`,
         { unknown_control_plane: true, requested_control_plane_id: controlPlaneId },
       );
@@ -284,7 +288,9 @@ function resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKn
       owner_unknown: true,
       matched_by_id: matchedById,
       note:
-        `${dataPlane} is in Loki but not in the customer map, so whose it is cannot be said; only it was searched.` +
+        (mapUnreadable
+          ? `${dataPlane} is in Loki, but the customer map could not be read (map_warning says why), so whose it is cannot be said; only it was searched.`
+          : `${dataPlane} is in Loki but not in the customer map, so whose it is cannot be said; only it was searched.`) +
         (lookup.kind === "unlisted_data_plane" ? ` ${lookup.note}` : ""),
       ...mapAge,
       label_namespaces: [dataPlane],
@@ -293,8 +299,11 @@ function resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKn
   if (live.has(controlPlaneNamespace(lookup.id))) {
     return refuse(
       matchedById,
-      `${controlPlaneNamespace(lookup.id)} is a control plane namespace, shared by every customer on that ` +
-        "organization, and the customer map does not say whose. Nothing was searched. Pass the customer's name.",
+      `${controlPlaneNamespace(lookup.id)} is a control plane namespace, shared by every customer on that organization, and ` +
+        (mapUnreadable
+          ? "the customer map could not be read (map_warning says why), so whose it is cannot be said. Nothing was " +
+            "searched. Retry once the map can be read."
+          : "the customer map does not say whose. Nothing was searched. Pass the customer's name."),
     );
   }
   // An id the map half knows, but no such namespace: refused rather than left to
@@ -395,12 +404,15 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
   if (controlPlaneId && !resolved.namespaces.length) {
     if (resolved.unknown_qualifiers) return refuseUnknownWords();
     const note =
-      resolved.reason && resolved.unknown_control_plane
-        ? resolved.reason
-        : resolved.ambiguous
-          ? `${resolved.reason} control_plane_id "${controlPlaneId}" was not applied to any of them: pass the exact customer name.`
-          : `control_plane_id "${controlPlaneId}" only narrows a Gravitee Cloud customer, and "${phrase}" is not one ` +
-            "in the customer map. Nothing was searched. Drop control_plane_id, or check the name.";
+      map.source === "unavailable"
+        ? `control_plane_id "${controlPlaneId}" could not be applied: the customer map could not be read (map_warning says why), ` +
+          `so "${phrase}" could not be looked up in it. Nothing was searched. Retry once the map can be read.`
+        : resolved.reason && resolved.unknown_control_plane
+          ? resolved.reason
+          : resolved.ambiguous
+            ? `${resolved.reason} control_plane_id "${controlPlaneId}" was not applied to any of them: pass the exact customer name.`
+            : `control_plane_id "${controlPlaneId}" only narrows a Gravitee Cloud customer, and "${phrase}" is not one ` +
+              "in the customer map. Nothing was searched. Drop control_plane_id, or check the name.";
     return {
       namespaces: [],
       via: "none",
@@ -712,7 +724,18 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
       : {}),
   };
 
-  if (cockpit.length > 1) {
+  if (map.source === "unavailable") {
+    // Nothing was looked up in the map, so no note may say a name or an id is
+    // not in it, or that nothing matched.
+    const cloudListed = hostedNamespaces.some(isCloudNamespace);
+    result.note =
+      "The customer map could not be read (map_warning says why), so Gravitee Cloud customers and ids were not checked. " +
+      (lookupFailed
+        ? "Loki did not return its namespace list either, so nothing could be checked."
+        : hostedNamespaces.length
+          ? `Only namespaces found in Loki by name are listed${cloudListed ? "; whose the Cloud ones are cannot be said without the map" : ""}.`
+          : `No namespace in Loki matched "${query}".`);
+  } else if (cockpit.length > 1) {
     result.note =
       `"${query}" matches ${cockpit.length} different Gravitee Cloud customers. The log tools will not ` +
       "search them together — pass one exact customer name.";

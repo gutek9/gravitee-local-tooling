@@ -201,6 +201,23 @@ test("loadCustomerMap: both sources gone gives an empty map marked unavailable, 
   });
 });
 
+test("loadCustomerMap: an unavailable map says why GitHub could not be read", async () => {
+  // Regression: it only said "GitHub unreachable", so a map that was never
+  // configured (no token) read like a passing outage worth retrying.
+  await withGitHub({ csv: null }, async () => {
+    const map = await loadCustomerMap();
+    assert.match(map.warning, /GitHub could not be read \(GitHub responded 503\)/);
+  });
+  resetCustomerMapCache();
+  delete process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+  await withGitHub({}, async (calls) => {
+    const map = await loadCustomerMap();
+    assert.equal(map.source, "unavailable");
+    assert.match(map.warning, /GitHub could not be read \(GITHUB_PERSONAL_ACCESS_TOKEN is not set\)/);
+    assert.equal(contentsCalls(calls), 0);
+  });
+});
+
 test("loadCustomerMap: a loaded map is cached, and refresh fetches it again", async () => {
   await withGitHub({}, async (calls) => {
     await loadCustomerMap();

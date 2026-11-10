@@ -819,6 +819,27 @@ test("grafana_find_customer: a failed namespace lookup says hosted namespaces co
   });
 });
 
+test("map tools: an unreadable map is said to be unreadable, with GitHub's reason, never 'not in the map'", async () => {
+  // Regression: with GitHub down and no snapshot, find_customer answered "No
+  // Gravitee Cloud customer ... matched", and a control_plane_id was refused as
+  // "not one in the customer map ... Drop control_plane_id".
+  await withLokiStub(
+    { [NS_VALUES]: ["april-prod"], [SERIES]: [] },
+    async (calls) => {
+      const found = await callTool("grafana_find_customer", { query: "orbitalis" });
+      assert.equal(found.map_source, "unavailable");
+      assert.match(found.note, /customer map could not be read/);
+      assert.match(found.map_warning, /GitHub could not be read \(GitHub responded 503\)/);
+      const logs = await callTool("grafana_logs_link", { client: "acme", control_plane_id: "cp1111" });
+      assert.equal(logs.refused, true);
+      assert.match(logs.customer_note, /could not be applied: the customer map could not be read/);
+      assert.doesNotMatch(logs.customer_note, /Drop control_plane_id/);
+      assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+    },
+    { githubDown: true },
+  );
+});
+
 // ---------------------------------------------------------------------------
 // grafana_logs_link: empty-result branches (note / suggestions)
 // ---------------------------------------------------------------------------
