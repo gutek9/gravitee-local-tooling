@@ -7,13 +7,13 @@ import {
   BASE_URL,
   log,
   requireConfig,
+  requireDatasourceUid,
   grafanaGet,
   grafanaPost,
 } from "./grafanaClient.js";
 import {
   summarizeQueryResult,
   buildLogsQuery,
-  requireDatasourceUid,
 } from "./helpers.js";
 import { fetchMatchingStreams } from "./lokiDiscovery.js";
 import { linksForStreams, explainNoStreams } from "./logsLinks.js";

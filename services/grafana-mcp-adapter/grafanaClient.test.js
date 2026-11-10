@@ -47,6 +47,22 @@ test("requireConfig: passes when enabled with base url + token", async () => {
   assert.doesNotThrow(() => requireConfig());
 });
 
+test("requireDatasourceUid: returns the configured uid", async () => {
+  const { requireDatasourceUid } = await freshClient({});
+  assert.equal(requireDatasourceUid("grafanacloud-logs"), "grafanacloud-logs");
+  assert.equal(requireDatasourceUid("  padded-uid  "), "padded-uid");
+});
+
+test("requireDatasourceUid: unset/blank fails with an actionable message", async () => {
+  const { requireDatasourceUid } = await freshClient({});
+  for (const bad of [undefined, null, "", "   "]) {
+    assert.throws(() => requireDatasourceUid(bad), /GRAFANA_LOGS_DATASOURCE_UID is not set/);
+  }
+  // The message must say the uid can differ from the display name — the exact
+  // assumption that cost time on this instance.
+  assert.throws(() => requireDatasourceUid(""), /not always the same as the display name/);
+});
+
 // ---------------------------------------------------------------------------
 // Auth headers
 // ---------------------------------------------------------------------------
