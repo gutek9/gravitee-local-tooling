@@ -311,9 +311,9 @@ test("resolveCustomerNamespaces: a qualifier narrows by environment, region or p
 });
 
 test("resolveCustomerNamespaces: a tail that describes nothing is refused, with what the customer has", () => {
-  // Enrique's question: what if the removed string matches no environment?
-  // Regression: it used to return all of the customer's deployments, so the
-  // answer was broader than the one asked for.
+  // Regression: a tail that matched no environment, region or provider returned
+  // all of the customer's deployments, so the answer was broader than the one
+  // asked for.
   const rows = parseCustomerCsv(CSV);
   const out = resolveCustomerNamespaces(rows, { core: "acme", qualifiers: ["gatewaytesting"] });
   assert.deepEqual(out.namespaces, []);

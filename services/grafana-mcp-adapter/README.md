@@ -223,17 +223,15 @@ populations at once, so stopping at the first route that answers would search
 half of its logs.
 
 `client: "acme rec"` has to be split into a customer and an environment. That
-split used to run against a list of 16 known environment words. A list cannot be
-finished: measured against every live customer, **38 of 82** multi-namespace
-customers have a suffix it did not contain (`staging`, `prd`, `sit`, `qualif`,
-`multitenant`, `plt-live-ap`), and one customer's environments are `ab`, `ge`,
-`pr`, `se`.
+split used to run against a fixed list of environment words, and no such list
+can be finished: customers name their environments their own way (`staging`,
+`prd`, `sit`, `qualif`, `multitenant`, ...), some with only two letters.
 
 Worse, an unlisted word was not noticed at all. It stayed part of the name, the
-name matched nobody, and the answer was empty with no reason given — **39 of 416**
-Cockpit deployments (`acme recette`, `beacon staging`, and `production`
-failing where `prod` worked). The reverse bit too: seven namespaces are *called*
-`prod` or `dev`, so the split left an empty name.
+name matched nobody, and the answer was empty with no reason given (`acme
+recette`, `beacon staging`, and `production` failing where `prod` worked). The
+reverse bit too: some namespaces are *called* `prod` or `dev`, so the split left
+an empty name.
 
 Nothing is classified now. Both routes match the phrase as typed, and give ground
 only when it matches nothing:

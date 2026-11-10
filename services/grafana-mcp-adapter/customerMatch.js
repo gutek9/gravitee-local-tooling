@@ -91,10 +91,10 @@ export function matchCustomers(rows = [], core = "") {
 // asked, and it is the reverse of what name search answers.
 //
 // Also covers the partially-known case. The CSV does not list every live data
-// plane (measured: 116 live ones are absent, 49 of them on a control plane the
-// CSV does know). For those, the control plane still narrows the field from 148
-// customers to the handful sharing it — reported as candidates, never as an
-// answer, because a control plane is shared.
+// plane, and some of the unlisted ones sit on a control plane it does know. For
+// those, the control plane still narrows the field from every customer to the
+// few sharing it — reported as candidates, never as an answer, because a
+// control plane is shared.
 export function lookupById(rows = [], query = "") {
   const id = String(query || "").trim().toLowerCase().replace(/^apim-(dp|cp)-/, "");
   if (!id) return null;
@@ -166,15 +166,15 @@ export function groupByCustomer(rows = []) {
 // Two separate hazards, handled differently because they are not the same thing:
 //
 //  1. A fragment matching SEVERAL customers ("man" -> northwind, southwind; "co" ->
-//     six of them). Merging those returns one customer's logs under another
+//     several more). Merging those returns one customer's logs under another
 //     customer's name. That is a data-boundary problem, so it is refused, not
 //     ranked — the caller gets the candidates and picks.
 //
 //  2. ONE customer spanning several control planes, i.e. several Cockpit
-//     organizations sharing a name (12 of 148 do; `gravitee` spans 11). Every
-//     result really does belong to the name asked for, so this resolves — but it
-//     is reported, because "22 namespaces across 11 organizations" is a materially
-//     different answer from what the caller probably pictured.
+//     organizations sharing a name, which is not rare. Every result really does
+//     belong to the name asked for, so this resolves — but it is reported,
+//     because "N namespaces across M organizations" is a materially different
+//     answer from what the caller probably pictured.
 //
 // Data-plane namespaces only, by default. A control-plane namespace is SHARED by
 // every customer on that control plane (apim-cp-cp1111 carries beacon,
@@ -203,8 +203,9 @@ export function splitNameAndTail(rows = [], phrase = "") {
 }
 
 // Does this deployment answer to that word? Environment, region and provider are
-// all things a person says out loud ("acme dev europe"), and region separates 30
-// of the 46 customer+environment pairs that have more than one deployment.
+// all things a person says out loud ("acme dev europe"), and when a customer has
+// more than one deployment in an environment, region is often what tells them
+// apart.
 function qualifierMatches(row, word) {
   const w = normalise(word);
   if (!w) return true;

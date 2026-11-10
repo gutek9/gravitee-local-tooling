@@ -580,9 +580,9 @@ test("grafana_logs_link: a hosted customer with a word none of its namespaces ca
 });
 
 test("grafana_logs_link: a component typed into client is refused with a pointer to component", async () => {
-  // Seen in the live test: the model sent client "ghd prod gateway". The refusal
-  // must say where "gateway" belongs, so the retry narrows to the gateway rather
-  // than dropping the word and getting every service.
+  // A model may type the component into client, as below. The refusal must say
+  // where "gateway" belongs, so the retry narrows to the gateway rather than
+  // dropping the word and getting every service.
   await withLokiStub(
     {
       [NS_VALUES]: ["ghd-prod"],

@@ -533,12 +533,11 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
         ? "namespace_label"
         : "customer_map";
 
-  // The map is not complete or eternally fresh: measured against a 30-day window,
-  // 129 of 462 live data planes are absent from it, and some customers' mapped
-  // ids no longer exist because their deployment was recreated. A mapped
-  // namespace that Loki has never heard of in this range would otherwise produce
-  // a confident "no logs for this customer" — a false negative dressed as an
-  // answer. Flag it instead.
+  // The map is not complete or eternally fresh: some live data planes are absent
+  // from it, and some customers' mapped ids no longer exist because their
+  // deployment was recreated. A mapped namespace that Loki has never heard of in
+  // this range would otherwise produce a confident "no logs for this customer" —
+  // a false negative dressed as an answer. Flag it instead.
   const liveNamespaces = new Set(namespaceValues);
   const absent = liveNamespacesKnown ? resolved.namespaces.filter((n) => !liveNamespaces.has(n)) : [];
 
@@ -750,7 +749,7 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
       `"${cockpit[0].customer}" spans ${cockpit[0].organizations.length} separate Cockpit organizations ` +
       `(${cockpit[0].organizations.join(", ")}). Pass control_plane_id to narrow to one.`;
   } else if (byId && byId.kind === "unknown" && !cockpit.length && ID_SHAPED.test(query.trim())) {
-    // A live namespace the map cannot attribute — 116 of these exist, 67 on
+    // A live namespace the map cannot attribute. Such namespaces exist, some on
     // control planes the CSV has never heard of. Saying nothing here would
     // leave the caller thinking the lookup simply failed, when the real
     // answer is "this exists and nobody knows whose it is".
