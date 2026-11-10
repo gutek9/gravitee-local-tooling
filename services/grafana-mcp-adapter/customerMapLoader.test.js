@@ -49,14 +49,10 @@ function withGitHub({ csv = CSV, committedAt = daysAgo(2) } = {}, fn) {
     const u = String(url);
     calls.push(u);
     if (u.includes("/commits?")) {
-      return Promise.resolve({
-        ok: true,
-        status: 200,
-        json: () => Promise.resolve([{ commit: { committer: { date: committedAt } } }]),
-      });
+      return Promise.resolve(new Response(JSON.stringify([{ commit: { committer: { date: committedAt } } }])));
     }
-    if (csv === null) return Promise.resolve({ ok: false, status: 503, text: () => Promise.resolve("") });
-    return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(csv) });
+    if (csv === null) return Promise.resolve(new Response("", { status: 503 }));
+    return Promise.resolve(new Response(csv));
   };
   return Promise.resolve(fn(calls)).finally(() => {
     globalThis.fetch = origFetch;
@@ -160,16 +156,67 @@ test("buildSnapshot: records the CSV's date and the refresh date apart, and no c
 
 test("fetchGeneratedAt: reads the CSV's last commit date, and gives null when GitHub fails", async () => {
   await withGitHub({ committedAt: "2026-09-01T08:00:00Z" }, async (calls) => {
-    assert.equal(await fetchGeneratedAt("ghp_test"), "2026-09-01T08:00:00Z");
+    assert.equal(await fetchGeneratedAt(), "2026-09-01T08:00:00Z");
     assert.ok(calls[0].includes("/commits?path="));
   });
   const origFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.resolve({ ok: false, status: 404 });
+  globalThis.fetch = () => Promise.resolve(new Response("", { status: 404 }));
   try {
-    assert.equal(await fetchGeneratedAt("ghp_test"), null);
+    assert.equal(await fetchGeneratedAt(), null);
   } finally {
     globalThis.fetch = origFetch;
   }
+});
+
+test("fetchGeneratedAt: without a token it sends nothing and gives null", async () => {
+  // Regression: it sent the request anyway, with an empty Bearer header.
+  delete process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+  await withGitHub({}, async (calls) => {
+    assert.equal(await fetchGeneratedAt(), null);
+    assert.deepEqual(calls, []);
+  });
+});
+
+// The loader reads its repository settings at import time: a fresh instance
+// with these settings, restored afterwards.
+async function loaderWith(settings) {
+  const saved = Object.fromEntries(Object.keys(settings).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, settings);
+  try {
+    return await import(`./customerMapLoader.js?settings=${encodeURIComponent(JSON.stringify(settings))}`);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+test("the CSV and its commit date are read from the same file, whatever the path setting contains", async () => {
+  // Regression: the path went into the CSV's URL unencoded, so a "#" cut the URL
+  // there. The CSV was read from another file, without ?ref, while the commit
+  // date came from the right one.
+  const loader = await loaderWith({ GRAFANA_CUSTOMER_MAP_PATH: "docs/summary/customers#v2.csv" });
+  await withGitHub({}, async (calls) => {
+    await loader.fetchCustomerCsv();
+    await loader.fetchGeneratedAt();
+    const [contents, commits] = calls.map((u) => new URL(u));
+    assert.equal(
+      decodeURIComponent(contents.pathname),
+      "/repos/gravitee-io/cloud-deployments-configuration/contents/docs/summary/customers#v2.csv",
+    );
+    assert.equal(contents.searchParams.get("ref"), "prod");
+    assert.equal(commits.searchParams.get("path"), "docs/summary/customers#v2.csv");
+  });
+});
+
+test("a repository setting with a '..' segment is refused before GitHub is asked", async () => {
+  const loader = await loaderWith({ GRAFANA_CUSTOMER_MAP_REPO: "gravitee-io/.." });
+  await withGitHub({}, async (calls) => {
+    await assert.rejects(loader.fetchCustomerCsv(), /"\." and "\.\." segments are not allowed/);
+    assert.equal(await loader.fetchGeneratedAt(), null);
+    assert.deepEqual(calls, []);
+  });
 });
 
 test("loadCustomerMap: without a token the snapshot answers and GitHub is never asked", async () => {

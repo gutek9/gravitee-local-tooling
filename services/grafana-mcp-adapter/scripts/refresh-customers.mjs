@@ -8,12 +8,6 @@ import { writeFile } from "node:fs/promises";
 import { parseCustomerCsv } from "../customerCsv.js";
 import { fetchCustomerCsv, fetchGeneratedAt, buildSnapshot, SNAPSHOT_PATH } from "../customerMapLoader.js";
 
-const token = (process.env.GITHUB_PERSONAL_ACCESS_TOKEN || "").trim();
-if (!token) {
-  console.error("GITHUB_PERSONAL_ACCESS_TOKEN is required (the source repo is private).");
-  process.exit(1);
-}
-
 let csv;
 try {
   csv = await fetchCustomerCsv();
@@ -30,7 +24,7 @@ if (!customers.length) {
 
 // The CSV's own date, not today's: the fallback's freshness warning must say how
 // old the data is, not when it was copied.
-const sourceGeneratedAt = await fetchGeneratedAt(token);
+const sourceGeneratedAt = await fetchGeneratedAt();
 if (!sourceGeneratedAt) {
   console.warn("Could not read when the CSV was last generated; the snapshot records its source date as unknown.");
 }

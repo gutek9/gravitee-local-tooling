@@ -11,6 +11,7 @@ COPY helpers.js /app/helpers.js
 COPY lokiDiscovery.js /app/lokiDiscovery.js
 COPY logsLinks.js /app/logsLinks.js
 COPY customerCsv.js /app/customerCsv.js
+COPY githubClient.js /app/githubClient.js
 COPY customerMapLoader.js /app/customerMapLoader.js
 COPY customerMatch.js /app/customerMatch.js
 COPY namespaceMatch.js /app/namespaceMatch.js

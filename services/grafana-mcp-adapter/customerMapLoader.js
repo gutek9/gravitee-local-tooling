@@ -8,6 +8,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { log, RESTART_HINT } from "./grafanaClient.js";
+import { githubGet } from "./githubClient.js";
 import { parseCustomerCsv } from "./customerCsv.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -117,26 +118,22 @@ function remember(map, lifetimeMs) {
 // says nothing about when it was last regenerated — and a stale map fails by
 // omission, which is the hardest kind of wrong to notice.
 
+// The repository and the file as path segments. A leading, trailing or doubled
+// "/" in a setting adds no empty segment; a "." or ".." stays, for githubGet to
+// refuse.
+const REPO_SEGMENTS = REPO.split("/").filter(Boolean);
+const PATH_SEGMENTS = PATH.split("/").filter(Boolean);
+
 // The date the source file was last COMMITTED, i.e. last regenerated. Best-effort:
 // a failure here must not stop the map loading.
-export async function fetchGeneratedAt(token) {
+export async function fetchGeneratedAt() {
   try {
-    const url =
-      `https://api.github.com/repos/${REPO}/commits?path=${encodeURIComponent(PATH)}` +
-      `&sha=${encodeURIComponent(REF)}&per_page=1`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    try {
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "User-Agent": "grafana-mcp-adapter" },
-        signal: controller.signal,
-      });
-      if (!res.ok) return null;
-      const commits = await res.json();
-      return commits?.[0]?.commit?.committer?.date || commits?.[0]?.commit?.author?.date || null;
-    } finally {
-      clearTimeout(timer);
-    }
+    const body = await githubGet(["repos", ...REPO_SEGMENTS, "commits"], {
+      params: { path: PATH_SEGMENTS.join("/"), sha: REF, per_page: 1 },
+      timeoutMs: FETCH_TIMEOUT_MS,
+    });
+    const commits = JSON.parse(body);
+    return commits?.[0]?.commit?.committer?.date || commits?.[0]?.commit?.author?.date || null;
   } catch {
     return null;
   }
@@ -144,25 +141,11 @@ export async function fetchGeneratedAt(token) {
 
 export async function fetchCustomerCsv() {
   requireValidSettings();
-  const token = (process.env.GITHUB_PERSONAL_ACCESS_TOKEN || "").trim();
-  if (!token) throw new Error("GITHUB_PERSONAL_ACCESS_TOKEN is not set");
-  const url = `https://api.github.com/repos/${REPO}/contents/${PATH}?ref=${encodeURIComponent(REF)}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github.raw",
-        "User-Agent": "grafana-mcp-adapter",
-      },
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`GitHub responded ${res.status}`);
-    return await res.text();
-  } finally {
-    clearTimeout(timer);
-  }
+  return githubGet(["repos", ...REPO_SEGMENTS, "contents", ...PATH_SEGMENTS], {
+    params: { ref: REF },
+    accept: "application/vnd.github.raw",
+    timeoutMs: FETCH_TIMEOUT_MS,
+  });
 }
 
 // The snapshot records two dates: when the source CSV was last generated
@@ -222,7 +205,7 @@ async function loadCustomerMapUncached() {
   try {
     const rows = parseCustomerCsv(await fetchCustomerCsv());
     if (!rows.length) throw new Error("fetched customer CSV parsed to zero rows");
-    const generatedAt = await fetchGeneratedAt((process.env.GITHUB_PERSONAL_ACCESS_TOKEN || "").trim());
+    const generatedAt = await fetchGeneratedAt();
     const age = staleness(generatedAt);
     const live = {
       rows,

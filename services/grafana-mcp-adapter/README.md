@@ -457,6 +457,9 @@ Coverage:
   word only, and giving ground one trailing word at a time.
 - `grafanaClient.test.js` — the HTTP client (`grafanaClient.js`): config
   validation, auth headers, param handling.
+- `githubClient.test.js` — the GitHub client (`githubClient.js`): the request it
+  actually sends (one GET to `api.github.com`, token, headers, encoded path), and
+  that a missing token, a bad path segment or a missing timeout sends nothing.
 - `lokiDiscovery.test.js` / `logsLinks.test.js` — the Loki reads behind
   `grafana_logs_link` (`fetch` stubbed) and the links it builds from the matched
   streams.
