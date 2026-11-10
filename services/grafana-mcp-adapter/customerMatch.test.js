@@ -11,6 +11,7 @@ import {
   listNames,
   dataPlaneNamespace,
   controlPlaneNamespace,
+  controlPlaneOf,
   isCloudNamespace,
   dataPlanesWithId,
 } from "./customerMatch.js";
@@ -341,6 +342,14 @@ test("isCloudNamespace: data and control planes, in any case, and nothing else",
   for (const n of ["apim-cloudgate-aaa111", "acme-prod", "prod", "xapim-dp-cp1111-dp0001", "apim-dp-"]) {
     assert.equal(isCloudNamespace(n), false, n);
   }
+});
+
+test("controlPlaneOf: everything before a data plane's own id", () => {
+  assert.equal(controlPlaneOf("cp1111-dp0001"), "cp1111");
+  // A trial's control plane id has a dash of its own.
+  assert.equal(controlPlaneOf("trial-tt0001-dp0011"), "trial-tt0001");
+  // No dash: no control plane to read.
+  assert.equal(controlPlaneOf("dp0001"), "");
 });
 
 test("dataPlanesWithId: a data plane's own id finds it in the map and in Loki, with its customer", () => {

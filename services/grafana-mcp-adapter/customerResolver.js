@@ -19,6 +19,7 @@ import {
   lookupById,
   dataPlaneNamespace,
   controlPlaneNamespace,
+  controlPlaneOf,
   isCloudNamespace,
   dataPlanesWithId,
 } from "./customerMatch.js";
@@ -696,10 +697,12 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
   // the same (shared) control plane, so they are reported as unattributed and
   // never folded into the customer's namespaces.
   const mappedNs = new Set(map.rows.map((r) => dataPlaneNamespace(r.data_plane_id)));
-  const cpOf = (n) => n.replace("apim-dp-", "").split("-").slice(0, -1).join("-");
   for (const entry of cockpit) {
     const unattributed = namespaceValues.filter(
-      (n) => n.startsWith("apim-dp-") && entry.organizations.includes(cpOf(n)) && !mappedNs.has(n),
+      (n) =>
+        n.startsWith("apim-dp-") &&
+        entry.organizations.includes(controlPlaneOf(n.slice("apim-dp-".length))) &&
+        !mappedNs.has(n),
     );
     if (unattributed.length) {
       Object.assign(

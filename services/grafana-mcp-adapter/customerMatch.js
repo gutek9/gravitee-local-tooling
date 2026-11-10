@@ -12,6 +12,10 @@
 
 export const dataPlaneNamespace = (dataPlaneId) => `apim-dp-${dataPlaneId}`;
 export const controlPlaneNamespace = (controlPlaneId) => `apim-cp-${controlPlaneId}`;
+// A data plane id is `<controlPlaneId>-<its own id>`. A control plane id can
+// hold a dash of its own (`trial-tt0001`), so it is everything before the last
+// segment; "" when there is no dash.
+export const controlPlaneOf = (dataPlaneId) => String(dataPlaneId).split("-").slice(0, -1).join("-");
 // Gravitee Cloud namespaces (`apim-dp-<cp>-<dp>`, `apim-cp-<cp>`) carry ids,
 // not a customer's name. One pattern, case-insensitive, for the check here and
 // for the LogQL matcher that keeps the service_name search out of them; LogQL
@@ -120,7 +124,7 @@ export function lookupById(rows = [], query = "") {
   }
 
   // Unlisted data plane: fall back to its control plane, if that much is known.
-  const cpPart = id.split("-").slice(0, -1).join("-");
+  const cpPart = controlPlaneOf(id);
   const siblings = cpPart ? rows.filter((r) => String(r.control_plane_id).toLowerCase() === cpPart) : [];
   if (siblings.length) {
     const candidates = [...new Set(siblings.map((r) => r.customer))].sort();
