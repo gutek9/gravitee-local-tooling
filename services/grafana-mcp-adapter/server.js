@@ -204,8 +204,8 @@ registerTool(
       .trim()
       .min(1, "client must name a customer or an id: a blank one would match every stream in Loki")
       .describe(
-        "Customer name fragment, e.g. 'april', 'alliander', 'apim-cloudgate', optionally followed by an " +
-          "environment or region ('april prod'). Put the component in `component`, not here: a word that " +
+        "Customer name fragment, e.g. 'kestrel', 'maple', 'apim-cloudgate', optionally followed by an " +
+          "environment or region ('kestrel prod'). Put the component in `component`, not here: a word that " +
           "describes none of the customer's deployments is refused.",
       ),
     component: z.string().optional().describe("Component fragment, e.g. 'gateway', 'engine', 'ui'."),

@@ -15,7 +15,7 @@ beacon,cp2222,cp2222-dp0001,europe,az,westeurope,None,prod-org-beacon.eu-az-west
 `;
 
 const MAP = { rows: parseCustomerCsv(CSV), source: "github" };
-const ALL_LIVE = ["apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp0002", "apim-dp-cp2222-dp0001", "april-prod"];
+const ALL_LIVE = ["apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp0002", "apim-dp-cp2222-dp0001", "kestrel-prod"];
 
 test("validateCustomerMap: an unavailable map fails instead of passing with nothing checked", () => {
   // Regression (#9 review): one live data plane, zero map rows, 100% unmapped,
@@ -66,7 +66,7 @@ test("validateCustomerMap: customers with missing namespaces fail only above the
 });
 
 test("validateCustomerMap: no live data planes at all reports 0%, not NaN", () => {
-  const out = validateCustomerMap({ map: MAP, liveNamespaces: ["april-prod"], maxStale: 5 });
+  const out = validateCustomerMap({ map: MAP, liveNamespaces: ["kestrel-prod"], maxStale: 5 });
   assert.equal(out.liveDataPlanes, 0);
   assert.equal(out.orphanPercent, 0);
 });

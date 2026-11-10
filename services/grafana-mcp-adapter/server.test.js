@@ -26,8 +26,8 @@ const { tools, toolInputSchemas, startupWarmUp } = await import("./server.js");
 const { resetCustomerMapCache, loadCustomerMap } = await import("./customerMapLoader.js");
 
 // Made-up Gravitee Cloud customers, with the real CSV header. None of these names
-// match the hosted customers used elsewhere in this file (april, orbit, ...), so
-// those tests resolve through the namespace label alone, as before.
+// match a hosted customer used elsewhere in this file, so those tests resolve
+// through the namespace label alone, as before.
 //   acme        one Cockpit organization, three data planes (prod, dev, qa)
 //   beacon,     two distinct customers that a fragment like "beac" matches
 //   beaconlabs  together
@@ -240,7 +240,7 @@ test("grafana_logs_link: a blank client that reaches the handler never queries /
   // Called directly the schema is skipped, so the handler must still not turn a
   // blank client into a query over every stream (or every customer's gateway).
   await withLokiStub(
-    { [NS_VALUES]: ["april-prod"], [SERIES]: [stream("april-prod", "graviteeio-apim-april-prod-gateway")] },
+    { [NS_VALUES]: ["kestrel-prod"], [SERIES]: [stream("kestrel-prod", "graviteeio-apim-kestrel-prod-gateway")] },
     async (calls) => {
       for (const args of [{ client: "   " }, { client: "   ", component: "gateway" }]) {
         await assert.rejects(tools.grafana_logs_link(args, {}), /client is required/);
@@ -253,7 +253,7 @@ test("grafana_logs_link: a blank client that reaches the handler never queries /
 test("grafana_logs_link: a word no namespace carries is refused, listing the namespaces that exist", async () => {
   // Regression: the label route dropped "prod" to find something and searched
   // orbit-plt-live as if it were what was asked for. The same path made
-  // "april staging" search every april namespace.
+  // "kestrel staging" search every kestrel namespace.
   await withLokiStub(
     { [NS_VALUES]: ["orbit-plt-live"], [SERIES]: [stream("orbit-plt-live", "by-live-gateway")] },
     async (calls) => {
@@ -295,7 +295,7 @@ test("grafana_logs_link: a Cloud customer resolves to its data-plane namespaces 
   // beacon's namespace carries ids only, so the namespace label cannot find it.
   await withLokiStub(
     {
-      [NS_VALUES]: ["april-prod", "apim-dp-cp2222-dp0001", "apim-cp-cp2222"],
+      [NS_VALUES]: ["kestrel-prod", "apim-dp-cp2222-dp0001", "apim-cp-cp2222"],
       [SERIES]: [stream("apim-dp-cp2222-dp0001", "apim-gateway")],
     },
     async (calls) => {
@@ -570,10 +570,10 @@ test("grafana_logs_link: a refusal says how old the customer map is", async () =
 });
 
 test("grafana_logs_link: a hosted customer with a word none of its namespaces carries is refused", async () => {
-  await withLokiStub({ [NS_VALUES]: ["april-prod", "april-rec"], [SERIES]: [] }, async (calls) => {
-    const out = await callTool("grafana_logs_link", { client: "april staging" });
+  await withLokiStub({ [NS_VALUES]: ["kestrel-prod", "kestrel-rec"], [SERIES]: [] }, async (calls) => {
+    const out = await callTool("grafana_logs_link", { client: "kestrel staging" });
     assert.equal(out.refused, true);
-    assert.deepEqual(out.skipped_namespaces, ["april-prod", "april-rec"]);
+    assert.deepEqual(out.skipped_namespaces, ["kestrel-prod", "kestrel-rec"]);
     assert.equal(out.known_environments, undefined);
     assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
   });
@@ -585,18 +585,18 @@ test("grafana_logs_link: a component typed into client is refused with a pointer
   // dropping the word and getting every service.
   await withLokiStub(
     {
-      [NS_VALUES]: ["ghd-prod"],
-      [SERIES]: [stream("ghd-prod", "graviteeio-apim3-gateway")],
+      [NS_VALUES]: ["lumen-prod"],
+      [SERIES]: [stream("lumen-prod", "graviteeio-apim3-gateway")],
     },
     async (calls) => {
-      const refused = await callTool("grafana_logs_link", { client: "ghd prod gateway" });
+      const refused = await callTool("grafana_logs_link", { client: "lumen prod gateway" });
       assert.equal(refused.refused, true);
       assert.deepEqual(refused.unknown_qualifiers, ["gateway"]);
       assert.match(refused.note, /pass it as component instead/);
       assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
 
-      const retried = await callTool("grafana_logs_link", { client: "ghd prod", component: "gateway" });
-      assert.deepEqual(retried.resolved_namespaces, ["ghd-prod"]);
+      const retried = await callTool("grafana_logs_link", { client: "lumen prod", component: "gateway" });
+      assert.deepEqual(retried.resolved_namespaces, ["lumen-prod"]);
       assert.match(retried.query, /service_name=~"[^"]*gateway/);
     },
   );
@@ -647,7 +647,7 @@ test("grafana_logs_link: nothing found with a source down is refused, and Loki /
   );
   // The map unavailable, and no hosted namespace for the phrase.
   await withLokiStub(
-    { [NS_VALUES]: ["april-prod", "prod"], [SERIES]: [stream("prod", "graviteeio-apim-zzxqq-gateway")] },
+    { [NS_VALUES]: ["kestrel-prod", "prod"], [SERIES]: [stream("prod", "graviteeio-apim-zzxqq-gateway")] },
     async (calls) => {
       const out = await callTool("grafana_logs_link", { client: "zzxqq" });
       assert.equal(out.refused, true);
@@ -750,10 +750,10 @@ test("grafana_logs_link: an unmatched control_plane_id is refused and Loki is ne
 });
 
 test("grafana_logs_link: control_plane_id on a customer the map does not have is refused", async () => {
-  // april is hosted: no Cockpit organizations to narrow. Ignoring the id would
-  // search april-prod, or every service_name, as if the id had been applied.
-  await withLokiStub({ [NS_VALUES]: ["april-prod"], [SERIES]: [], [SVC_VALUES]: [] }, async (calls) => {
-    const out = await callTool("grafana_logs_link", { client: "april", control_plane_id: "cp1111" });
+  // kestrel is hosted: no Cockpit organizations to narrow. Ignoring the id would
+  // search kestrel-prod, or every service_name, as if the id had been applied.
+  await withLokiStub({ [NS_VALUES]: ["kestrel-prod"], [SERIES]: [], [SVC_VALUES]: [] }, async (calls) => {
+    const out = await callTool("grafana_logs_link", { client: "kestrel", control_plane_id: "cp1111" });
     assert.equal(out.refused, true);
     assert.deepEqual(out.control_plane_ids, []);
     assert.match(out.note, /only narrows a Gravitee Cloud customer/);
@@ -853,7 +853,7 @@ test("grafana_find_customer: a live id the map cannot attribute is reported as r
 });
 
 test("grafana_find_customer: nothing matched -> says so", async () => {
-  await withLokiStub({ [NS_VALUES]: ["april-prod"] }, async () => {
+  await withLokiStub({ [NS_VALUES]: ["kestrel-prod"] }, async () => {
     const out = await callTool("grafana_find_customer", { query: "zzxqq" });
     assert.deepEqual(out.gravitee_cloud_customers, []);
     assert.deepEqual(out.hosted_namespaces, []);
@@ -865,7 +865,7 @@ test("grafana_find_customer: a failed namespace lookup says hosted namespaces co
   // Regression: it answered "no hosted namespace matched" for a lookup that never
   // happened.
   await withLokiStub({ [NS_VALUES]: LOKI_DOWN }, async () => {
-    const out = await callTool("grafana_find_customer", { query: "april" });
+    const out = await callTool("grafana_find_customer", { query: "kestrel" });
     assert.deepEqual(out.hosted_namespaces, []);
     assert.equal(out.namespace_lookup_failed, true);
     assert.match(out.note, /hosted namespaces could not be checked/);
@@ -878,7 +878,7 @@ test("map tools: an unreadable map is said to be unreadable, with GitHub's reaso
   // Gravitee Cloud customer ... matched", and a control_plane_id was refused as
   // "not one in the customer map ... Drop control_plane_id".
   await withLokiStub(
-    { [NS_VALUES]: ["april-prod"], [SERIES]: [] },
+    { [NS_VALUES]: ["kestrel-prod"], [SERIES]: [] },
     async (calls) => {
       const found = await callTool("grafana_find_customer", { query: "orbitalis" });
       assert.equal(found.map_source, "unavailable");

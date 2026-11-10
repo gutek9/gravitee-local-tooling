@@ -48,8 +48,8 @@ test("resolveClient: a Cloud-only customer resolves through the map", () => {
 });
 
 test("resolveClient: a hosted-only customer resolves through the label, and still reports the map's source and age", () => {
-  const out = resolve("april", ["april-prod", "april-rec", "other-prod"]);
-  assert.deepEqual(out.namespaces, ["april-prod", "april-rec"]);
+  const out = resolve("kestrel", ["kestrel-prod", "kestrel-rec", "other-prod"]);
+  assert.deepEqual(out.namespaces, ["kestrel-prod", "kestrel-rec"]);
   assert.equal(out.via, "namespace_label");
   assert.equal(out.map_source, "github");
   assert.equal(out.map_generated_days_ago, 2);
@@ -81,7 +81,7 @@ test("resolveClient: a snapshot fallback's warning is kept when only the label r
     generated_days_ago: 45,
     warning: "Customer mapping came from the bundled snapshot, because GitHub could not be reached.",
   };
-  const out = resolveClient({ phrase: "april", namespaceValues: ["april-prod"], map: snapshot });
+  const out = resolveClient({ phrase: "kestrel", namespaceValues: ["kestrel-prod"], map: snapshot });
   assert.equal(out.via, "namespace_label");
   const report = resolutionReport(out);
   assert.equal(report.map_source, "bundled_snapshot");
@@ -234,7 +234,7 @@ test("resolveClient: a stale snapshot counts as an answer, so the service_name s
   // Guards the rule: only an unavailable map blocks it. A snapshot answered,
   // and its warning says how old it is.
   const snapshot = { ...MAP, source: "bundled_snapshot", warning: "from the snapshot" };
-  const out = resolveClient({ phrase: "ghd", namespaceValues: ["prod", "orbit-prod"], map: snapshot });
+  const out = resolveClient({ phrase: "lumen", namespaceValues: ["prod", "orbit-prod"], map: snapshot });
   assert.equal(out.refused, undefined);
   assert.deepEqual(out.namespaces, []);
   assert.equal(out.via, "none");
@@ -411,7 +411,7 @@ test("resolveClient: an ambiguous fragment takes nothing from the map, and names
 });
 
 test("resolveClient: nothing matched still reports the map's source and age", () => {
-  const out = resolve("zzxqq", ["april-prod"]);
+  const out = resolve("zzxqq", ["kestrel-prod"]);
   assert.deepEqual(out.namespaces, []);
   assert.equal(out.via, "none");
   assert.equal(out.map_source, "github");
@@ -445,8 +445,8 @@ test("resolveClient: an unmatched control_plane_id is refused, with the customer
 });
 
 test("resolveClient: control_plane_id on a customer the map does not have is refused, even with a label match", () => {
-  // The label route alone would search april-prod, which the id was meant to narrow.
-  const out = resolve("april", ["april-prod"], { controlPlaneId: "cp1111" });
+  // The label route alone would search kestrel-prod, which the id was meant to narrow.
+  const out = resolve("kestrel", ["kestrel-prod"], { controlPlaneId: "cp1111" });
   assert.deepEqual(out.namespaces, []);
   assert.equal(out.unknown_control_plane, true);
   assert.match(out.note, /only narrows a Gravitee Cloud customer/);
@@ -550,7 +550,7 @@ test("resolutionReport: every field a resolution sets reaches the report", () =>
     resolve("beac", [], { controlPlaneId: "cp2222" }),
     resolve("acme dev", ["acme-prod", ...ACME_DATA_PLANES]),
     resolve("acme staging", ["acme-prod", ...ACME_DATA_PLANES]),
-    resolve("april staging", ["april-prod", "april-rec"]),
+    resolve("kestrel staging", ["kestrel-prod", "kestrel-rec"]),
     resolve("acme", null),
     resolve("acme", ["acme-prod", ...ACME_DATA_PLANES], { controlPlaneId: "cp1111" }),
     { ...resolve("acme", ACME_DATA_PLANES), map_warning: "stale" },
@@ -661,9 +661,9 @@ test("findCustomerMatches: max_results caps the list and says how many were left
 });
 
 test("findCustomerMatches: a failed namespace lookup is not reported as nothing matched", () => {
-  const out = find("april", null);
+  const out = find("kestrel", null);
   assert.equal(out.namespace_lookup_failed, true);
-  assert.match(out.note, /No Gravitee Cloud customer matched "april", and hosted namespaces could not be checked/);
+  assert.match(out.note, /No Gravitee Cloud customer matched "kestrel", and hosted namespaces could not be checked/);
   // A Cloud customer still resolves from the map; only the Loki side is unknown.
   const acme = find("acme", null);
   assert.equal(acme.gravitee_cloud_customers[0].customer, "acme");

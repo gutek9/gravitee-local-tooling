@@ -166,7 +166,7 @@ function scopeToOneCustomer({ phrase, found, split, mapMatched, controlPlaneId, 
 // Resolve a free-text client to the namespaces holding its logs, by two routes:
 //
 //  1. The namespace label itself. Hosted/standalone customers get a namespace
-//     named after them (`april-prod`, `demo-qa`), so matching label values works.
+//     named after them (`kestrel-prod`, `demo-qa`), so matching label values works.
 //
 //  2. The Gravitee Cloud customer map. Cockpit tenants live in
 //     `apim-dp-<controlPlaneId>-<dataPlaneId>` and carry their name NOWHERE in
@@ -384,7 +384,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
   // Words that narrow neither route are refused, not dropped: both routes found
   // the customer only by ignoring them, so searching either would return more
   // than was asked for. What exists is listed so the caller can retry. The
-  // likeliest such word is a component typed into the client ("ghd prod
+  // likeliest such word is a component typed into the client ("lumen prod
   // gateway"), so the note says where it belongs.
   const componentHint = "If it names a component (gateway, api, ui...), pass it as component instead.";
   const refuseUnknownWords = () => {

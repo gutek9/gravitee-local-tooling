@@ -15,10 +15,10 @@ test("linksForStreams: explore gives one raw Explore link, with no per-namespace
   const links = linksForStreams({
     ...RANGE,
     linkStyle: "explore",
-    query: '{namespace="april-prod"}',
+    query: '{namespace="kestrel-prod"}',
     streams: [
-      { namespace: "april-prod", service_name: "april-gw" },
-      { namespace: "april-rec", service_name: "april-rec-gw" },
+      { namespace: "kestrel-prod", service_name: "kestrel-gw" },
+      { namespace: "kestrel-rec", service_name: "kestrel-rec-gw" },
     ],
   });
   assert.equal(links.length, 1);
@@ -31,20 +31,20 @@ test("linksForStreams: drilldown gives one link per namespace, with its exact se
     ...RANGE,
     linkStyle: "drilldown",
     streams: [
-      { namespace: "april-prod", service_name: "april-gw" },
-      { namespace: "april-prod", service_name: "april-gw" },
-      { namespace: "april-rec", service_name: "april-rec-gw" },
+      { namespace: "kestrel-prod", service_name: "kestrel-gw" },
+      { namespace: "kestrel-prod", service_name: "kestrel-gw" },
+      { namespace: "kestrel-rec", service_name: "kestrel-rec-gw" },
       { namespace: null, service_name: "orphan" },
     ],
   });
   assert.deepEqual(
     links.map((l) => [l.namespace, l.service_names]),
     [
-      ["april-prod", ["april-gw"]],
-      ["april-rec", ["april-rec-gw"]],
+      ["kestrel-prod", ["kestrel-gw"]],
+      ["kestrel-rec", ["kestrel-rec-gw"]],
     ],
   );
-  assert.ok(links[0].url.includes("/explore/namespace/april-prod/logs"));
+  assert.ok(links[0].url.includes("/explore/namespace/kestrel-prod/logs"));
   assert.equal(links[0].explore_url, undefined);
 });
 
@@ -53,7 +53,7 @@ test("linksForStreams: a line filter adds an explore_url with the exact selector
     ...RANGE,
     linkStyle: "drilldown",
     lineFilter: "Connection refused",
-    streams: [{ namespace: "ghd-prod", service_name: "graviteeio-apim3-gateway" }],
+    streams: [{ namespace: "lumen-prod", service_name: "graviteeio-apim3-gateway" }],
   });
   const panes = JSON.parse(decodeURIComponent(new URL(link.explore_url).searchParams.get("panes")));
   assert.ok(panes.logs.queries[0].expr.includes("Connection refused"));
@@ -79,8 +79,8 @@ test("explainNoStreams: resolved namespaces mean a quiet range, and Loki is not 
     throw new Error("must not fetch");
   };
   try {
-    const out = await explainNoStreams({ ...RANGE, namespaces: ["april-prod", "april-rec"], client: "april" });
-    assert.match(out.note, /No log streams in this range for namespace\(s\) april-prod, april-rec/);
+    const out = await explainNoStreams({ ...RANGE, namespaces: ["kestrel-prod", "kestrel-rec"], client: "kestrel" });
+    assert.match(out.note, /No log streams in this range for namespace\(s\) kestrel-prod, kestrel-rec/);
     assert.equal(out.suggestions, undefined);
     assert.equal(called, false);
   } finally {

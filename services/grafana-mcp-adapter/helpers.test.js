@@ -139,7 +139,7 @@ const OUTSIDE_CLOUD = 'namespace!~"(?i)apim-(dp|cp)-.+"';
 const unpinned = (serviceName) => `{${OUTSIDE_CLOUD}, ${serviceName}}`;
 
 test("buildLogsQuery: client only -> case-insensitive substring selector", () => {
-  assert.equal(buildLogsQuery({ client: "april" }), unpinned('service_name=~"(?i).*april.*"'));
+  assert.equal(buildLogsQuery({ client: "kestrel" }), unpinned('service_name=~"(?i).*kestrel.*"'));
 });
 
 test("buildLogsQuery: without pinned namespaces, Gravitee Cloud namespaces are left out", () => {
@@ -157,32 +157,32 @@ test("buildLogsQuery: without pinned namespaces, Gravitee Cloud namespaces are l
 
 test("buildLogsQuery: client + component join with .*", () => {
   assert.equal(
-    buildLogsQuery({ client: "april", component: "gateway" }),
-    unpinned('service_name=~"(?i).*april.*gateway.*"'),
+    buildLogsQuery({ client: "kestrel", component: "gateway" }),
+    unpinned('service_name=~"(?i).*kestrel.*gateway.*"'),
   );
 });
 
 test("buildLogsQuery: multi-word fragment joins words with .* (not a literal space)", () => {
-  // `service_name` is dash-separated, so "april prod" must become april.*prod —
-  // a literal space would never match `…-april-prod-…`. Note "prod" is an env
+  // `service_name` is dash-separated, so "kestrel prod" must become kestrel.*prod —
+  // a literal space would never match `…-kestrel-prod-…`. Note "prod" is an env
   // token, so it is anchored to a whole segment (see env-token test below).
   assert.equal(
-    buildLogsQuery({ client: "april prod", component: "gateway" }),
-    unpinned('service_name=~"(?i).*april.*(?:^|[-_.])prod(?:[-_.]|$).*gateway.*"'),
+    buildLogsQuery({ client: "kestrel prod", component: "gateway" }),
+    unpinned('service_name=~"(?i).*kestrel.*(?:^|[-_.])prod(?:[-_.]|$).*gateway.*"'),
   );
 });
 
 test("buildLogsQuery: anchors env tokens so 'prod' doesn't match 'nonprod'/'preprod'", () => {
-  // 'prod' is anchored to a whole segment; a non-env word like 'april' stays a
+  // 'prod' is anchored to a whole segment; a non-env word like 'kestrel' stays a
   // plain substring (so partial customer names keep matching).
-  const q = buildLogsQuery({ client: "april prod" });
-  assert.equal(q, unpinned('service_name=~"(?i).*april.*(?:^|[-_.])prod(?:[-_.]|$).*"'));
+  const q = buildLogsQuery({ client: "kestrel prod" });
+  assert.equal(q, unpinned('service_name=~"(?i).*kestrel.*(?:^|[-_.])prod(?:[-_.]|$).*"'));
   // (?i) is Loki/Go inline-flag syntax; JS RegExp needs the literal stripped and
   // the "i" flag passed instead.
   const re = new RegExp(q.match(/service_name=~"(?:\(\?i\))?([^"]*)"/)[1], "i");
-  assert.ok(re.test("graviteeio-am-april-prod-gateway"));
-  assert.equal(re.test("graviteeio-am-april-nonprod-gateway"), false);
-  assert.equal(re.test("graviteeio-am-april-preprod-gateway"), false);
+  assert.ok(re.test("graviteeio-am-kestrel-prod-gateway"));
+  assert.equal(re.test("graviteeio-am-kestrel-nonprod-gateway"), false);
+  assert.equal(re.test("graviteeio-am-kestrel-preprod-gateway"), false);
 });
 
 test("buildLogsQuery: non-env partial words stay substrings (arcelor matches arcelor-mittal)", () => {
@@ -204,8 +204,8 @@ test("buildLogsQuery: escapes regex metachars in client/component", () => {
 
 test("buildLogsQuery: line_filter appends a backtick line filter, stripping backticks", () => {
   assert.equal(
-    buildLogsQuery({ client: "april", lineFilter: "error `x`" }),
-    `${unpinned('service_name=~"(?i).*april.*"')} |= \`error x\``,
+    buildLogsQuery({ client: "kestrel", lineFilter: "error `x`" }),
+    `${unpinned('service_name=~"(?i).*kestrel.*"')} |= \`error x\``,
   );
 });
 
@@ -367,8 +367,8 @@ test("buildDrilldownUrl: multiple service_names -> escaped =~ alternation", () =
 });
 
 test("buildDrilldownUrl: omits the service_name filter when none given", () => {
-  const url = buildDrilldownUrl({ datasourceUid: "logs-uid", namespace: "apim-cp-ba813", from: "now-15m", to: "now" });
-  assert.deepEqual(new URL(url).searchParams.getAll("var-filters"), ["namespace|=|apim-cp-ba813"]);
+  const url = buildDrilldownUrl({ datasourceUid: "logs-uid", namespace: "apim-cp-cp8888", from: "now-15m", to: "now" });
+  assert.deepEqual(new URL(url).searchParams.getAll("var-filters"), ["namespace|=|apim-cp-cp8888"]);
 });
 
 test("buildDrilldownUrl: de-duplicates service_names", () => {
@@ -421,7 +421,7 @@ test("buildDrilldownUrl: line filter populates var-lineFilters, V2 stays empty",
 });
 
 test("buildDrilldownUrl: no line filter leaves var-lineFilters empty", () => {
-  const url = buildDrilldownUrl({ datasourceUid: "logs-uid", namespace: "sedex-prod", from: "now-1h", to: "now" });
+  const url = buildDrilldownUrl({ datasourceUid: "logs-uid", namespace: "harbor-prod", from: "now-1h", to: "now" });
   assert.equal(new URL(url).searchParams.get("var-lineFilters"), "");
 });
 
