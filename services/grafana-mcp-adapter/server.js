@@ -308,7 +308,9 @@ registerTool(
     "Gravitee Cloud (Cockpit) customers via the deployment map, and hosted customers via " +
     "Loki's namespace label. Returns per customer: deployment count, Cockpit organizations " +
     "(control plane ids), environments, regions and the exact namespaces — so the caller can " +
-    "pass a precise client (or control_plane_id) to grafana_logs_link.",
+    "pass a precise client (or control_plane_id) to grafana_logs_link. Namespaces that match by " +
+    "name are listed as hosted_namespaces, and Gravitee Cloud ones (apim-dp-*, apim-cp-*) apart as " +
+    "cloud_namespaces: their name carries ids, not their owner, so look one up by its full id.",
   {
     query: z
       .string()
@@ -318,7 +320,17 @@ registerTool(
         "Customer name or fragment ('money', 'orbit'), OR an id/namespace seen in an alert, pod or " +
           "dashboard ('apim-dp-cp1111-dp0001', 'cp1111-dp0001', 'cp1111') to look up who owns it.",
       ),
-    max_results: z.number().int().min(1).max(50).default(20).optional(),
+    max_results: z
+      .number()
+      .int()
+      .min(1)
+      .max(50)
+      .default(20)
+      .optional()
+      .describe(
+        "Caps every list in the answer: customers, hosted and Cloud namespaces, and each customer's " +
+          "unattributed data planes. A *_truncated count says how many were left out.",
+      ),
   },
   async ({ query, max_results = 20 }) =>
     withToolLogging("grafana_find_customer", { query }, async () => {

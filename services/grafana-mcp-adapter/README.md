@@ -298,10 +298,15 @@ alert tells you whose it is. A blank `query` is refused.
 It returns, per Gravitee Cloud customer: deployment count, Cockpit
 organizations (control plane ids, to pass as `control_plane_id`), environments,
 regions, the exact data-plane namespaces, and the shared control-plane
-namespaces. Hosted customers come back as `hosted_namespaces`. Data planes that
+namespaces. Hosted customers come back as `hosted_namespaces`. Gravitee Cloud
+namespaces whose name matches (`apim-dp-*`, `apim-cp-*`, for example every data
+plane on `cp1111`) come back apart as `cloud_namespaces`: their name carries
+ids, not the owner, so look one up by its full id. Data planes that
 are live on a customer's control plane but missing from the map are listed as
 `unattributed_namespaces_on_same_control_plane`: a control plane is shared, so
-they may belong to another customer and are never searched as this one. When
+they may belong to another customer and are never searched as this one.
+`max_results` (default 20, at most 50) caps every one of these lists, and a
+`*_truncated` count says how many were left out. When
 Loki does not return its namespace list, `namespace_lookup_failed` says hosted
 namespaces and unattributed data planes could not be checked, rather than
 reporting that none matched. Likewise, when the customer map cannot be read, the

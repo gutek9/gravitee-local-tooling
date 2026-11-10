@@ -41,6 +41,12 @@ const deploymentOf = (r) => ({
   env: r.env,
 });
 
+// At most `max` items under `key`, and how many were left out under
+// `truncatedKey` (0 when none were), so a short list is never read as complete.
+function cappedList(list, max, key, truncatedKey) {
+  return { [key]: list.slice(0, max), [truncatedKey]: Math.max(0, list.length - max) };
+}
+
 // At most MAX_NAMES candidates, and how many were left out.
 function cappedCandidates(candidates = []) {
   return {
@@ -683,8 +689,13 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
     }))
     .sort((a, b) => a.customer.localeCompare(b.customer));
 
-  // Hosted customers have no map entry; their namespace carries the name.
-  const hostedNamespaces = matchNamespaces(namespaceValues, needle);
+  // Hosted customers have no map entry; their namespace carries the name. Cloud
+  // namespaces carry ids, so a name match says nothing about whose they are:
+  // they are matched and listed apart, and owners come from the map or an id.
+  // Matched apart too, so an exact Cloud match ("dp" is a segment of every
+  // data plane) does not hide a hosted namespace the name matches partly.
+  const hostedNamespaces = matchNamespaces(namespaceValues.filter((n) => !isCloudNamespace(n)), needle);
+  const cloudNamespaces = matchNamespaces(namespaceValues.filter(isCloudNamespace), needle);
 
   // Data planes that are live on this customer's control planes but which the
   // map does not attribute to anyone. They may belong to another customer on
@@ -697,7 +708,10 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
       (n) => n.startsWith("apim-dp-") && entry.organizations.includes(cpOf(n)) && !mappedNs.has(n),
     );
     if (unattributed.length) {
-      entry.unattributed_namespaces_on_same_control_plane = unattributed;
+      Object.assign(
+        entry,
+        cappedList(unattributed, maxResults, "unattributed_namespaces_on_same_control_plane", "unattributed_truncated"),
+      );
       entry.unattributed_note =
         "Live data planes on this customer's control plane that the map does not attribute to any customer. " +
         "A control plane is shared, so these may belong to someone else — they are NOT searched as this customer.";
@@ -711,9 +725,10 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
     ...(map.generated_at ? { map_generated_at: map.generated_at } : {}),
     ...(map.generated_days_ago !== undefined ? { map_generated_days_ago: map.generated_days_ago } : {}),
     ...(map.warning ? { map_warning: map.warning } : {}),
-    gravitee_cloud_customers: cockpit.slice(0, maxResults),
-    gravitee_cloud_truncated: cockpit.length > maxResults ? cockpit.length - maxResults : 0,
-    hosted_namespaces: hostedNamespaces,
+    // max_results caps every list, each with how many were left out.
+    ...cappedList(cockpit, maxResults, "gravitee_cloud_customers", "gravitee_cloud_truncated"),
+    ...cappedList(hostedNamespaces, maxResults, "hosted_namespaces", "hosted_namespaces_truncated"),
+    ...cappedList(cloudNamespaces, maxResults, "cloud_namespaces", "cloud_namespaces_truncated"),
     ...(lookupFailed
       ? {
           namespace_lookup_failed: true,
@@ -727,13 +742,12 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
   if (map.source === "unavailable") {
     // Nothing was looked up in the map, so no note may say a name or an id is
     // not in it, or that nothing matched.
-    const cloudListed = hostedNamespaces.some(isCloudNamespace);
     result.note =
       "The customer map could not be read (map_warning says why), so Gravitee Cloud customers and ids were not checked. " +
       (lookupFailed
         ? "Loki did not return its namespace list either, so nothing could be checked."
-        : hostedNamespaces.length
-          ? `Only namespaces found in Loki by name are listed${cloudListed ? "; whose the Cloud ones are cannot be said without the map" : ""}.`
+        : hostedNamespaces.length || cloudNamespaces.length
+          ? `Only namespaces found in Loki by name are listed${cloudNamespaces.length ? "; whose the ones in cloud_namespaces are cannot be said without the map" : ""}.`
           : `No namespace in Loki matched "${query}".`);
   } else if (cockpit.length > 1) {
     result.note =
@@ -748,7 +762,7 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
     // control planes the CSV has never heard of. Saying nothing here would
     // leave the caller thinking the lookup simply failed, when the real
     // answer is "this exists and nobody knows whose it is".
-    const live = hostedNamespaces.length > 0;
+    const live = hostedNamespaces.length > 0 || cloudNamespaces.length > 0;
     result.note =
       `${byId.note}${live ? " The namespace does exist in Loki, so this is a real deployment the map does not " +
       "cover — you can still query it directly by namespace, but its owner cannot be determined from the map." : ""}`;
@@ -758,7 +772,7 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
     result.note =
       `No Gravitee Cloud customer matched "${query}", and hosted namespaces could not be checked: ` +
       "Loki did not return its namespace list.";
-  } else if (!cockpit.length && !hostedNamespaces.length) {
+  } else if (!cockpit.length && !hostedNamespaces.length && !cloudNamespaces.length) {
     result.note =
       byId && byId.kind === "unknown"
         ? `No Gravitee Cloud customer, hosted namespace, or known id matched "${query}".`

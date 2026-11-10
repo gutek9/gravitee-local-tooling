@@ -796,6 +796,18 @@ test("grafana_find_customer: a fragment matching several customers says so", asy
   });
 });
 
+test("grafana_find_customer: max_results caps the namespace lists too, and Cloud ones are not hosted", async () => {
+  await withLokiStub(
+    { [NS_VALUES]: ["apim-cp-cp1111", "apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp0002"] },
+    async () => {
+      const out = await callTool("grafana_find_customer", { query: "cp1111", max_results: 1 });
+      assert.deepEqual(out.hosted_namespaces, []);
+      assert.deepEqual(out.cloud_namespaces, ["apim-cp-cp1111"]);
+      assert.equal(out.cloud_namespaces_truncated, 2);
+    },
+  );
+});
+
 test("grafana_find_customer: an unmapped data plane on the customer's control plane is reported, not claimed", async () => {
   // dp9999 is live on acme's control plane but the map does not attribute it.
   // A control plane is shared, so it may be someone else's: reported apart,

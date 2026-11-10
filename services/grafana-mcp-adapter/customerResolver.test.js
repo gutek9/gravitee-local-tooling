@@ -631,9 +631,53 @@ test("findCustomerMatches: an unreadable map is not reported as nothing matched"
   assert.match(nothing.note, /No namespace in Loki matched "orbitalis"/);
   assert.deepEqual(hosted.hosted_namespaces, ["acmecorp-prod"]);
   assert.match(hosted.note, /Only namespaces found in Loki by name are listed\.$/);
-  assert.deepEqual(dataPlane.hosted_namespaces, ["apim-dp-cp1111-dp0001"]);
-  assert.match(dataPlane.note, /whose the Cloud ones are cannot be said without the map/);
+  assert.deepEqual(dataPlane.hosted_namespaces, []);
+  assert.deepEqual(dataPlane.cloud_namespaces, ["apim-dp-cp1111-dp0001"]);
+  assert.match(dataPlane.note, /whose the ones in cloud_namespaces are cannot be said without the map/);
   assert.match(bothDown.note, /Loki did not return its namespace list either/);
+});
+
+test("findCustomerMatches: Cloud namespaces that match by name are listed apart, never as hosted", () => {
+  // Regression: an id fragment listed the shared control plane and every data
+  // plane on it as hosted_namespaces, as if a hosted customer carried the name.
+  const loki = ["acme-prod", ...ACME_DATA_PLANES, "apim-cp-cp1111", "dpd-prod"];
+  const byId = find("cp1111", loki);
+  assert.deepEqual(byId.hosted_namespaces, []);
+  assert.deepEqual(byId.cloud_namespaces, [...ACME_DATA_PLANES, "apim-cp-cp1111"]);
+  // Matched apart: "dp" is a whole segment of every data plane, and that exact
+  // match must not hide the hosted namespace "dp" is part of.
+  const dp = find("dp", loki);
+  assert.deepEqual(dp.hosted_namespaces, ["dpd-prod"]);
+  assert.deepEqual(dp.cloud_namespaces, ACME_DATA_PLANES);
+  // Only Cloud namespaces matched: something matched, so no "nothing matched".
+  const apim = find("apim", loki);
+  assert.deepEqual(apim.hosted_namespaces, []);
+  assert.equal(apim.cloud_namespaces.length, 4);
+  assert.equal(apim.note, undefined);
+});
+
+test("findCustomerMatches: max_results caps every list and says how many were left out", () => {
+  // Regression: max_results capped only the Cloud customers; a short query
+  // listed every matching namespace, hundreds of them, with no count.
+  const loki = ["orbit-prod", "orbit-dev", "orbit-qa", ...ACME_DATA_PLANES, "apim-cp-cp1111"];
+  const hosted = find("orbit", loki, { maxResults: 2 });
+  assert.deepEqual(hosted.hosted_namespaces, ["orbit-prod", "orbit-dev"]);
+  assert.equal(hosted.hosted_namespaces_truncated, 1);
+  const cloud = find("cp1111", loki, { maxResults: 2 });
+  assert.equal(cloud.cloud_namespaces.length, 2);
+  assert.equal(cloud.cloud_namespaces_truncated, 2);
+  const unattributed = find("acme", [...ACME_DATA_PLANES, "apim-dp-cp1111-dp0097", "apim-dp-cp1111-dp0098", "apim-dp-cp1111-dp0099"], {
+    maxResults: 2,
+  });
+  const [acme] = unattributed.gravitee_cloud_customers;
+  assert.deepEqual(acme.unattributed_namespaces_on_same_control_plane, ["apim-dp-cp1111-dp0097", "apim-dp-cp1111-dp0098"]);
+  assert.equal(acme.unattributed_truncated, 1);
+  // Exactly at the limit: everything shown, nothing reported left out.
+  const exact = find("orbit", loki, { maxResults: 3 });
+  assert.equal(exact.hosted_namespaces.length, 3);
+  assert.equal(exact.hosted_namespaces_truncated, 0);
+  assert.equal(exact.cloud_namespaces_truncated, 0);
+  assert.equal(exact.gravitee_cloud_truncated, 0);
 });
 
 test("findCustomerMatches: a live data plane the map does not attribute is reported apart, never claimed", () => {
