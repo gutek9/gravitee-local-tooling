@@ -74,9 +74,9 @@ test("resolveCustomerNamespaces: maps a customer to its data-plane namespaces", 
   assert.deepEqual(out.namespaces.sort(), ["apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp0002"]);
 });
 
-test("resolveCustomerNamespaces: env words narrow to that deployment", () => {
+test("resolveCustomerNamespaces: an environment word narrows to that deployment", () => {
   const rows = parseCustomerCsv(CSV);
-  const out = resolveCustomerNamespaces(rows, { core: "acme", envs: ["prod"] });
+  const out = resolveCustomerNamespaces(rows, { core: "acme", qualifiers: ["prod"] });
   assert.deepEqual(out.namespaces, ["apim-dp-cp1111-dp0001"]);
   assert.equal(out.env_filter_applied, true);
 });
@@ -85,14 +85,14 @@ test("resolveCustomerNamespaces: an env that matches nothing is refused, not wid
   // Regression: an env matching none of the customer's deployments fell back to
   // all of them, so "acme qa" searched prod and dev with no qa constraint.
   const rows = parseCustomerCsv(CSV);
-  const out = resolveCustomerNamespaces(rows, { core: "acme", envs: ["qa"] });
+  const out = resolveCustomerNamespaces(rows, { core: "acme", qualifiers: ["qa"] });
   assert.deepEqual(out.namespaces, []);
   assert.deepEqual(out.unknown_qualifiers, ["qa"]);
   assert.deepEqual(out.known_environments, ["dev", "prod"]);
   assert.match(out.reason, /Nothing was searched/);
 });
 
-test("resolveCustomerNamespaces: never searches shared control-plane namespaces by default", () => {
+test("resolveCustomerNamespaces: never searches shared control-plane namespaces", () => {
   // apim-cp-cp1111 carries beacon AND acme. Searching it under one
   // customer's name would return the other's logs.
   const rows = parseCustomerCsv(CSV);
@@ -100,9 +100,6 @@ test("resolveCustomerNamespaces: never searches shared control-plane namespaces 
   assert.ok(!out.namespaces.some((n) => n.startsWith("apim-cp-")), "control plane must not be searched implicitly");
   // ...but it is reported, so the caller knows it exists.
   assert.deepEqual(out.control_plane_namespaces, ["apim-cp-cp1111"]);
-
-  const optedIn = resolveCustomerNamespaces(rows, { core: "acme", includeControlPlane: true });
-  assert.ok(optedIn.namespaces.includes("apim-cp-cp1111"));
 });
 
 test("resolveCustomerNamespaces: unknown customer resolves to nothing", () => {
@@ -325,14 +322,14 @@ test("resolveCustomerNamespaces: a tail that describes nothing is refused, with 
   assert.match(out.reason, /Retry without it/);
 });
 
-test("resolveCustomerNamespaces: env words and qualifiers narrow together", () => {
+test("resolveCustomerNamespaces: an environment and a region narrow together", () => {
   const rows = parseCustomerCsv(CSV);
   assert.deepEqual(
-    resolveCustomerNamespaces(rows, { core: "acme", envs: ["prod"], qualifiers: ["unitedstates"] }).namespaces,
+    resolveCustomerNamespaces(rows, { core: "acme", qualifiers: ["prod", "unitedstates"] }).namespaces,
     ["apim-dp-cp1111-dp0001"],
   );
   // Each word must hold: a region acme does not have refuses even with a valid env.
-  const out = resolveCustomerNamespaces(rows, { core: "acme", envs: ["prod"], qualifiers: ["europe"] });
+  const out = resolveCustomerNamespaces(rows, { core: "acme", qualifiers: ["prod", "europe"] });
   assert.deepEqual(out.namespaces, []);
   assert.deepEqual(out.unknown_qualifiers, ["prod", "europe"]);
 });

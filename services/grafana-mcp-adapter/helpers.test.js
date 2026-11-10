@@ -17,7 +17,6 @@ const {
   toLokiNs,
   editDistance,
   rankClientSuggestions,
-  splitClientEnv,
 } = await import("./helpers.js");
 
 // ---------------------------------------------------------------------------
@@ -293,17 +292,6 @@ test("buildExactLogsQuery: dedupes service_names", () => {
 
 test("buildExactLogsQuery: throws when namespace missing", () => {
   assert.throws(() => buildExactLogsQuery({ serviceNames: ["a"] }), /namespace is required/);
-});
-
-// ---------------------------------------------------------------------------
-// splitClientEnv
-// ---------------------------------------------------------------------------
-
-test("splitClientEnv: separates customer core from env tokens", () => {
-  assert.deepEqual(splitClientEnv("blueyonder prod"), { core: "blueyonder", envs: ["prod"] });
-  assert.deepEqual(splitClientEnv("equigy"), { core: "equigy", envs: [] });
-  assert.deepEqual(splitClientEnv("  arcelor  nonprod "), { core: "arcelor", envs: ["nonprod"] });
-  assert.deepEqual(splitClientEnv(""), { core: "", envs: [] });
 });
 
 // ---------------------------------------------------------------------------

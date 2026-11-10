@@ -178,23 +178,21 @@ test("grafana_logs_link: line_filter attaches an explore_url fallback per drilld
 });
 
 // ---------------------------------------------------------------------------
-// grafana_logs_link: env auto-retry
+// grafana_logs_link: environment words, blank input and startup
 // ---------------------------------------------------------------------------
 
 test("grafana_logs_link: a pinned namespace does not repeat the environment against service_name", async () => {
   // Customers call production `plt-live` or `multitenant`, so a service_name
   // filter of ".*prod.*" matched nothing and the tool retried without it. The
   // namespace list already expresses the environment, so there is nothing to
-  // repeat and nothing to retry.
+  // repeat.
   await withLokiStub(
     { [NS_VALUES]: ["orbit-plt-live"], [SERIES]: [stream("orbit-plt-live", "by-live-gateway")] },
-    async (calls) => {
+    async () => {
       const out = await callTool("grafana_logs_link", { client: "orbit plt live", component: "gateway" });
       assert.deepEqual(out.resolved_namespaces, ["orbit-plt-live"]);
       // service_name only carries the component, not the environment words.
       assert.ok(!/service_name=~"[^"]*(plt|live)/.test(out.query), out.query);
-      assert.equal(calls.filter((u) => u.includes(SERIES)).length, 1, "no retry should be needed");
-      assert.equal(out.env_filter_dropped, undefined);
     },
   );
 });
@@ -265,24 +263,6 @@ test("grafana_logs_link: a word no namespace carries is refused, listing the nam
       assert.deepEqual(out.skipped_namespaces, ["orbit-plt-live"]);
       assert.match(out.note, /"prod" is in none of the namespaces found for "orbit" \(orbit-plt-live\)/);
       assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
-    },
-  );
-});
-
-test("grafana_logs_link: no retry when the first env-narrowed query already matched", async () => {
-  let seriesCall = 0;
-  await withLokiStub(
-    {
-      [NS_VALUES]: ["april-prod"],
-      [SERIES]: () => {
-        seriesCall += 1;
-        return [stream("april-prod", "graviteeio-apim-april-prod-gateway")];
-      },
-    },
-    async () => {
-      const out = await callTool("grafana_logs_link", { client: "april prod", component: "gateway" });
-      assert.equal(seriesCall, 1, "must not retry when the first query matched");
-      assert.equal(out.env_filter_dropped, undefined);
     },
   );
 });

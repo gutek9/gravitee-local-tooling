@@ -50,7 +50,8 @@ test("matchNamespaces: the whole name wins over its own siblings", () => {
 });
 
 test("matchNamespaces: a namespace that IS an environment word still resolves", () => {
-  // splitClientEnv classified the whole phrase as environment, leaving no name.
+  // Regression: a list of environment words classified the whole phrase as
+  // environment, leaving no name.
   assert.deepEqual(matchNamespaces(FLEET, "prod"), ["prod"]);
   assert.deepEqual(matchNamespaces(FLEET, "dev"), ["dev"]);
 });

@@ -93,21 +93,6 @@ const ENV_TOKENS = new Set([
 const SEG_START = "(?:^|[-_.])";
 const SEG_END = "(?:[-_.]|$)";
 
-// Split a free-text client fragment into the customer "core" (the words that
-// name the customer) and the env tokens (prod, stage, ...). The customer core
-// is what we match against the `namespace` label — env tokens don't reliably
-// live in the namespace (e.g. a customer whose prod namespace is `…-plt-live`),
-// so they only ever narrow `service_name`, never the namespace.
-//   splitClientEnv("blueyonder prod") -> { core: "blueyonder", envs: ["prod"] }
-//   splitClientEnv("equigy")          -> { core: "equigy",     envs: [] }
-export function splitClientEnv(client = "") {
-  const words = String(client || "").trim().split(/\s+/).filter(Boolean);
-  const core = [];
-  const envs = [];
-  for (const w of words) (ENV_TOKENS.has(w.toLowerCase()) ? envs : core).push(w);
-  return { core: core.join(" "), envs };
-}
-
 // Build a LogQL selector from free-text client/component. Both are matched
 // case-insensitively as substrings of `service_name` (which in this instance
 // encodes both the customer and the component, e.g.

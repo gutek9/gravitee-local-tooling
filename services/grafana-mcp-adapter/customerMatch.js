@@ -195,7 +195,8 @@ function qualifierMatches(row, word) {
   });
 }
 
-// Resolve a customer (and optional env words) to the namespaces to search.
+// Resolve a customer, and the words after its name (qualifiers), to the
+// namespaces to search.
 //
 // Two separate hazards, handled differently because they are not the same thing:
 //
@@ -210,12 +211,12 @@ function qualifierMatches(row, word) {
 //     because "N namespaces across M organizations" is a materially different
 //     answer from what the caller probably pictured.
 //
-// Data-plane namespaces only, by default. A control-plane namespace is SHARED by
-// every customer on that control plane (apim-cp-cp1111 carries beacon,
-// thirdco and acme together), so including it would return one
-// customer's logs under another's name — wrong, and a data-boundary problem, not
-// just a precision one.
-export function resolveCustomerNamespaces(rows = [], { core, envs = [], qualifiers = [], includeControlPlane = false, controlPlaneId } = {}) {
+// Data-plane namespaces only, except a trial's own control plane (below). A
+// control-plane namespace is SHARED by every customer on that control plane
+// (apim-cp-cp1111 carries beacon, thirdco and acme together), so including it
+// would return one customer's logs under another's name — wrong, and a
+// data-boundary problem, not just a precision one.
+export function resolveCustomerNamespaces(rows = [], { core, qualifiers = [], controlPlaneId } = {}) {
   const matched = matchCustomers(rows, core);
   if (!matched.length) return { matched: [], namespaces: [], control_plane_namespaces: [] };
 
@@ -236,32 +237,29 @@ export function resolveCustomerNamespaces(rows = [], { core, envs = [], qualifie
     };
   }
 
-  // Env words and free-text qualifiers (the tail of the phrase) only ever narrow.
-  // Qualifiers are matched against what the deployment actually is, not against
-  // a list of allowed words.
-  const wanted = envs.map((e) => String(e).toLowerCase());
+  // Qualifiers (the tail of the phrase: environment, region, provider) only ever
+  // narrow. They are matched against what the deployment actually is, not
+  // against a list of allowed words.
   const quals = (qualifiers || []).map(String).filter(Boolean);
-  const envFiltered = wanted.length ? matched.filter((r) => r.env && wanted.includes(r.env)) : matched;
-  const rowsToUse = quals.length ? envFiltered.filter((r) => quals.every((q) => qualifierMatches(r, q))) : envFiltered;
+  const rowsToUse = quals.length ? matched.filter((r) => quals.every((q) => qualifierMatches(r, q))) : matched;
 
   // Words that describe none of the customer's deployments are refused, never
   // dropped. Falling back to every deployment would turn a filter into a
   // widening: "acme staging" for a customer with only prod and dev would search
   // both, with no staging constraint at all. What they do have is listed so the
   // caller can retry.
-  if ((wanted.length || quals.length) && !rowsToUse.length) {
-    const words = [...wanted, ...quals];
+  if (quals.length && !rowsToUse.length) {
     const knownEnvironments = [...new Set(matched.map((r) => r.env).filter(Boolean))].sort();
     const knownRegions = [...new Set(matched.map((r) => r.region).filter(Boolean))].sort();
     return {
       matched: [],
       namespaces: [],
       control_plane_namespaces: [],
-      unknown_qualifiers: words,
+      unknown_qualifiers: quals,
       known_environments: knownEnvironments,
       known_regions: knownRegions,
       reason:
-        `"${words.join(" ")}" does not describe any deployment of ${matched[0].customer} ` +
+        `"${quals.join(" ")}" does not describe any deployment of ${matched[0].customer} ` +
         `(environments: ${knownEnvironments.join(", ") || "none listed"}; regions: ${knownRegions.join(", ") || "none listed"}). ` +
         "Nothing was searched. Retry without it, or with one of those.",
     };
@@ -293,7 +291,7 @@ export function resolveCustomerNamespaces(rows = [], { core, envs = [], qualifie
       control_plane_ids: valid,
       reason: ownsIt
         ? `"${controlPlaneId}" is one of ${matched[0].customer}'s Cockpit organizations, but none of the ` +
-          `deployments matching ${quals.length ? `"${quals.join(" ")}"` : "the requested environment"} is on it ` +
+          `deployments matching "${quals.join(" ")}" is on it ` +
           `(those are on: ${valid.join(", ")}). Nothing was searched.`
         : `"${controlPlaneId}" is not one of ${matched[0].customer}'s Cockpit organizations ` +
           `(${valid.join(", ")}). Nothing was searched.`,
@@ -307,10 +305,10 @@ export function resolveCustomerNamespaces(rows = [], { core, envs = [], qualifie
 
   return {
     matched: finalRows,
-    namespaces: includeControlPlane || allTrials ? [...namespaces, ...controlPlanes] : namespaces,
+    namespaces: allTrials ? [...namespaces, ...controlPlanes] : namespaces,
     control_plane_namespaces: controlPlanes,
     ...(allTrials ? { control_plane_is_single_tenant: true } : {}),
-    env_filter_applied: wanted.length > 0 || quals.length > 0,
+    env_filter_applied: quals.length > 0,
     control_plane_ids: orgs,
     // Hazard 2: same name, several Cockpit organizations. Resolved, but said out
     // loud so a very wide answer is not mistaken for a precise one.
