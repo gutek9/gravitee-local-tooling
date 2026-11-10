@@ -43,6 +43,16 @@ export function requireConfig() {
   }
 }
 
+// What makes a fixed setting take effect, for every configuration error. Each
+// agent session starts its own adapter container (`local-tooling mcp grafana`
+// runs `docker compose run --rm`) with the values in .env at that moment, so a
+// fix reaches the adapter through a new session. Recreating the long-running
+// Compose service (`up -d --force-recreate`) never touches the container the
+// agent talks to.
+export const RESTART_HINT =
+  "The adapter reads its settings only when it starts: restart your agent, or reconnect its grafana MCP " +
+  "server, to start a new one with the values in .env.";
+
 // The Loki datasource uid has no safe default. Hardcoding one that happens to be
 // right for a single Grafana org is worse than having none: it fails silently
 // and plausibly everywhere else. Validated here so the failure is one clear
@@ -51,10 +61,9 @@ export function requireDatasourceUid(uid) {
   const value = String(uid ?? "").trim();
   if (!value) {
     throw new Error(
-      "GRAFANA_LOGS_DATASOURCE_UID is not set. Set it to the uid of the Loki datasource " +
+      "GRAFANA_LOGS_DATASOURCE_UID is not set. Set it in .env to the uid of the Loki datasource " +
         "holding your logs (Grafana > Connections > Data sources; the uid is in the page " +
-        "URL and is not always the same as the display name), then recreate the container: " +
-        "docker compose up -d --force-recreate grafana-mcp-adapter",
+        `URL and is not always the same as the display name). ${RESTART_HINT}`,
     );
   }
   return value;

@@ -305,6 +305,12 @@ test("loadCustomerMap: a bad numeric setting stops the map loading, naming it, b
   await withGitHub({}, async (calls) => {
     const named = /GRAFANA_CUSTOMER_MAP_TIMEOUT_MS must be a whole number from 1 to 60000, got "abc"/;
     await assert.rejects(loader.loadCustomerMap(), named);
+    // Regression: it said to run `docker compose up -d --force-recreate`, which
+    // never reaches the container the agent starts for each session.
+    await assert.rejects(
+      loader.loadCustomerMap(),
+      (err) => /restart your agent/.test(err.message) && !/force-recreate/.test(err.message),
+    );
     // The refresh script's fetch is stopped the same way.
     await assert.rejects(loader.fetchCustomerCsv(), named);
     assert.deepEqual(calls, []);

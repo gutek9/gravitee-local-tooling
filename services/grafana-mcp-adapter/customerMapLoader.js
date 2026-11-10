@@ -7,7 +7,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { log } from "./grafanaClient.js";
+import { log, RESTART_HINT } from "./grafanaClient.js";
 import { parseCustomerCsv } from "./customerCsv.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -66,7 +66,7 @@ function requireValidSettings() {
   if (!SETTINGS.errors.length) return;
   throw new Error(
     `Invalid customer map configuration: ${SETTINGS.errors.join("; ")}. Fix it in .env, or leave it ` +
-      "empty for the default, then recreate the container: docker compose up -d --force-recreate grafana-mcp-adapter",
+      `empty for the default. ${RESTART_HINT}`,
   );
 }
 

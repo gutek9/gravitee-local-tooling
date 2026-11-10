@@ -61,6 +61,12 @@ test("requireDatasourceUid: unset/blank fails with an actionable message", async
   // The message must say the uid can differ from the display name — the exact
   // assumption that cost time on this instance.
   assert.throws(() => requireDatasourceUid(""), /not always the same as the display name/);
+  // Regression: it said to run `docker compose up -d --force-recreate`, which
+  // never reaches the container the agent starts for each session.
+  assert.throws(
+    () => requireDatasourceUid(""),
+    (err) => /restart your agent/.test(err.message) && !/force-recreate/.test(err.message),
+  );
 });
 
 // ---------------------------------------------------------------------------
