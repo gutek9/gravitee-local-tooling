@@ -410,7 +410,7 @@ Tests use Node's built-in runner — no extra framework. Run them with:
 
 ```bash
 npm test          # node --test
-npm run check     # syntax-check the source files
+npm run check     # syntax-check every .js/.mjs file, scripts/ included
 ```
 
 Coverage:

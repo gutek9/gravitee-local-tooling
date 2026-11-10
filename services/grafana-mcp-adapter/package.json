@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
-    "check": "node --check server.js grafanaClient.js helpers.js server.test.js",
+    "check": "for f in *.js scripts/*.*js; do node --check \"$f\" || exit 1; done",
     "refresh-customers": "node scripts/refresh-customers.mjs",
     "validate-customers": "node scripts/validate-customers.mjs"
   },
