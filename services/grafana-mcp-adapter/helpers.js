@@ -196,6 +196,9 @@ export function buildExactLogsQuery({ namespace, serviceNames = [], lineFilter }
 // an arbitrary pane id, each holding the datasource, queries and range. The old
 // `left=` array form is legacy (<=10) and is intentionally not emitted.
 export function buildExploreUrl({ datasourceUid, query, from, to }) {
+  // Without a datasource the link opens the viewer's default one: a plausible
+  // view of the wrong logs. The uid has no default (see requireDatasourceUid).
+  if (!datasourceUid) throw new Error("datasourceUid is required");
   const pane = {
     datasource: datasourceUid,
     queries: [{ refId: "A", datasource: { type: "loki", uid: datasourceUid }, expr: query, queryType: "range" }],
@@ -235,8 +238,11 @@ export function buildLineFilterToken(text) {
   return `caseSensitive,0|${GFP("|=")}|${GFP(text)}`;
 }
 
-export function buildDrilldownUrl({ namespace, serviceNames = [], datasourceUid = "grafanacloud-logs", from, to, lineFilter } = {}) {
+export function buildDrilldownUrl({ namespace, serviceNames = [], datasourceUid, from, to, lineFilter } = {}) {
   if (!namespace) throw new Error("namespace is required");
+  // No default uid: one that is right for a single Grafana org links to nothing,
+  // or to the wrong logs, everywhere else (see requireDatasourceUid).
+  if (!datasourceUid) throw new Error("datasourceUid is required");
   const names = [...new Set((serviceNames || []).filter(Boolean))];
   const p = new URLSearchParams();
   p.set("patterns", "[]");

@@ -333,6 +333,7 @@ test("buildExploreUrl: builds a Grafana 11+ panes deep link", () => {
 
 test("buildDrilldownUrl: single service_name -> exact (=) filter", () => {
   const url = buildDrilldownUrl({
+    datasourceUid: "logs-uid",
     namespace: "april-prod",
     serviceNames: ["graviteeio-apim-april-prod-gateway"],
     from: "now-1h",
@@ -340,7 +341,7 @@ test("buildDrilldownUrl: single service_name -> exact (=) filter", () => {
   });
   assert.ok(url.startsWith("https://g.example.com/a/grafana-lokiexplore-app/explore/namespace/april-prod/logs?"));
   const params = new URL(url).searchParams;
-  assert.equal(params.get("var-ds"), "grafanacloud-logs");
+  assert.equal(params.get("var-ds"), "logs-uid");
   assert.equal(params.get("visualizationType"), '"logs"');
   // namespace pin + exact service_name match (NOT a raw LogQL regex, which the
   // app treats as a literal).
@@ -352,6 +353,7 @@ test("buildDrilldownUrl: single service_name -> exact (=) filter", () => {
 
 test("buildDrilldownUrl: multiple service_names -> escaped =~ alternation", () => {
   const url = buildDrilldownUrl({
+    datasourceUid: "logs-uid",
     namespace: "apim-dp-ba813-a200c4",
     serviceNames: ["prod-apim-dp-ba813-a200c4-gateway", "prod-apim-dp-ba813-8123e2-gateway"],
     from: "now-1h",
@@ -365,12 +367,13 @@ test("buildDrilldownUrl: multiple service_names -> escaped =~ alternation", () =
 });
 
 test("buildDrilldownUrl: omits the service_name filter when none given", () => {
-  const url = buildDrilldownUrl({ namespace: "apim-cp-ba813", from: "now-15m", to: "now" });
+  const url = buildDrilldownUrl({ datasourceUid: "logs-uid", namespace: "apim-cp-ba813", from: "now-15m", to: "now" });
   assert.deepEqual(new URL(url).searchParams.getAll("var-filters"), ["namespace|=|apim-cp-ba813"]);
 });
 
 test("buildDrilldownUrl: de-duplicates service_names", () => {
   const url = buildDrilldownUrl({
+    datasourceUid: "logs-uid",
     namespace: "april-prod",
     serviceNames: ["svc-a", "svc-a"],
     from: "now-1h",
@@ -383,8 +386,22 @@ test("buildDrilldownUrl: throws when namespace missing", () => {
   assert.throws(() => buildDrilldownUrl({ from: "now-1h", to: "now" }), /namespace is required/);
 });
 
+test("buildDrilldownUrl and buildExploreUrl: no link without a datasource uid", () => {
+  // Regression: buildDrilldownUrl filled in "grafanacloud-logs", a uid right for
+  // one Grafana org only, and buildExploreUrl left the datasource out, which
+  // opens the viewer's default one. Either way, a plausible link to the wrong logs.
+  for (const datasourceUid of [undefined, ""]) {
+    assert.throws(
+      () => buildDrilldownUrl({ namespace: "orbit-prod", datasourceUid, from: "now-1h", to: "now" }),
+      /datasourceUid is required/,
+    );
+    assert.throws(() => buildExploreUrl({ datasourceUid, query: "{}", from: "now-1h", to: "now" }), /datasourceUid is required/);
+  }
+});
+
 test("buildDrilldownUrl: line filter populates var-lineFilters, V2 stays empty", () => {
   const url = buildDrilldownUrl({
+    datasourceUid: "logs-uid",
     namespace: "sedex-prod",
     serviceNames: ["sedex-prod-gateway"],
     from: "now-7d",
@@ -404,7 +421,7 @@ test("buildDrilldownUrl: line filter populates var-lineFilters, V2 stays empty",
 });
 
 test("buildDrilldownUrl: no line filter leaves var-lineFilters empty", () => {
-  const url = buildDrilldownUrl({ namespace: "sedex-prod", from: "now-1h", to: "now" });
+  const url = buildDrilldownUrl({ datasourceUid: "logs-uid", namespace: "sedex-prod", from: "now-1h", to: "now" });
   assert.equal(new URL(url).searchParams.get("var-lineFilters"), "");
 });
 
