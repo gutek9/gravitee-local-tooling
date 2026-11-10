@@ -182,22 +182,30 @@ registerTool(
 
 registerTool(
   "grafana_logs_link",
-  "Read-only: build a shareable Grafana logs link for a customer's logs. Discovers " +
-    "which log streams match (via Loki's /series — label sets only, no log lines) so " +
-    "the link is scoped to the exact service_name values that exist. Identify the " +
-    "customer/component with free text (e.g. client='april', component='gateway') — it " +
-    "matches case-insensitively against the `service_name` label, which encodes both. " +
-    "Optionally pre-fill the link's line filter with line_filter. Default range is the " +
-    "last 1 hour; widen with from/to (e.g. from='now-6h'). " +
-    "link_style controls the link format: 'drilldown' (default) builds Grafana's Logs " +
-    "Drilldown app links (the 'Logs' menu), navigated per-namespace, so the user can " +
-    "filter/drill by hand; 'explore' builds a raw Explore (LogQL) deep link instead. " +
-    "Returns { query, links, range, matched_count, matched_streams }; `links` is " +
-    "per-namespace for drilldown (multitenant customers can span several). When a " +
-    "line_filter is set, each drilldown link also carries an `explore_url`: the Logs " +
-    "Drilldown app pre-fills the filter but doesn't apply it on load, so paste the " +
-    "explore_url for evidence — it honours the filter immediately. Ask the user before " +
-    "widening the range since logs are large.",
+  "Read-only: build a shareable Grafana logs link for one customer's logs. Name the customer " +
+    "in client (e.g. client='kestrel', or 'kestrel prod' for one deployment) and the component " +
+    "in component (e.g. 'gateway'). client is first resolved to the customer's own namespaces: " +
+    "a Gravitee Cloud customer through the customer map, a hosted customer through Loki's " +
+    "namespace label, or a data plane's full id or namespace from an alert. component then " +
+    "narrows by service_name inside them. A customer with no namespace of its own (one that " +
+    "lives in a shared namespace such as `prod`) is matched against service_name instead, " +
+    "outside Gravitee Cloud namespaces. Streams are found with Loki's /series (label sets " +
+    "only, no log lines), so each link is scoped to the exact service_name values that exist. " +
+    "When the answer would not be what was asked for, the call is refused and nothing is " +
+    "queried: for example a name that matches several customers, a word that describes none of " +
+    "its deployments, a control_plane_id that is not one of its organizations, a control plane " +
+    "id typed as client other than a trial's (every customer on it shares its namespace), or a " +
+    "failed lookup that leaves the name unresolved. A refusal returns " +
+    "refused: true, empty links and resolved_namespaces, the reason in `note` and the valid " +
+    "choices (candidates, known_environments, control_plane_ids...); grafana_find_customer " +
+    "lists them too. Otherwise it returns { query, resolved_namespaces, resolved_via, links, " +
+    "range, matched_count, matched_streams } and where the customer map came from (map_source, " +
+    "map_warning); when nothing matched, `note` says why. link_style 'drilldown' (default) " +
+    "builds one Logs Drilldown link per namespace; 'explore' builds one raw Explore (LogQL) " +
+    "link. line_filter pre-fills the links' line filter; each drilldown link then also carries " +
+    "an `explore_url`, because the Drilldown app shows the filter but does not apply it on " +
+    "load. Default range is the last hour; ask the user before widening it with from/to " +
+    "(e.g. from='now-6h'), since logs are large.",
   {
     client: z
       .string()

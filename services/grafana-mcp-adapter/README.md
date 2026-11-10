@@ -58,19 +58,27 @@ Pass `raw=true` to get the full (potentially very large) frames instead.
 
 ### `grafana_logs_link`
 
-Identify a customer/component with free text (`client='april'`,
-`component='gateway'`); it matches case-insensitively against the `service_name`
-label, which on this instance encodes both (e.g.
-`graviteeio-ae-april-rec-engine`). Returns `{ query, link_style,
-resolved_namespaces, links, range, matched_count, matched_streams }`, where
-`matched_streams` is the list of `{ namespace, service_name }` label sets the
-selector matched (discovered via Loki's `/series` — no log lines are fetched) and
-`resolved_namespaces` is the customer's own namespace(s) the `client` resolved to
-(empty when the customer only lives in a shared namespace — see the drilldown
-section). The default range is the last hour; widen with `from`/`to`. When nothing
-matches, it returns close `service_name` values as `suggestions` so typos like
-`aprl → april` surface. A blank `client` is refused: with nothing to narrow by,
-it would match every stream in Loki.
+Name the customer in `client` (`client='kestrel'`, or `'kestrel prod'` for one
+deployment) and the component in `component` (`component='gateway'`). `client`
+is first resolved to the customer's own namespaces: a Gravitee Cloud customer
+through the customer map, a hosted customer through Loki's `namespace` label, or
+a data plane's full id (see
+[Finding a customer](#finding-a-customer-without-guessing-which-word-is-the-environment)).
+`component` then narrows by `service_name` inside them. A customer with no
+namespace of its own (one that lives in a shared namespace such as `prod`) is
+matched against `service_name` instead, outside Gravitee Cloud namespaces.
+
+Returns `{ query, link_style, resolved_namespaces, links, range, matched_count,
+matched_streams }` plus the fields below, where `matched_streams` is the list of
+`{ namespace, service_name }` label sets the selector matched (discovered via
+Loki's `/series` — no log lines are fetched) and `resolved_namespaces` is the
+namespaces `client` resolved to (empty on the `service_name` path). A refused
+call returns `refused: true`, empty `links` and `resolved_namespaces`, and the
+reason in `note`, with no `query` or `matched_*`: nothing was queried. The
+default range is the last hour; widen with `from`/`to`. When nothing matches on
+the `service_name` path, it returns close `service_name` values as
+`suggestions`, so typos like `kestrl → kestrel` surface. A blank `client` is
+refused: with nothing to narrow by, it would match every stream in Loki.
 
 The response also says how the customer was found:
 
