@@ -12,10 +12,13 @@ import { githubGet } from "./githubClient.js";
 import { parseCustomerCsv } from "./customerCsv.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-// Overridable so tests can point the fallback at a file of their own and never
-// read a real local snapshot. Exported so refresh-customers writes where this
-// module reads.
-export const SNAPSHOT_PATH = process.env.GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH || join(HERE, "customers-snapshot.json");
+// The snapshot next to this module: the file the image copies at build time and
+// refresh-customers writes by default.
+export const DEFAULT_SNAPSHOT_PATH = join(HERE, "customers-snapshot.json");
+// Where the fallback is read from. Under Docker the override is a path inside the
+// container, so it is read here only, never by the host-side refresh script; the
+// tests point it at a file of their own and never read a real local snapshot.
+const SNAPSHOT_PATH = process.env.GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH || DEFAULT_SNAPSHOT_PATH;
 
 const REPO = process.env.GRAFANA_CUSTOMER_MAP_REPO || "gravitee-io/cloud-deployments-configuration";
 const PATH = process.env.GRAFANA_CUSTOMER_MAP_PATH || "docs/summary/customers_summary.csv";

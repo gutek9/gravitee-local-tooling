@@ -401,7 +401,7 @@ Cloud then gets only its hosted part.
 | `GRAFANA_CUSTOMER_MAP_TTL_SECONDS` | `3600` | How long a successful fetch stays cached in memory. Whole number, 1 to 86400 (a day). A fallback (the snapshot, or no map at all) is kept for at most a minute, so GitHub is asked again soon after it comes back. |
 | `GRAFANA_CUSTOMER_MAP_TIMEOUT_MS` | `5000` | Timeout for the GitHub fetch. Whole number, 1 to 60000. |
 | `GRAFANA_CUSTOMER_MAP_STALE_DAYS` | `30` | Age after which the map is reported as stale. Whole number, 1 to 365. |
-| `GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH` | `customers-snapshot.json` next to `server.js` (`/app/customers-snapshot.json` in the container) | Where the fallback snapshot is read from. Under Docker this is a path inside the container: leave it empty to use the snapshot built into the image, or mount another file and point this at it. The tests point it at a file of their own. |
+| `GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH` | `customers-snapshot.json` next to `server.js` (`/app/customers-snapshot.json` in the container) | Where the fallback snapshot is read from. Under Docker this is a path inside the container: leave it empty to use the snapshot built into the image, or mount another file and point this at it. The tests point it at a file of their own. `npm run refresh-customers` does not read it: it writes the file next to `server.js`, or the one given with `-- --out FILE`. |
 
 > **Token type.** The token needs read access to
 > `gravitee-io/cloud-deployments-configuration`. In our tests a classic token
@@ -478,6 +478,10 @@ Coverage:
   empty map, or no live namespaces, fails instead of passing with nothing
   checked, and a bad setting stops the script before any request (the script
   is run with `fetch` replaced, so nothing reaches the network).
+- `scripts/refresh-customers.test.js` — `npm run refresh-customers`, run on a temp
+  copy of the adapter with `fetch` replaced: where the snapshot is written (next
+  to `server.js`, or `--out`, never `GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH`), and
+  that a bad argument stops it before any request.
 - `server.test.js` — the `server.js` orchestration that talks to Loki, with
   `fetch` stubbed per Loki endpoint: `grafana_logs_link`'s namespace resolution
   through both routes (label and customer map), per-namespace drilldown

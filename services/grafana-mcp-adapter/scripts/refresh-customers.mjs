@@ -1,12 +1,32 @@
 // Regenerate the bundled customer snapshot used when GitHub is unreachable.
 //
-//   GITHUB_PERSONAL_ACCESS_TOKEN=... npm run refresh-customers
+//   GITHUB_PERSONAL_ACCESS_TOKEN=... npm run refresh-customers [-- --out FILE]
+//
+// Writes customers-snapshot.json next to server.js, the file the image copies,
+// unless --out names another file. It never reads GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH:
+// that is where the adapter reads a snapshot inside its container, so taken from
+// .env it would send this host-side script to a container path.
 //
 // The snapshot is deliberately slimmed to what is needed to resolve a customer to
 // a namespace. Customer hostnames and custom DNS are NOT written to disk.
 import { writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { parseArgs } from "node:util";
 import { parseCustomerCsv } from "../customerCsv.js";
-import { fetchCustomerCsv, fetchGeneratedAt, buildSnapshot, SNAPSHOT_PATH } from "../customerMapLoader.js";
+import { fetchCustomerCsv, fetchGeneratedAt, buildSnapshot, DEFAULT_SNAPSHOT_PATH } from "../customerMapLoader.js";
+
+const USAGE = "Usage: npm run refresh-customers [-- --out FILE]";
+
+// The arguments are checked before GitHub is asked anything.
+let outPath;
+try {
+  const { values } = parseArgs({ options: { out: { type: "string" } }, strict: true });
+  if (values.out === "") throw new Error("--out needs a file name");
+  outPath = values.out === undefined ? DEFAULT_SNAPSHOT_PATH : resolve(values.out);
+} catch (err) {
+  console.error(`${err instanceof Error ? err.message : String(err)}\n${USAGE}`);
+  process.exit(1);
+}
 
 let csv;
 try {
@@ -29,8 +49,13 @@ if (!sourceGeneratedAt) {
   console.warn("Could not read when the CSV was last generated; the snapshot records its source date as unknown.");
 }
 
-await writeFile(SNAPSHOT_PATH, JSON.stringify(buildSnapshot({ customers, sourceGeneratedAt }), null, 2) + "\n");
+try {
+  await writeFile(outPath, JSON.stringify(buildSnapshot({ customers, sourceGeneratedAt }), null, 2) + "\n");
+} catch (err) {
+  console.error(`Could not write the snapshot to ${outPath}: ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
 console.log(
-  `Wrote ${customers.length} deployments (${new Set(customers.map((c) => c.customer)).size} customers) to ${SNAPSHOT_PATH} ` +
+  `Wrote ${customers.length} deployments (${new Set(customers.map((c) => c.customer)).size} customers) to ${outPath} ` +
     `(source CSV generated ${sourceGeneratedAt ? sourceGeneratedAt.slice(0, 10) : "unknown"})`,
 );
