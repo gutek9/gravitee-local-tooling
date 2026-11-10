@@ -12,6 +12,8 @@
 
 export const dataPlaneNamespace = (dataPlaneId) => `apim-dp-${dataPlaneId}`;
 export const controlPlaneNamespace = (controlPlaneId) => `apim-cp-${controlPlaneId}`;
+// A Gravitee Cloud namespace, which carries ids rather than a customer's name.
+export const isCloudNamespace = (namespace) => /^apim-(dp|cp)-/i.test(String(namespace));
 
 // Names compare with separators aside: "north star", "north-star" and
 // "northstar" are the same name.

@@ -19,6 +19,7 @@ import {
   lookupById,
   dataPlaneNamespace,
   controlPlaneNamespace,
+  isCloudNamespace,
 } from "./customerMatch.js";
 
 // A hosted customer's namespaces are named after it by their first segment
@@ -29,6 +30,15 @@ const hostedName = (namespace) => String(namespace).toLowerCase().split("-")[0];
 
 // What a map answer set aside contributes.
 const NOTHING = { matched: [], namespaces: [], control_plane_namespaces: [] };
+
+// One deployment as reported to the caller.
+const deploymentOf = (r) => ({
+  customer: r.customer,
+  data_plane_id: r.data_plane_id,
+  region: r.region,
+  provider: r.provider,
+  env: r.env,
+});
 
 // At most MAX_NAMES candidates, and how many were left out.
 function cappedCandidates(candidates = []) {
@@ -175,7 +185,131 @@ export function resolveClient({ namespaceValues = [], ...rest }) {
   };
 }
 
+// An id typed into client, as support sees it in an alert or a pod name
+// (`apim-dp-cp1111-dp0001`, `cp1111-dp0001`, `cp1111`). Cloud namespaces are
+// reached this way and through the map, never by the namespace label: `cp1111`
+// is a segment of the shared `apim-cp-cp1111` and of every data plane on it, so
+// matching it as a name searched several customers at once.
+//
+// A data plane is one deployment of one customer, so it is searched alone, and
+// said whose it is when the map knows. A control plane is shared by every
+// customer on it and is refused. A name the map has whole comes first: a trial
+// is named by its control plane id (`trial-tt0001`), and that is one customer.
+// Returns null when the phrase is not an id.
+function resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKnown, map }) {
+  if (/\s/.test(phrase) || map.rows.some((r) => sameName(r.customer, phrase))) return null;
+  const lookup = lookupById(map.rows, phrase);
+  if (!lookup) return null;
+  const live = new Set(namespaceValues);
+  const mapAge = {
+    map_source: map.source,
+    map_generated_at: map.generated_at,
+    map_generated_days_ago: map.generated_days_ago,
+    map_warning: map.warning,
+  };
+  const refuse = (matchedById, note, extra = {}) => ({
+    namespaces: [],
+    via: "none",
+    refused: true,
+    matched_by_id: matchedById,
+    ...extra,
+    note,
+    map_source: map.source,
+    map_warning: map.warning,
+  });
+
+  if (lookup.kind === "data_plane") {
+    const rows = lookup.deployments;
+    const controlPlanes = [...new Set(rows.map((r) => r.control_plane_id).filter(Boolean))];
+    const matchedById = { kind: "data_plane", id: lookup.id, customer: lookup.customer };
+    if (controlPlaneId && !controlPlanes.includes(controlPlaneId)) {
+      return refuse(
+        matchedById,
+        `${lookup.id} is ${lookup.customer}'s data plane on ${controlPlanes.join(", ")}, not on "${controlPlaneId}". ` +
+          "Nothing was searched.",
+        { unknown_control_plane: true, requested_control_plane_id: controlPlaneId, control_plane_ids: controlPlanes },
+      );
+    }
+    const namespaces = [...new Set(rows.map((r) => dataPlaneNamespace(r.data_plane_id)))];
+    const absent = liveNamespacesKnown ? namespaces.filter((n) => !live.has(n)) : [];
+    return {
+      namespaces,
+      via: "customer_map",
+      matched_by_id: matchedById,
+      note: `${lookup.id} is ${lookup.customer}'s data plane, so only it was searched.`,
+      ...(absent.length ? { mapped_namespaces_absent_in_range: absent } : {}),
+      ...mapAge,
+      label_namespaces: [],
+      matched_deployments: rows.map(deploymentOf),
+      env_filter_applied: false,
+      control_plane_ids: controlPlanes,
+      shared_control_plane_namespaces: controlPlanes.map(controlPlaneNamespace),
+    };
+  }
+
+  if (lookup.kind === "control_plane") {
+    const customers = lookup.customers.slice(0, MAX_NAMES);
+    return refuse(
+      { kind: "control_plane", id: lookup.id, customers },
+      `${lookup.id} is a Cockpit control plane (customers on it: ${listNames(lookup.customers)}). Its namespace is ` +
+        "shared by every customer on that organization, so it is never searched under one customer's name. " +
+        `Nothing was searched. Pass the customer's name, with control_plane_id "${lookup.id}" to keep to this organization.`,
+    );
+  }
+
+  // Not in the map. A data plane Loki has is still one deployment: searched
+  // alone, without guessing whose it is.
+  const matchedById = {
+    kind: lookup.kind,
+    id: lookup.id,
+    ...(lookup.candidate_customers ? { candidate_customers: lookup.candidate_customers.slice(0, MAX_NAMES) } : {}),
+  };
+  const dataPlane = dataPlaneNamespace(lookup.id);
+  if (live.has(dataPlane)) {
+    if (controlPlaneId) {
+      return refuse(
+        matchedById,
+        `${lookup.id} is not in the customer map, so its organization cannot be checked against ` +
+          `control_plane_id "${controlPlaneId}". Nothing was searched. Pass the id alone.`,
+        { unknown_control_plane: true, requested_control_plane_id: controlPlaneId },
+      );
+    }
+    return {
+      namespaces: [dataPlane],
+      via: "namespace_label",
+      owner_unknown: true,
+      matched_by_id: matchedById,
+      note:
+        `${dataPlane} is in Loki but not in the customer map, so whose it is cannot be said; only it was searched.` +
+        (lookup.kind === "unlisted_data_plane" ? ` ${lookup.note}` : ""),
+      ...mapAge,
+      label_namespaces: [dataPlane],
+    };
+  }
+  if (live.has(controlPlaneNamespace(lookup.id))) {
+    return refuse(
+      matchedById,
+      `${controlPlaneNamespace(lookup.id)} is a control plane namespace, shared by every customer on that ` +
+        "organization, and the customer map does not say whose. Nothing was searched. Pass the customer's name.",
+    );
+  }
+  // An id the map half knows, but no such namespace: refused rather than left to
+  // a service_name search across all of Loki. Anything else was never an id.
+  if (lookup.kind === "unlisted_data_plane") {
+    return refuse(
+      matchedById,
+      liveNamespacesKnown
+        ? `${dataPlane} is in neither the customer map nor Loki in this range. Nothing was searched.`
+        : `${lookup.id} is not in the customer map, and Loki did not return its namespace list. Nothing was searched.`,
+    );
+  }
+  return null;
+}
+
 function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamespacesKnown, map }) {
+  const byId = resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKnown, map });
+  if (byId) return byId;
+
   // BOTH routes, always — never stop at the first hit. A customer can exist in
   // both populations at once: acme has a hosted `acme-prod` namespace
   // AND Cockpit data planes under `apim-dp-cp1111-*`. Returning early on the
@@ -184,7 +318,8 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
   // typed and gives ground one trailing word at a time; the map route asks the
   // map where the customer name ends. What the caller meant by the last word is
   // decided by what exists, not by a list of known environment names.
-  const found = matchNamespacesPhrase(namespaceValues, phrase);
+  // Cloud namespaces carry ids, not names: only the map and resolveById reach them.
+  const found = matchNamespacesPhrase(namespaceValues.filter((n) => !isCloudNamespace(n)), phrase);
   const split = splitNameAndTail(map.rows, phrase);
   const scope = scopeToOneCustomer({
     phrase,
@@ -372,13 +507,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
     map_generated_days_ago: map.generated_days_ago,
     map_warning: map.warning,
     label_namespaces: byLabel,
-    matched_deployments: resolved.matched.map((r) => ({
-      customer: r.customer,
-      data_plane_id: r.data_plane_id,
-      region: r.region,
-      provider: r.provider,
-      env: r.env,
-    })),
+    matched_deployments: resolved.matched.map(deploymentOf),
     env_filter_applied: resolved.env_filter_applied,
     control_plane_ids: resolved.control_plane_ids,
     ...(resolved.spans_multiple_organizations
@@ -415,6 +544,8 @@ export function resolutionReport(resolution = {}) {
     "similar_names_not_searched",
     "partial_match_unchecked",
     "partial_name_match",
+    "matched_by_id",
+    "owner_unknown",
     "spans_multiple_organizations",
     "organizations_note",
     "control_plane_ids",

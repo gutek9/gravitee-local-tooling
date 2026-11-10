@@ -409,6 +409,40 @@ test("grafana_logs_link: part of a name with the map unavailable is refused, and
   );
 });
 
+test("grafana_logs_link: a control-plane id typed into client is refused, and Loki is never queried", async () => {
+  // Regression: "cp1111" searched the shared apim-cp-cp1111 and the data planes on it.
+  await withLokiStub(
+    {
+      [NS_VALUES]: ["apim-cp-cp1111", "apim-dp-cp1111-dp0001"],
+      [SERIES]: [stream("apim-cp-cp1111", "management-api")],
+    },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "cp1111" });
+      assert.equal(out.refused, true);
+      assert.deepEqual(out.resolved_namespaces, []);
+      assert.equal(out.matched_by_id.kind, "control_plane");
+      assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+    },
+  );
+});
+
+test("grafana_logs_link: a data-plane id searches that data plane only, and names its customer", async () => {
+  await withLokiStub(
+    {
+      [NS_VALUES]: ["apim-cp-cp1111", "apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp0002"],
+      [SERIES]: [stream("apim-dp-cp1111-dp0001", "acme-gateway")],
+    },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "apim-dp-cp1111-dp0001" });
+      assert.deepEqual(out.resolved_namespaces, ["apim-dp-cp1111-dp0001"]);
+      assert.equal(out.matched_by_id.customer, "acme");
+      const series = decodeURIComponent(calls.find((u) => u.includes(SERIES)));
+      assert.ok(series.includes('namespace=~"^apim-dp-cp1111-dp0001$"'), series);
+      assert.ok(!series.includes("apim-cp-cp1111") && !series.includes("dp0002"), series);
+    },
+  );
+});
+
 test("grafana_logs_link: an env word matching none of the customer's deployments is refused, and Loki is never queried", async () => {
   // Regression (#9 review): "acme staging" with only prod, dev and qa searched all
   // of them, and the hosted acme-prod too, with no staging constraint at all.

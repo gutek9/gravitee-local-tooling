@@ -226,6 +226,77 @@ test("resolveClient: candidates are capped, and say how many were left out", () 
   assert.match(out.note, /zed09 and 2 more\)/);
 });
 
+// ---------------------------------------------------------------------------
+// Cloud namespaces only through the map, ids through lookupById
+// ---------------------------------------------------------------------------
+
+test("resolveClient: a control-plane id typed into client is refused, never searched", () => {
+  // Regression: "cp1111" matched the shared apim-cp-cp1111 and every data plane
+  // on it as whole segments, and searched them all.
+  const out = resolve("cp1111", ["apim-cp-cp1111", ...ACME_DATA_PLANES]);
+  assert.deepEqual(out.namespaces, []);
+  assert.equal(out.refused, true);
+  assert.deepEqual(out.matched_by_id, { kind: "control_plane", id: "cp1111", customers: ["acme"] });
+  assert.match(out.note, /never searched under one customer's name/);
+  // The same for a control plane the map does not know.
+  const unknown = resolve("cp9999", ["apim-cp-cp9999", "apim-dp-cp9999-dp0001"]);
+  assert.equal(unknown.refused, true);
+  assert.deepEqual(unknown.namespaces, []);
+});
+
+test("resolveClient: a data-plane id resolves through the map to that data plane and its customer", () => {
+  // Regression: it was searched as a hosted namespace, without saying whose.
+  for (const id of ["apim-dp-cp1111-dp0002", "cp1111-dp0002"]) {
+    const out = resolve(id, ACME_DATA_PLANES);
+    assert.deepEqual(out.namespaces, ["apim-dp-cp1111-dp0002"], id);
+    assert.equal(out.via, "customer_map");
+    assert.deepEqual(out.matched_by_id, { kind: "data_plane", id: "cp1111-dp0002", customer: "acme" });
+    assert.deepEqual(out.matched_deployments.map((d) => d.customer), ["acme"]);
+  }
+  // control_plane_id only narrows: another organization is refused.
+  const other = resolve("cp1111-dp0002", ACME_DATA_PLANES, { controlPlaneId: "cp5555" });
+  assert.equal(other.refused, true);
+  assert.equal(other.unknown_control_plane, true);
+});
+
+test("resolveClient: a data plane the map does not know is searched alone, owner unknown", () => {
+  const out = resolve("cp9999-dp0001", ["apim-dp-cp9999-dp0001", "apim-dp-cp9999-dp0002"]);
+  assert.deepEqual(out.namespaces, ["apim-dp-cp9999-dp0001"]);
+  assert.equal(out.owner_unknown, true);
+  assert.match(out.note, /not in the customer map, so whose it is cannot be said/);
+  // On a control plane the map knows, its customers are a lead, not an answer.
+  const lead = resolve("cp1111-dp0099", ["apim-dp-cp1111-dp0099"]);
+  assert.deepEqual(lead.namespaces, ["apim-dp-cp1111-dp0099"]);
+  assert.deepEqual(lead.matched_by_id.candidate_customers, ["acme"]);
+  // Neither in the map nor in Loki: refused, not left to a service_name search.
+  assert.equal(resolve("cp1111-dp0099", ACME_DATA_PLANES).refused, true);
+});
+
+test("resolveClient: the namespace label route leaves out Cloud namespaces", () => {
+  // Regression: "apim cp" read every control-plane namespace as one customer's.
+  const out = resolve("apim cp", ["apim-cp-cp1111", "apim-cp-cp2222"]);
+  assert.deepEqual(out.namespaces, []);
+  assert.equal(out.via, "none");
+});
+
+test("resolveClient: a trial is named by its control-plane id, and resolves as that customer", () => {
+  // Guards the order in resolveById: a name the map has whole comes before an id.
+  const map = {
+    ...MAP,
+    rows: parseCustomerCsv(
+      CUSTOMERS_CSV + "N/A,trial,trial-tt0001-dp0011,apac,az,australiaeast,None,*.au.trial-tt0001.gateway.gravitee.io\n",
+    ),
+  };
+  const out = resolveClient({
+    phrase: "trial-tt0001",
+    namespaceValues: ["apim-dp-trial-tt0001-dp0011", "apim-cp-trial-tt0001"],
+    map,
+  });
+  assert.equal(out.refused, undefined);
+  assert.deepEqual(out.namespaces, ["apim-dp-trial-tt0001-dp0011", "apim-cp-trial-tt0001"]);
+  assert.equal(out.via, "customer_map");
+});
+
 test("resolveClient: an ambiguous fragment takes nothing from the map, and names the withheld customers", () => {
   const out = resolve("beac", ["apim-dp-cp2222-dp0001", "apim-dp-cp3333-dp0001"]);
   assert.deepEqual(out.namespaces, []);
@@ -384,6 +455,10 @@ test("resolutionReport: every field a resolution sets reaches the report", () =>
     resolve("plt live", ["nova-plt-live", "vega-plt-live"]),
     resolve("acm", null),
     resolve("beaconl", ["beaconlabs-prod"]),
+    resolve("cp1111", ["apim-cp-cp1111", ...ACME_DATA_PLANES]),
+    resolve("cp1111-dp0002", ACME_DATA_PLANES.slice(0, 1)),
+    resolve("cp9999-dp0001", ["apim-dp-cp9999-dp0001"]),
+    resolve("cp1111-dp0002", ACME_DATA_PLANES, { controlPlaneId: "cp5555" }),
   ];
   const renamed = { via: "resolved_via", note: "customer_note" };
   for (const resolution of resolutions) {

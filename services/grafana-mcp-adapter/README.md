@@ -100,6 +100,13 @@ The response also says how the customer was found:
   name and the map or Loki's namespace list could not be read, so it cannot be
   checked that no other customer has it as a whole name. Nothing is searched; use
   the full name.
+- `matched_by_id`, `owner_unknown` — `client` was an id from an alert or a pod
+  name. A data plane (`apim-dp-cp1111-dp0001` or `cp1111-dp0001`) is searched
+  alone, with its customer when the map knows it; when only Loki knows it,
+  `owner_unknown` says whose it is cannot be told. A control plane (`cp1111`) is
+  refused: its namespace is shared by every customer on that organization. Pass
+  the customer's name with `control_plane_id` instead. A trial is named by its
+  control-plane id (`trial-tt0001`) and resolves as that customer.
 - `spans_multiple_organizations`, `organizations_note` — one name, several Cockpit
   organizations. Pass `control_plane_id` to narrow to one.
 - `refused`, `unknown_control_plane`, `requested_control_plane_id` — the
@@ -240,8 +247,10 @@ region or provider word narrows those.
 
 What is searched belongs to one customer. A hosted customer is the first segment
 of its namespaces (`acmecorp-prod` → acmecorp), and a whole name on either route
-outranks part of a name on the other. Two limits follow from reading names off
-namespaces:
+outranks part of a name on the other. Cloud namespaces (`apim-dp-*`,
+`apim-cp-*`) carry ids, not names, so the namespace route never matches them:
+they are reached through the map or through an id typed into `client`. Two
+limits follow from reading names off namespaces:
 
 - Infrastructure named per tenant (`apim-cloudgate-<id>`, `logstash-<id>`) or
   shared (`redis-*`, `ingress-*`) has no customer in its first segment, so a
