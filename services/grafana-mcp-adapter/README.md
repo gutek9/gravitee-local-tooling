@@ -325,8 +325,10 @@ GRAFANA_TOKEN=...                            # service account token (see Auth a
 Then rerun `bin/local-tooling setup` with your usual `--agents` and `--repo`
 values, and restart the agent. With `GRAFANA_ENABLED=true`, setup adds the
 `grafana` MCP server to your agent config (`.mcp.json` / Codex) just like
-`zendesk` / `vectordb` / `github`, with no manual wiring. It only needs HTTPS
-egress to the Grafana instance.
+`zendesk` / `vectordb` / `github`, with no manual wiring. It needs HTTPS egress
+to the Grafana instance, and to `api.github.com` for the customer map (below).
+While `GRAFANA_ENABLED` is not `true`, the adapter makes no request at all: its
+tools say Grafana is disabled, and it does not read the customer map at startup.
 
 `GRAFANA_LOGS_DATASOURCE_UID` is **required** — it has no default. A uid that is
 correct for one Grafana org is a silent, plausible failure in every other one, so
@@ -387,7 +389,7 @@ Cloud then gets only its hosted part.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `GITHUB_PERSONAL_ACCESS_TOKEN` | *(none)* | Auth for the GitHub fetch. Used at **runtime** every time the map loads, not only by `npm run refresh-customers`. |
+| `GITHUB_PERSONAL_ACCESS_TOKEN` | *(none)* | Auth for the GitHub fetch. Used at **runtime** every time the map loads, not only by `npm run refresh-customers`, and only while `GRAFANA_ENABLED=true`. |
 | `GRAFANA_CUSTOMER_MAP_REPO` | `gravitee-io/cloud-deployments-configuration` | Repo holding the customer CSV. |
 | `GRAFANA_CUSTOMER_MAP_PATH` | `docs/summary/customers_summary.csv` | Path to the CSV inside that repo. |
 | `GRAFANA_CUSTOMER_MAP_REF` | `prod` | Branch or tag the CSV is read from. |

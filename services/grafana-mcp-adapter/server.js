@@ -220,6 +220,9 @@ registerTool(
   },
   async ({ client, component, line_filter, link_style = "drilldown", control_plane_id, from = "now-1h", to = "now" }) =>
     withToolLogging("grafana_logs_link", { client, component, link_style, from, to }, async () => {
+      // Disabled or unconfigured: say so before the customer map is read from
+      // GitHub with the user's token.
+      requireConfig();
       // Fail loudly and once, rather than querying a nonexistent datasource and
       // reporting "no log streams matched" for what is really a config error.
       requireDatasourceUid(LOGS_DATASOURCE_UID);
@@ -319,6 +322,9 @@ registerTool(
   },
   async ({ query, max_results = 20 }) =>
     withToolLogging("grafana_find_customer", { query }, async () => {
+      // Disabled or unconfigured: say so before the customer map is read from
+      // GitHub with the user's token.
+      requireConfig();
       const datasourceUid = requireDatasourceUid(LOGS_DATASOURCE_UID);
       return textResult(await findCustomer(query, { datasourceUid, maxResults: max_results }));
     }),
@@ -328,11 +334,20 @@ registerTool(
 // Startup
 // ---------------------------------------------------------------------------
 
-async function main() {
-  log("info", "Starting MCP adapter", { enabled: ENABLED, base_url: BASE_URL || null });
+// Work started before the transport connects. A disabled adapter starts none:
+// Compose runs it whatever GRAFANA_ENABLED says, and it must not read the
+// private customer map with the user's GitHub token for a service nobody
+// turned on. Exported so tests can run it without a transport.
+export function startupWarmUp() {
+  if (!ENABLED) return;
   // Warm the customer map now, so the GitHub round trip overlaps the MCP
   // handshake instead of being paid by whoever runs the first query.
   warmCustomerMap();
+}
+
+async function main() {
+  log("info", "Starting MCP adapter", { enabled: ENABLED, base_url: BASE_URL || null });
+  startupWarmUp();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log("info", "MCP adapter connected", { transport: "stdio" });

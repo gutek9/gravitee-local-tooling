@@ -22,8 +22,8 @@ process.env.GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH = join(tmpdir(), `grafana-server-
 // server.js only starts the stdio transport when run as the entrypoint, so this
 // import is side-effect-free apart from registering the tools. `tools` exposes the
 // registered handler for each tool so we can drive the orchestration directly.
-const { tools, toolInputSchemas } = await import("./server.js");
-const { resetCustomerMapCache } = await import("./customerMapLoader.js");
+const { tools, toolInputSchemas, startupWarmUp } = await import("./server.js");
+const { resetCustomerMapCache, loadCustomerMap } = await import("./customerMapLoader.js");
 
 // Made-up Gravitee Cloud customers, with the real CSV header. None of these names
 // match the hosted customers used elsewhere in this file (april, orbit, ...), so
@@ -208,6 +208,29 @@ test("tool schemas: a blank client or query is refused before the handler runs",
   // Surrounding spaces are trimmed, not refused.
   assert.equal(logs.safeParse({ client: "  acme  " }).data.client, "acme");
   assert.equal(find.safeParse({ query: " acme " }).data.query, "acme");
+});
+
+test("startup: an enabled adapter warms the customer map from GitHub", async () => {
+  // The control for server.disabled.test.js: the same check sees the request
+  // when Grafana is enabled, so "no request" there is not an artefact.
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  resetCustomerMapCache();
+  globalThis.fetch = (url) => {
+    calls.push(String(url));
+    return githubResponse(String(url));
+  };
+  try {
+    startupWarmUp();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(calls.some((u) => u.startsWith("https://api.github.com/") && u.includes("/contents/")), calls.join(", "));
+    // Let the load started above finish under the stub, so nothing it does
+    // later reaches the real fetch.
+    await loadCustomerMap();
+  } finally {
+    globalThis.fetch = origFetch;
+    resetCustomerMapCache();
+  }
 });
 
 test("grafana_logs_link: a blank client that reaches the handler never queries /series", async () => {
