@@ -471,6 +471,42 @@ test("grafana_logs_link: a data-plane id searches that data plane only, and name
   );
 });
 
+test("grafana_logs_link: a data plane's own id alone is refused, and Loki /series is never queried", async () => {
+  await withLokiStub(
+    {
+      [NS_VALUES]: ["apim-cp-cp1111", "apim-dp-cp1111-dp0002"],
+      [SERIES]: [stream("apim-dp-cp1111-dp0002", "prod-apim-dp-cp1111-dp0002-gateway")],
+    },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "dp0002", component: "gateway" });
+      assert.equal(out.refused, true);
+      assert.deepEqual(out.matched_by_id.data_planes, [{ namespace: "apim-dp-cp1111-dp0002", customer: "acme" }]);
+      assert.deepEqual(out.links, []);
+      assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+    },
+  );
+});
+
+test("grafana_logs_link: the service_name search leaves Gravitee Cloud namespaces out", async () => {
+  // Regression: "cp11" named no customer, and the service_name search reached
+  // the shared apim-cp-cp1111 and data planes of two customers through the ids
+  // in their service names.
+  await withLokiStub(
+    {
+      [NS_VALUES]: ["apim-cp-cp1111", "apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp0002", "prod"],
+      [SERIES]: [],
+      [SVC_VALUES]: [],
+    },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "cp11" });
+      assert.equal(out.resolved_via, "none");
+      const match = new URL(calls.find((u) => u.includes(SERIES))).searchParams.get("match[]");
+      assert.equal(match, '{namespace!~"(?i)apim-(dp|cp)-.+", service_name=~"(?i).*cp11.*"}');
+      assert.equal(out.query, match);
+    },
+  );
+});
+
 test("grafana_logs_link: an env word matching none of the customer's deployments is refused, and Loki is never queried", async () => {
   // Regression (#9 review): "acme staging" with only prod, dev and qa searched all
   // of them, and the hosted acme-prod too, with no staging constraint at all.

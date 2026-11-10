@@ -134,14 +134,32 @@ test("escapeRegex: escapes regex metacharacters", () => {
 // buildLogsQuery
 // ---------------------------------------------------------------------------
 
+// Without pinned namespaces the selector searches service_name outside Gravitee
+// Cloud namespaces.
+const OUTSIDE_CLOUD = 'namespace!~"(?i)apim-(dp|cp)-.+"';
+const unpinned = (serviceName) => `{${OUTSIDE_CLOUD}, ${serviceName}}`;
+
 test("buildLogsQuery: client only -> case-insensitive substring selector", () => {
-  assert.equal(buildLogsQuery({ client: "april" }), '{service_name=~"(?i).*april.*"}');
+  assert.equal(buildLogsQuery({ client: "april" }), unpinned('service_name=~"(?i).*april.*"'));
+});
+
+test("buildLogsQuery: without pinned namespaces, Gravitee Cloud namespaces are left out", () => {
+  // Regression: "cp11" named no customer, and {service_name=~"(?i).*cp11.*"}
+  // reached the shared apim-cp-cp1111 and data planes of two customers through
+  // the ids in their service names (prod-apim-dp-cp1111-dp0001-gateway).
+  const q = buildLogsQuery({ client: "cp11" });
+  assert.equal(q, unpinned('service_name=~"(?i).*cp11.*"'));
+  // Pinned namespaces were chosen by the resolver, Cloud ones included: no exclusion.
+  assert.equal(
+    buildLogsQuery({ client: "acme", namespaces: ["apim-dp-cp1111-dp0001"] }),
+    '{namespace=~"^apim-dp-cp1111-dp0001$"}',
+  );
 });
 
 test("buildLogsQuery: client + component join with .*", () => {
   assert.equal(
     buildLogsQuery({ client: "april", component: "gateway" }),
-    '{service_name=~"(?i).*april.*gateway.*"}',
+    unpinned('service_name=~"(?i).*april.*gateway.*"'),
   );
 });
 
@@ -151,7 +169,7 @@ test("buildLogsQuery: multi-word fragment joins words with .* (not a literal spa
   // token, so it is anchored to a whole segment (see env-token test below).
   assert.equal(
     buildLogsQuery({ client: "april prod", component: "gateway" }),
-    '{service_name=~"(?i).*april.*(?:^|[-_.])prod(?:[-_.]|$).*gateway.*"}',
+    unpinned('service_name=~"(?i).*april.*(?:^|[-_.])prod(?:[-_.]|$).*gateway.*"'),
   );
 });
 
@@ -159,7 +177,7 @@ test("buildLogsQuery: anchors env tokens so 'prod' doesn't match 'nonprod'/'prep
   // 'prod' is anchored to a whole segment; a non-env word like 'april' stays a
   // plain substring (so partial customer names keep matching).
   const q = buildLogsQuery({ client: "april prod" });
-  assert.equal(q, '{service_name=~"(?i).*april.*(?:^|[-_.])prod(?:[-_.]|$).*"}');
+  assert.equal(q, unpinned('service_name=~"(?i).*april.*(?:^|[-_.])prod(?:[-_.]|$).*"'));
   // (?i) is Loki/Go inline-flag syntax; JS RegExp needs the literal stripped and
   // the "i" flag passed instead.
   const re = new RegExp(q.match(/service_name=~"(?:\(\?i\))?([^"]*)"/)[1], "i");
@@ -175,17 +193,20 @@ test("buildLogsQuery: non-env partial words stay substrings (arcelor matches arc
 });
 
 test("buildLogsQuery: collapses extra/leading/trailing whitespace in a fragment", () => {
-  assert.equal(buildLogsQuery({ client: "  am   prod  " }), '{service_name=~"(?i).*am.*(?:^|[-_.])prod(?:[-_.]|$).*"}');
+  assert.equal(
+    buildLogsQuery({ client: "  am   prod  " }),
+    unpinned('service_name=~"(?i).*am.*(?:^|[-_.])prod(?:[-_.]|$).*"'),
+  );
 });
 
 test("buildLogsQuery: escapes regex metachars in client/component", () => {
-  assert.equal(buildLogsQuery({ client: "a.b" }), '{service_name=~"(?i).*a\\.b.*"}');
+  assert.equal(buildLogsQuery({ client: "a.b" }), unpinned('service_name=~"(?i).*a\\.b.*"'));
 });
 
 test("buildLogsQuery: line_filter appends a backtick line filter, stripping backticks", () => {
   assert.equal(
     buildLogsQuery({ client: "april", lineFilter: "error `x`" }),
-    '{service_name=~"(?i).*april.*"} |= `error x`',
+    `${unpinned('service_name=~"(?i).*april.*"')} |= \`error x\``,
   );
 });
 

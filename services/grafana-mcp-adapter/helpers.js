@@ -1,6 +1,7 @@
 // Pure helpers shared by server.js. Kept in their own module (no MCP/transport
 // side effects) so they can be imported and unit-tested directly.
 import { BASE_URL } from "./grafanaClient.js";
+import { CLOUD_NAMESPACE_PATTERN } from "./customerMatch.js";
 
 // The raw /ds/query response is huge (one full timestamp+value array per series,
 // and `up` alone can be thousands of series). For MCP use we collapse each series
@@ -159,7 +160,7 @@ export function buildLogsQuery({ client, component, lineFilter, namespaces } = {
   // `plt-live` or `multitenant`, so `service_name=~".*prod.*"` matched nothing
   // and the caller got an empty answer for a customer that was logging happily.
   // Without namespaces we keep the original behaviour: match the client
-  // (+component) against service_name.
+  // (+component) against service_name, outside Gravitee Cloud namespaces.
   const svcSource = ns.length ? "" : client;
   const parts = [toPattern(svcSource)].filter(Boolean);
   if (component) {
@@ -171,6 +172,12 @@ export function buildLogsQuery({ client, component, lineFilter, namespaces } = {
     // Pin to the resolved customer namespace(s). Values are exact label values,
     // so anchor each and join with `|` (regex-escaped) for an exact alternation.
     matchers.push(`namespace=~"${ns.map((n) => `^${escapeRegex(n)}$`).join("|")}"`);
+  } else {
+    // Cloud service names carry ids (`prod-apim-dp-<cp>-<dp>-gateway`), so a
+    // fragment of an id would reach a shared control plane or several
+    // customers' data planes by service_name. Cloud is reached only through
+    // the customer map or a full id, which pin their namespaces.
+    matchers.push(`namespace!~"(?i)${CLOUD_NAMESPACE_PATTERN}"`);
   }
   // (?i) = case-insensitive; .* between parts so order/extra segments are fine.
   // Omit the service_name matcher entirely when there's nothing left to narrow

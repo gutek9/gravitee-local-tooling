@@ -11,6 +11,8 @@ import {
   listNames,
   dataPlaneNamespace,
   controlPlaneNamespace,
+  isCloudNamespace,
+  dataPlanesWithId,
 } from "./customerMatch.js";
 
 // A faithful slice of the real file, including the parts that break naive
@@ -333,4 +335,31 @@ test("resolveCustomerNamespaces: env words and qualifiers narrow together", () =
   const out = resolveCustomerNamespaces(rows, { core: "acme", envs: ["prod"], qualifiers: ["europe"] });
   assert.deepEqual(out.namespaces, []);
   assert.deepEqual(out.unknown_qualifiers, ["prod", "europe"]);
+});
+
+test("isCloudNamespace: data and control planes, in any case, and nothing else", () => {
+  for (const n of ["apim-dp-cp1111-dp0001", "apim-cp-cp1111", "APIM-DP-cp1111-dp0001", "apim-dp-trial-tt0001-dp0011"]) {
+    assert.equal(isCloudNamespace(n), true, n);
+  }
+  for (const n of ["apim-cloudgate-aaa111", "acme-prod", "prod", "xapim-dp-cp1111-dp0001", "apim-dp-"]) {
+    assert.equal(isCloudNamespace(n), false, n);
+  }
+});
+
+test("dataPlanesWithId: a data plane's own id finds it in the map and in Loki, with its customer", () => {
+  const rows = parseCustomerCsv(CSV);
+  // In the map: the customer is said, even when Loki has not seen it.
+  assert.deepEqual(dataPlanesWithId(rows, [], "dp0002"), [{ namespace: "apim-dp-cp1111-dp0002", customer: "acme" }]);
+  // A control plane id with a dash (trials) still ends at the data plane's id.
+  assert.deepEqual(dataPlanesWithId(rows, [], "DP0011").map((d) => d.namespace), ["apim-dp-trial-tt0001-dp0011"]);
+  // Only in Loki: listed without a customer; sorted; shared ids give all of them.
+  assert.deepEqual(dataPlanesWithId(rows, ["apim-dp-cp9999-dp0002", "apim-cp-cp9999"], "dp0002"), [
+    { namespace: "apim-dp-cp1111-dp0002", customer: "acme" },
+    { namespace: "apim-dp-cp9999-dp0002" },
+  ]);
+  // Not a data plane's own id: a control plane id, a middle segment, a composite
+  // id (lookupById's job), a phrase, or nothing.
+  for (const id of ["cp1111", "tt0001", "cp1111-dp0002", "acme dev", "", "  "]) {
+    assert.deepEqual(dataPlanesWithId(rows, ["apim-dp-cp1111-dp0002"], id), [], JSON.stringify(id));
+  }
 });

@@ -12,8 +12,38 @@
 
 export const dataPlaneNamespace = (dataPlaneId) => `apim-dp-${dataPlaneId}`;
 export const controlPlaneNamespace = (controlPlaneId) => `apim-cp-${controlPlaneId}`;
-// A Gravitee Cloud namespace, which carries ids rather than a customer's name.
-export const isCloudNamespace = (namespace) => /^apim-(dp|cp)-/i.test(String(namespace));
+// Gravitee Cloud namespaces (`apim-dp-<cp>-<dp>`, `apim-cp-<cp>`) carry ids,
+// not a customer's name. One pattern, case-insensitive, for the check here and
+// for the LogQL matcher that keeps the service_name search out of them; LogQL
+// anchors a regex at both ends, so it is written to match a whole namespace.
+export const CLOUD_NAMESPACE_PATTERN = "apim-(dp|cp)-.+";
+const CLOUD_NAMESPACE = new RegExp(`^(?:${CLOUD_NAMESPACE_PATTERN})$`, "i");
+export const isCloudNamespace = (namespace) => CLOUD_NAMESPACE.test(String(namespace));
+
+// The data planes whose own id, the last segment of `apim-dp-<cp>-<dp>`, is
+// `id`, in the map or in Loki, with their customer when the map has it. An id
+// with a dash or a space is not a data plane's own id: lookupById handles
+// `cp1111-dp0001`.
+export function dataPlanesWithId(rows = [], namespaceValues = [], id = "") {
+  const want = String(id).trim().toLowerCase();
+  if (!want || /[\s-]/.test(want)) return [];
+  const found = new Map();
+  for (const r of rows) {
+    const namespace = dataPlaneNamespace(r.data_plane_id);
+    found.set(namespace.toLowerCase(), { namespace, customer: r.customer });
+  }
+  for (const namespace of namespaceValues) {
+    const key = String(namespace).toLowerCase();
+    if (key.startsWith("apim-dp-") && !found.has(key)) found.set(key, { namespace });
+  }
+  return [...found.entries()]
+    .filter(([key]) => {
+      const segments = key.split("-");
+      return segments.length >= 4 && segments.at(-1) === want;
+    })
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, dataPlane]) => dataPlane);
+}
 
 // Names compare with separators aside: "north star", "north-star" and
 // "northstar" are the same name.

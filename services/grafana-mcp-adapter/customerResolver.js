@@ -20,6 +20,7 @@ import {
   dataPlaneNamespace,
   controlPlaneNamespace,
   isCloudNamespace,
+  dataPlanesWithId,
 } from "./customerMatch.js";
 
 // A hosted customer's namespaces are named after it by their first segment
@@ -439,6 +440,33 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
   if (!namespaces.length && (resolved.unknown_qualifiers || skipped.length)) return refuseUnknownWords();
 
   if (!namespaces.length) {
+    // A data plane's own id (`dp0001`) names no customer and no namespace, but
+    // Cloud service names carry it, so the service_name search would reach that
+    // data plane (or several sharing the id) without saying whose. Checked only
+    // now, so a customer actually called like that is still found by name.
+    const dataPlanes = dataPlanesWithId(map.rows, namespaceValues, phrase);
+    if (dataPlanes.length) {
+      const named = dataPlanes.map((d) => (d.customer ? `${d.namespace} (${d.customer})` : d.namespace));
+      return {
+        namespaces: [],
+        via: "none",
+        refused: true,
+        matched_by_id: {
+          kind: "data_plane_id_only",
+          id: phrase.toLowerCase(),
+          data_planes: dataPlanes.slice(0, MAX_NAMES),
+          ...(dataPlanes.length > MAX_NAMES ? { data_planes_truncated: dataPlanes.length - MAX_NAMES } : {}),
+        },
+        note:
+          (dataPlanes.length === 1
+            ? `"${phrase}" is the id of data plane ${named[0]}. `
+            : `"${phrase}" is the id of ${dataPlanes.length} data planes: ${listNames(named)}. `) +
+          "Nothing was searched: pass the full namespace " +
+          (dataPlanes.length === 1 ? "to search that data plane." : "of the one you mean."),
+        map_source: map.source,
+        map_warning: map.warning,
+      };
+    }
     return {
       namespaces: [],
       via: "none",

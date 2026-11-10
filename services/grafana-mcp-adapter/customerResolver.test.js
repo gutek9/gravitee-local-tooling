@@ -279,6 +279,44 @@ test("resolveClient: the namespace label route leaves out Cloud namespaces", () 
   assert.equal(out.via, "none");
 });
 
+test("resolveClient: a data plane's own id alone is refused with its full namespace, never searched", () => {
+  // Regression: "dp0002" resolved to nothing and fell to the service_name
+  // search, which reaches apim-dp-cp1111-dp0002 through its service names
+  // without saying whose it is.
+  const one = resolve("dp0002", ACME_DATA_PLANES);
+  assert.equal(one.refused, true);
+  assert.deepEqual(one.namespaces, []);
+  assert.deepEqual(one.matched_by_id, {
+    kind: "data_plane_id_only",
+    id: "dp0002",
+    data_planes: [{ namespace: "apim-dp-cp1111-dp0002", customer: "acme" }],
+  });
+  assert.match(one.note, /data plane apim-dp-cp1111-dp0002 \(acme\)\. Nothing was searched: pass the full namespace/);
+  // Several data planes share the id: all listed, a Loki-only one without a customer.
+  const several = resolve("dp0001", ["apim-dp-cp1111-dp0001", "apim-dp-cp9999-dp0001"]);
+  assert.equal(several.refused, true);
+  assert.deepEqual(
+    several.matched_by_id.data_planes.map((d) => [d.namespace, d.customer]),
+    [
+      ["apim-dp-cp1111-dp0001", "acme"],
+      ["apim-dp-cp2222-dp0001", "beacon"],
+      ["apim-dp-cp3333-dp0001", "beaconlabs"],
+      ["apim-dp-cp5555-dp0001", "northwind"],
+      ["apim-dp-cp6666-dp0001", "northwind"],
+      ["apim-dp-cp9999-dp0001", undefined],
+    ],
+  );
+  assert.match(several.note, /is the id of 6 data planes/);
+});
+
+test("resolveClient: a customer called like a data plane id is found by name, not refused as an id", () => {
+  // Guards where the id check sits: only once neither route found anything.
+  const out = resolve("dp0002", ["dp0002-prod", ...ACME_DATA_PLANES]);
+  assert.equal(out.refused, undefined);
+  assert.deepEqual(out.namespaces, ["dp0002-prod"]);
+  assert.equal(out.via, "namespace_label");
+});
+
 test("resolveClient: a trial is named by its control-plane id, and resolves as that customer", () => {
   // Guards the order in resolveById: a name the map has whole comes before an id.
   const map = {
@@ -459,6 +497,7 @@ test("resolutionReport: every field a resolution sets reaches the report", () =>
     resolve("cp1111-dp0002", ACME_DATA_PLANES.slice(0, 1)),
     resolve("cp9999-dp0001", ["apim-dp-cp9999-dp0001"]),
     resolve("cp1111-dp0002", ACME_DATA_PLANES, { controlPlaneId: "cp5555" }),
+    resolve("dp0002", ACME_DATA_PLANES),
   ];
   const renamed = { via: "resolved_via", note: "customer_note" };
   for (const resolution of resolutions) {

@@ -107,7 +107,10 @@ The response also says how the customer was found:
   `owner_unknown` says whose it is cannot be told. A control plane (`cp1111`) is
   refused: its namespace is shared by every customer on that organization. Pass
   the customer's name with `control_plane_id` instead. A trial is named by its
-  control-plane id (`trial-tt0001`) and resolves as that customer.
+  control-plane id (`trial-tt0001`) and resolves as that customer. A data
+  plane's own id alone (`dp0001`) is refused, listing the data planes that carry
+  it (`data_planes`, with their customer when the map knows it): pass the full
+  namespace of the one you mean.
 - `spans_multiple_organizations`, `organizations_note` — one name, several Cockpit
   organizations. Pass `control_plane_id` to narrow to one.
 - `refused`, `unknown_control_plane`, `requested_control_plane_id` — the
@@ -250,8 +253,12 @@ What is searched belongs to one customer. A hosted customer is the first segment
 of its namespaces (`acmecorp-prod` → acmecorp), and a whole name on either route
 outranks part of a name on the other. Cloud namespaces (`apim-dp-*`,
 `apim-cp-*`) carry ids, not names, so the namespace route never matches them:
-they are reached through the map or through an id typed into `client`. Two
-limits follow from reading names off namespaces:
+they are reached through the map or through an id typed into `client`. The
+`service_name` search used when `client` resolves to no namespace leaves them
+out too (`namespace!~"(?i)apim-(dp|cp)-.+"`): their service names carry ids
+(`prod-apim-dp-cp1111-dp0001-gateway`), so a fragment of one (`cp11`) would
+reach a shared control plane and several customers' data planes. Two limits
+follow from reading names off namespaces:
 
 - Infrastructure named per tenant (`apim-cloudgate-<id>`, `logstash-<id>`) or
   shared (`redis-*`, `ingress-*`) has no customer in its first segment, so a
