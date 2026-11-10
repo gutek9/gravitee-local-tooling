@@ -43,14 +43,15 @@ def grafana_config_errors(env: dict[str, str]) -> list[str]:
     return errors
 
 
-# The customer map's numeric settings: (name, minimum, maximum or None). Empty
-# means the adapter's default; anything else must be a whole number in range.
-# The adapter (customerMapLoader.js) applies the same rule and refuses to load the
-# map with a bad value; checking here too lets doctor report it before start.
+# The customer map's numeric settings: (name, minimum, maximum). Empty means the
+# adapter's default; anything else must be a whole number in range. The adapter
+# (customerMapLoader.js) has the same table and refuses to load the map with a
+# bad value; checking here too lets doctor report it before start, so the two
+# must accept exactly the same values.
 CUSTOMER_MAP_NUMBER_SETTINGS = (
-    ("GRAFANA_CUSTOMER_MAP_TTL_SECONDS", 1, None),
+    ("GRAFANA_CUSTOMER_MAP_TTL_SECONDS", 1, 86400),
     ("GRAFANA_CUSTOMER_MAP_TIMEOUT_MS", 1, 60000),
-    ("GRAFANA_CUSTOMER_MAP_STALE_DAYS", 1, None),
+    ("GRAFANA_CUSTOMER_MAP_STALE_DAYS", 1, 365),
 )
 
 
@@ -61,9 +62,8 @@ def customer_map_number_errors(env: dict[str, str]) -> list[str]:
         if not raw:
             continue
         value = int(raw) if re.fullmatch(r"[0-9]+", raw) else None
-        if value is None or value < low or (high is not None and value > high):
-            limits = f"of {low} or more" if high is None else f"from {low} to {high}"
-            errors.append(f'{name} must be a whole number {limits}, got "{raw}"')
+        if value is None or value < low or value > high:
+            errors.append(f'{name} must be a whole number from {low} to {high}, got "{raw}"')
     return errors
 
 

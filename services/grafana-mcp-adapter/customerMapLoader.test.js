@@ -279,7 +279,7 @@ test("readNumberSettings: a value that is not a whole number in range is refused
   for (const bad of ["abc", "0", "-5", "1.5", "1e3", "12abc"]) {
     const { values, errors } = readNumberSettings({ GRAFANA_CUSTOMER_MAP_TTL_SECONDS: bad });
     assert.equal(values.GRAFANA_CUSTOMER_MAP_TTL_SECONDS, undefined, bad);
-    assert.deepEqual(errors, [`GRAFANA_CUSTOMER_MAP_TTL_SECONDS must be a whole number of 1 or more, got "${bad}"`], bad);
+    assert.deepEqual(errors, [`GRAFANA_CUSTOMER_MAP_TTL_SECONDS must be a whole number from 1 to 86400, got "${bad}"`], bad);
   }
   // The timeout is bounded: a log lookup must not wait minutes for GitHub.
   assert.deepEqual(readNumberSettings({ GRAFANA_CUSTOMER_MAP_TIMEOUT_MS: "60001" }).errors, [
@@ -288,6 +288,33 @@ test("readNumberSettings: a value that is not a whole number in range is refused
   // Every bad setting is reported, not only the first.
   const both = readNumberSettings({ GRAFANA_CUSTOMER_MAP_TIMEOUT_MS: "x", GRAFANA_CUSTOMER_MAP_STALE_DAYS: "y" });
   assert.equal(both.errors.length, 2);
+});
+
+// The same table as test_customer_map_number_limits_match_the_adapter in
+// tests/test_local_tooling.py: doctor and the adapter must accept exactly the
+// same values.
+const NUMBER_LIMITS = [
+  ["GRAFANA_CUSTOMER_MAP_TTL_SECONDS", 86400],
+  ["GRAFANA_CUSTOMER_MAP_TIMEOUT_MS", 60000],
+  ["GRAFANA_CUSTOMER_MAP_STALE_DAYS", 365],
+];
+
+// Regression: TTL and stale days had no upper bound in doctor, while the
+// adapter refused anything past 2^53 with "of 1 or more", so doctor passed a
+// value the adapter then refused on every map load, saying nothing true about why.
+test("readNumberSettings: every setting has an upper bound, the same as doctor's", () => {
+  for (const [name, max] of NUMBER_LIMITS) {
+    for (const good of ["1", String(max)]) {
+      assert.deepEqual(readNumberSettings({ [name]: good }).errors, [], `${name}=${good}`);
+    }
+    for (const bad of ["0", String(max + 1), "9007199254740993"]) {
+      assert.deepEqual(
+        readNumberSettings({ [name]: bad }).errors,
+        [`${name} must be a whole number from 1 to ${max}, got "${bad}"`],
+        `${name}=${bad}`,
+      );
+    }
+  }
 });
 
 test("loadCustomerMap: a bad numeric setting stops the map loading, naming it, before any GitHub call", async () => {

@@ -288,7 +288,7 @@ class LocalToolingTest(unittest.TestCase):
         for bad in ["abc", "0", "-5", "1.5", "1e3", "12abc"]:
             self.assertEqual(
                 grafana_config_errors({**base, "GRAFANA_CUSTOMER_MAP_TTL_SECONDS": bad}),
-                [f'GRAFANA_CUSTOMER_MAP_TTL_SECONDS must be a whole number of 1 or more, got "{bad}"'],
+                [f'GRAFANA_CUSTOMER_MAP_TTL_SECONDS must be a whole number from 1 to 86400, got "{bad}"'],
                 bad,
             )
         self.assertEqual(
@@ -300,6 +300,28 @@ class LocalToolingTest(unittest.TestCase):
         self.assertEqual(
             grafana_config_errors({"GRAFANA_ENABLED": "false", "GRAFANA_CUSTOMER_MAP_TIMEOUT_MS": "abc"}), []
         )
+
+    def test_customer_map_number_limits_match_the_adapter(self) -> None:
+        """Same table as "readNumberSettings: every setting has an upper bound" in
+        services/grafana-mcp-adapter/customerMapLoader.test.js. doctor must accept
+        exactly what the adapter accepts: TTL and stale days had no upper bound
+        here, so doctor passed values the adapter refused on every map load."""
+        from local_tooling.grafana import customer_map_number_errors
+
+        limits = [
+            ("GRAFANA_CUSTOMER_MAP_TTL_SECONDS", 86400),
+            ("GRAFANA_CUSTOMER_MAP_TIMEOUT_MS", 60000),
+            ("GRAFANA_CUSTOMER_MAP_STALE_DAYS", 365),
+        ]
+        for name, high in limits:
+            for good in ["1", str(high)]:
+                self.assertEqual(customer_map_number_errors({name: good}), [], f"{name}={good}")
+            for bad in ["0", str(high + 1), "9007199254740993"]:
+                self.assertEqual(
+                    customer_map_number_errors({name: bad}),
+                    [f'{name} must be a whole number from 1 to {high}, got "{bad}"'],
+                    f"{name}={bad}",
+                )
 
     def test_setup_bootstrap_skips_zendesk_when_disabled(self) -> None:
         cli = load_cli()

@@ -25,12 +25,15 @@ const REF = process.env.GRAFANA_CUSTOMER_MAP_REF || "prod";
 // plenty and keeps GitHub out of the hot path for a burst of tool calls; a log
 // lookup must not hang because GitHub is slow, so the fetch gives up fast; a map
 // older than 30 days is called out as stale.
-// local_tooling/grafana.py applies the same rule, so `doctor` reports a bad value
-// before the adapter starts.
+// Every setting has an upper bound too, so the message always states the real
+// range: a cache held for more than a day keeps a new customer unresolvable for
+// that long, and a stale threshold past a year never warns.
+// local_tooling/grafana.py has the same table, so `doctor` accepts exactly what
+// the adapter accepts and reports a bad value before the adapter starts.
 const NUMBER_SETTINGS = [
-  { name: "GRAFANA_CUSTOMER_MAP_TTL_SECONDS", fallback: 3600, min: 1 },
+  { name: "GRAFANA_CUSTOMER_MAP_TTL_SECONDS", fallback: 3600, min: 1, max: 86400 },
   { name: "GRAFANA_CUSTOMER_MAP_TIMEOUT_MS", fallback: 5000, min: 1, max: 60000 },
-  { name: "GRAFANA_CUSTOMER_MAP_STALE_DAYS", fallback: 30, min: 1 },
+  { name: "GRAFANA_CUSTOMER_MAP_STALE_DAYS", fallback: 30, min: 1, max: 365 },
 ];
 
 // Empty or unset means the default; anything else must be a whole number in
@@ -44,11 +47,10 @@ export function readNumberSettings(env = process.env) {
   for (const { name, fallback, min, max } of NUMBER_SETTINGS) {
     const raw = String(env[name] ?? "").trim();
     const value = raw === "" ? fallback : /^[0-9]+$/.test(raw) ? Number(raw) : NaN;
-    if (Number.isSafeInteger(value) && value >= min && (max === undefined || value <= max)) {
+    if (Number.isSafeInteger(value) && value >= min && value <= max) {
       values[name] = value;
     } else {
-      const range = max === undefined ? `of ${min} or more` : `from ${min} to ${max}`;
-      errors.push(`${name} must be a whole number ${range}, got "${raw}"`);
+      errors.push(`${name} must be a whole number from ${min} to ${max}, got "${raw}"`);
     }
   }
   return { values, errors };
