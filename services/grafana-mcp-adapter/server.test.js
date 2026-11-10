@@ -22,7 +22,7 @@ process.env.GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH = join(tmpdir(), `grafana-server-
 // server.js only starts the stdio transport when run as the entrypoint, so this
 // import is side-effect-free apart from registering the tools. `tools` exposes the
 // registered handler for each tool so we can drive the orchestration directly.
-const { tools } = await import("./server.js");
+const { tools, toolInputSchemas } = await import("./server.js");
 const { resetCustomerMapCache } = await import("./customerMapLoader.js");
 
 // Made-up Gravitee Cloud customers, with the real CSV header. None of these names
@@ -192,6 +192,34 @@ test("grafana_logs_link: a pinned namespace does not repeat the environment agai
       assert.ok(!/service_name=~"[^"]*(plt|live)/.test(out.query), out.query);
       assert.equal(calls.filter((u) => u.includes(SERIES)).length, 1, "no retry should be needed");
       assert.equal(out.env_filter_dropped, undefined);
+    },
+  );
+});
+
+test("tool schemas: a blank client or query is refused before the handler runs", () => {
+  // Regression: client "   " passed the schema and became
+  // {service_name=~"(?i).*.*"}, a /series query over every stream in Loki.
+  const logs = toolInputSchemas.grafana_logs_link;
+  const find = toolInputSchemas.grafana_find_customer;
+  for (const blank of ["", "   ", "\t\n"]) {
+    assert.equal(logs.safeParse({ client: blank }).success, false, `client ${JSON.stringify(blank)}`);
+    assert.equal(find.safeParse({ query: blank }).success, false, `query ${JSON.stringify(blank)}`);
+  }
+  // Surrounding spaces are trimmed, not refused.
+  assert.equal(logs.safeParse({ client: "  acme  " }).data.client, "acme");
+  assert.equal(find.safeParse({ query: " acme " }).data.query, "acme");
+});
+
+test("grafana_logs_link: a blank client that reaches the handler never queries /series", async () => {
+  // Called directly the schema is skipped, so the handler must still not turn a
+  // blank client into a query over every stream (or every customer's gateway).
+  await withLokiStub(
+    { [NS_VALUES]: ["april-prod"], [SERIES]: [stream("april-prod", "graviteeio-apim-april-prod-gateway")] },
+    async (calls) => {
+      for (const args of [{ client: "   " }, { client: "   ", component: "gateway" }]) {
+        await assert.rejects(tools.grafana_logs_link(args, {}), /client is required/);
+      }
+      assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
     },
   );
 });

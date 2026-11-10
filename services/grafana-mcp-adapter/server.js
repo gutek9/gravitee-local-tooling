@@ -111,8 +111,14 @@ const server = new McpServer({
 // orchestration directly (with fetch stubbed) without going through the stdio
 // transport. `server.tool()` returns a registration object carrying `.handler`.
 export const tools = {};
+// The schema each tool's input is validated against before its handler runs.
+// Calling a handler directly skips that validation, so tests check what the
+// schema refuses here.
+export const toolInputSchemas = {};
 function registerTool(name, ...rest) {
-  tools[name] = server.tool(name, ...rest).handler;
+  const registered = server.tool(name, ...rest);
+  tools[name] = registered.handler;
+  toolInputSchemas[name] = registered.inputSchema;
 }
 
 registerTool("grafana_health", "Read-only Grafana health/config check.", {}, async () =>
@@ -195,6 +201,8 @@ registerTool(
   {
     client: z
       .string()
+      .trim()
+      .min(1, "client must name a customer or an id: a blank one would match every stream in Loki")
       .describe(
         "Customer name fragment, e.g. 'april', 'alliander', 'apim-cloudgate', optionally followed by an " +
           "environment or region ('april prod'). Put the component in `component`, not here: a word that " +
@@ -299,6 +307,8 @@ registerTool(
   {
     query: z
       .string()
+      .trim()
+      .min(1, "query must be a customer name or an id")
       .describe(
         "Customer name or fragment ('money', 'orbit'), OR an id/namespace seen in an alert, pod or " +
           "dashboard ('apim-dp-cp1111-dp0001', 'cp1111-dp0001', 'cp1111') to look up who owns it.",

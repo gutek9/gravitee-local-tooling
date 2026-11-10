@@ -69,7 +69,8 @@ selector matched (discovered via Loki's `/series` — no log lines are fetched) 
 (empty when the customer only lives in a shared namespace — see the drilldown
 section). The default range is the last hour; widen with `from`/`to`. When nothing
 matches, it returns close `service_name` values as `suggestions` so typos like
-`aprl → april` surface.
+`aprl → april` surface. A blank `client` is refused: with nothing to narrow by,
+it would match every stream in Loki.
 
 The response also says how the customer was found:
 
@@ -275,7 +276,7 @@ Cockpit organizations, or to see what a customer has before searching.
 `query` is a customer name or fragment (`acme`), or an id as it appears in an
 alert, pod name or dashboard (`apim-dp-cp1111-dp0001`, `cp1111-dp0001`,
 `cp1111`). The id lookup is always attempted, so pasting a namespace from an
-alert tells you whose it is.
+alert tells you whose it is. A blank `query` is refused.
 
 It returns, per Gravitee Cloud customer: deployment count, Cockpit
 organizations (control plane ids, to pass as `control_plane_id`), environments,

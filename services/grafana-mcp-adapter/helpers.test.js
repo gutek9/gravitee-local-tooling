@@ -193,6 +193,11 @@ test("buildLogsQuery: throws when client missing", () => {
   assert.throws(() => buildLogsQuery({}), /client is required/);
 });
 
+test("buildLogsQuery: a blank client throws instead of matching every stream", () => {
+  assert.throws(() => buildLogsQuery({ client: "   " }), /client is required/);
+  assert.throws(() => buildLogsQuery({ client: " \t ", component: "gateway" }), /client is required/);
+});
+
 test("buildLogsQuery: a pinned namespace carries the environment, so service_name does not repeat it", () => {
   // The namespaces were chosen from the whole phrase (or from the map with the
   // env filter already applied), so repeating the env against service_name only

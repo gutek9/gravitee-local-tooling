@@ -133,7 +133,10 @@ export function splitClientEnv(client = "") {
 // when we've resolved the customer to its own namespace(s) and only need
 // `service_name` to narrow by component within them.
 export function buildLogsQuery({ client, component, lineFilter, namespaces } = {}) {
-  if (!client) throw new Error("client is required");
+  // A blank client leaves nothing to narrow by: the selector would become
+  // service_name=~"(?i).*.*", every stream in Loki (with a component, every
+  // customer's). Refused where the selector is built, whoever the caller is.
+  if (!String(client ?? "").trim()) throw new Error("client is required");
   // Whitespace inside a fragment means "these words, in order, with anything in
   // between" — `service_name` is dash-separated, so a literal space would never
   // match (e.g. "april prod" must become `april.*prod`, not `april prod`). Split
