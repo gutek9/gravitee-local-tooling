@@ -13,16 +13,33 @@
 export const dataPlaneNamespace = (dataPlaneId) => `apim-dp-${dataPlaneId}`;
 export const controlPlaneNamespace = (controlPlaneId) => `apim-cp-${controlPlaneId}`;
 
-// Match a free-text customer fragment against the CSV's customer slugs. Exact
-// matches win outright: "orbit" must not also drag in a slug that merely contains
-// it. Only when nothing matches exactly do we fall back to substring matching.
-export function matchCustomers(rows = [], core = "") {
-  const needle = String(core || "").trim().toLowerCase();
+// Names compare with separators aside: "north star", "north-star" and
+// "northstar" are the same name.
+const normalise = (v) => String(v || "").toLowerCase().replace(/[\s_-]/g, "");
+const nameWords = (v) => String(v || "").trim().split(/[\s_-]+/).filter(Boolean);
+
+function matchCustomersExactly(rows, core) {
+  const needle = normalise(core);
   if (!needle) return [];
-  const exact = rows.filter((r) => r.customer === needle);
-  if (exact.length) return exact;
-  const words = needle.split(/\s+/).filter(Boolean);
-  return rows.filter((r) => words.every((w) => r.customer.includes(w)));
+  return rows.filter((r) => normalise(r.customer) === needle);
+}
+
+// Part of a name, for a single word only. In "acme dev" the second word is what
+// the caller said about the deployment; reading both words as parts of one name
+// found `acmedevices` instead of acme's dev deployment.
+function matchCustomersPartly(rows, core) {
+  const needle = normalise(core);
+  if (!needle || nameWords(core).length !== 1) return [];
+  return rows.filter((r) => normalise(r.customer).includes(needle));
+}
+
+// Match a free-text customer name against the CSV's customer slugs. The whole
+// name wins outright: "orbit" must not also drag in a slug that merely contains
+// it. Only when nothing matches whole may a single word be part of a slug ("acm"
+// finds `acme`).
+export function matchCustomers(rows = [], core = "") {
+  const exact = matchCustomersExactly(rows, core);
+  return exact.length ? exact : matchCustomersPartly(rows, core);
 }
 
 // Look a customer up by the ONLY handle a Cockpit tenant really has: its ids.
@@ -121,23 +138,23 @@ export function groupByCustomer(rows = []) {
 // customer's logs under another's name — wrong, and a data-boundary problem, not
 // just a precision one.
 // Split a free-text phrase into a customer the map knows and a tail describing
-// the deployment, by asking the map instead of a word list.
+// the deployment, by asking the map instead of a word list. A list of known
+// environment names left every unlisted word in the customer name, so the name
+// matched nobody (`acme recette`, and `production` failing where `prod` worked).
 //
-// The old split classified each word against 16 known environment names. Anything
-// it had not seen stayed part of the customer name, so the name matched nobody:
-// measured across the whole map, 39 of 416 deployments could not be resolved at
-// all — `acme recette`, `beacon staging`, `orbit gatewaytesting`, and
-// `production` failing where `prod` worked.
+// Every cut is tried for a whole name before any is tried for part of one:
+// "acme dev" cuts after "acme", a whole name, rather than keeping both words as
+// part of `acmedevices`.
 export function splitNameAndTail(rows = [], phrase = "") {
   const words = String(phrase || "").trim().split(/\s+/).filter(Boolean);
-  for (let n = words.length; n > 0; n--) {
-    const core = words.slice(0, n).join(" ");
-    if (matchCustomers(rows, core).length) return { core, tail: words.slice(n) };
+  for (const match of [matchCustomersExactly, matchCustomersPartly]) {
+    for (let n = words.length; n > 0; n--) {
+      const core = words.slice(0, n).join(" ");
+      if (match(rows, core).length) return { core, tail: words.slice(n) };
+    }
   }
   return { core: words.join(" "), tail: [] };
 }
-
-const normalise = (v) => String(v || "").toLowerCase().replace(/[\s_-]/g, "");
 
 // Does this deployment answer to that word? Environment, region and provider are
 // all things a person says out loud ("acme dev europe"), and region separates 30

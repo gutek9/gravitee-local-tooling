@@ -59,12 +59,51 @@ test("matchNamespaces: a customer name alone returns their whole estate", () => 
   assert.deepEqual(matchNamespaces(FLEET, "acme"), ["acme-int", "acme-ppr", "acme-prod", "acme-rec", "acme-sandbox"]);
 });
 
-test("matchNamespaces: falls back from segments to substring", () => {
-  // "plt live ap" are whole segments; "ultitenant" is only a substring.
+test("matchNamespaces: falls back to part of the first word, never of the others", () => {
+  // "plt live ap" are whole segments; "multiten" is the first word, part of one.
   assert.deepEqual(matchNamespaces(FLEET, "orbit plt live ap"), ["orbit-plt-live-ap"]);
-  assert.deepEqual(matchNamespaces(FLEET, "orbit ultitenant"), ["orbit-multitenant"]);
+  assert.deepEqual(matchNamespaces(FLEET, "multiten"), ["orbit-multitenant"]);
+  // "ultitenant" is only part of a segment and not the first word: no match.
+  assert.deepEqual(matchNamespaces(FLEET, "orbit ultitenant"), []);
   assert.deepEqual(matchNamespaces(FLEET, "nosuchcustomer"), []);
   assert.deepEqual(matchNamespaces(FLEET, ""), []);
+});
+
+test("matchNamespaces: an environment word is never matched inside another word", () => {
+  // Regression: "prod" matched inside nonprod and preprod, so "orbit prod"
+  // searched both although orbit has no prod.
+  assert.deepEqual(matchNamespaces(["orbit-nonprod", "orbit-preprod"], "orbit prod"), []);
+  assert.deepEqual(matchNamespacesPhrase(["orbit-nonprod", "orbit-preprod"], "orbit prod"), {
+    namespaces: ["orbit-nonprod", "orbit-preprod"],
+    name: "orbit",
+    tail: ["prod"],
+  });
+  // Regression: "dev" matched inside another customer's name.
+  assert.deepEqual(matchNamespacesPhrase(["zeta-prod", "zetadevtools-prod"], "zeta dev"), {
+    namespaces: ["zeta-prod"],
+    name: "zeta",
+    tail: ["dev"],
+  });
+});
+
+test("matchNamespacesPhrase: every cut is tried exactly before any is tried partly", () => {
+  // Regression: "acme" read as part of another customer's acmecorp-prod before
+  // the exact acme-dev was found by dropping "prod".
+  assert.deepEqual(matchNamespacesPhrase(["acme-dev", "acmecorp-prod"], "acme prod"), {
+    namespaces: ["acme-dev"],
+    name: "acme",
+    tail: ["prod"],
+  });
+});
+
+test("matchNamespaces: separators do not count", () => {
+  const values = ["northstar-prod", "northwind-prod"];
+  assert.deepEqual(matchNamespaces(values, "north star"), ["northstar-prod"]);
+  assert.deepEqual(matchNamespaces(values, "north-star"), ["northstar-prod"]);
+  assert.deepEqual(matchNamespaces(values, "north star prod"), ["northstar-prod"]);
+  // Part of the first word, the rest whole segments.
+  assert.deepEqual(matchNamespaces(["beaconlabs-prod"], "beaconl prod"), ["beaconlabs-prod"]);
+  assert.deepEqual(matchNamespaces(["beaconlabs-prod"], "beaconl pro"), []);
 });
 
 test("matchNamespacesPhrase: drops the tail only when the whole phrase names nothing, and returns it", () => {

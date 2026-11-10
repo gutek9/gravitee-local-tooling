@@ -205,22 +205,26 @@ failing where `prod` worked). The reverse bit too: seven namespaces are *called*
 Nothing is classified now. Both routes match the phrase as typed, and give ground
 only when it matches nothing:
 
-- **Namespaces** in tiers — whole name, then whole `-` segments, then substring.
-  `orbit plt live` returns that namespace, not it plus its `-ap`/`-au`/`-eu`
-  siblings. Namespaces found only by dropping trailing words are reported as
-  `skipped_namespaces`, not searched: they ignore what the caller said about the
-  deployment.
-- **The map** is asked where the name ends: drop one trailing word at a time
-  until a customer matches. The tail is then matched against what the deployment
-  *is* — environment, region or provider — so `acme dev europe` narrows, and a
-  tail describing nothing is refused along with the environments and regions
-  that customer actually has.
+- **Namespaces**: the whole name, then every word as a whole `-` segment, and
+  only when nothing matches that way, the first word as part of a segment (the
+  other words still whole). Separators do not count (`north star` finds
+  `northstar-prod`), and a word is never matched inside another: `prod` does not
+  find `nonprod`. `orbit plt live` returns that namespace, not it plus its
+  `-ap`/`-au`/`-eu` siblings. Namespaces found only by dropping trailing words
+  are reported as `skipped_namespaces`, not searched: they ignore what the
+  caller said about the deployment.
+- **The map** is asked where the name ends: every cut of the phrase is tried for
+  a whole customer name (separators aside) before a single word is tried as part
+  of one, so `acme dev` is acme's dev deployment, not a customer whose name
+  merely contains `acmedev`. The tail is then matched against what the
+  deployment *is* — environment, region or provider — so `acme dev europe`
+  narrows, and a tail describing nothing is refused along with the environments
+  and regions that customer actually has.
 
-Measured live after the change: hosted **286 of 286** exact (was 104, with 7
-resolving to nothing), Cockpit **0** failures (was 39). The 133 Cockpit phrases
-that still return several deployments are genuinely several: 46 customer+
-environment pairs have more than one data plane, and region or provider
-separates 30 of them.
+Both routes try every cut of the phrase as a whole name before any as part of
+one. A phrase can still resolve to several deployments when they really are
+several: a customer can run more than one data plane per environment, and a
+region or provider word narrows those.
 
 One consequence: a pinned namespace already expresses the environment, so
 `service_name` no longer repeats it — and the "drop the env token and retry"
@@ -352,8 +356,8 @@ Coverage:
 
 - `helpers.test.js` — the pure helpers (`helpers.js`).
 - `namespaceMatch.test.js` — which namespaces a client phrase names
-  (`namespaceMatch.js`): whole name, then segments, then substring, and giving
-  ground one trailing word at a time.
+  (`namespaceMatch.js`): whole name, then whole segments, then part of the first
+  word only, and giving ground one trailing word at a time.
 - `grafanaClient.test.js` — the HTTP client (`grafanaClient.js`): config
   validation, auth headers, param handling.
 - `lokiDiscovery.test.js` / `logsLinks.test.js` — the Loki reads behind

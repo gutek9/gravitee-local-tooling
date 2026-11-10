@@ -243,6 +243,38 @@ test("lookupById: a wholly unknown id says so rather than guessing", () => {
 // Name and tail, decided by the map rather than a word list
 // ---------------------------------------------------------------------------
 
+// acme (prod, dev) plus a customer whose name starts with acme's and an env word.
+const ACMEDEVICES_CSV =
+  CSV +
+  "acmedevices,cp1111,cp1111-dp0009,unitedstates,aws,us-east-1,None,prod-org-acmedevices.us-aws-us-east-1.gateway.gravitee.io\n" +
+  "northstar,cp2222,cp2222-dp0005,europe,az,westeurope,None,prod-org-northstar.eu-az-westeurope.gateway.gravitee.io\n";
+
+test("splitNameAndTail: a whole name on a shorter cut wins over part of a name on a longer one", () => {
+  // Regression: "acme dev" kept both words as part of acmedevices, so the dev
+  // word was absorbed into another customer's name and acme was never searched.
+  const rows = parseCustomerCsv(ACMEDEVICES_CSV);
+  assert.deepEqual(splitNameAndTail(rows, "acme dev"), { core: "acme", tail: ["dev"] });
+  assert.deepEqual(
+    resolveCustomerNamespaces(rows, { core: "acme", qualifiers: ["dev"] }).namespaces,
+    ["apim-dp-cp1111-dp0002"],
+  );
+  // A single word may still be part of a name.
+  assert.deepEqual(splitNameAndTail(rows, "acmed"), { core: "acmed", tail: [] });
+});
+
+test("matchCustomers: several words are never read as parts of one name", () => {
+  const rows = parseCustomerCsv(ACMEDEVICES_CSV);
+  assert.deepEqual(matchCustomers(rows, "acme dev"), []);
+  assert.deepEqual([...new Set(matchCustomers(rows, "acmed").map((r) => r.customer))], ["acmedevices"]);
+});
+
+test("matchCustomers: separators do not count", () => {
+  const rows = parseCustomerCsv(ACMEDEVICES_CSV);
+  for (const name of ["north star", "north-star", "NorthStar"]) {
+    assert.deepEqual([...new Set(matchCustomers(rows, name).map((r) => r.customer))], ["northstar"], name);
+  }
+});
+
 test("splitNameAndTail: the map decides where the name ends", () => {
   const rows = parseCustomerCsv(CSV);
   assert.deepEqual(splitNameAndTail(rows, "acme"), { core: "acme", tail: [] });

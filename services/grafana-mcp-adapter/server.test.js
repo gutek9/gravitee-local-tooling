@@ -340,6 +340,22 @@ test("grafana_logs_link: an env word does not drag in a hosted namespace it does
   );
 });
 
+test("grafana_logs_link: prod is not read inside nonprod or preprod, and Loki is never queried", async () => {
+  // Regression: "orbit prod" searched orbit-nonprod and orbit-preprod as if they
+  // were orbit's prod.
+  await withLokiStub(
+    { [NS_VALUES]: ["orbit-nonprod", "orbit-preprod"], [SERIES]: [stream("orbit-nonprod", "orbit-gateway")] },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "orbit prod" });
+      assert.equal(out.refused, true);
+      assert.deepEqual(out.resolved_namespaces, []);
+      assert.deepEqual(out.links, []);
+      assert.deepEqual(out.skipped_namespaces, ["orbit-nonprod", "orbit-preprod"]);
+      assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+    },
+  );
+});
+
 test("grafana_logs_link: an env word matching none of the customer's deployments is refused, and Loki is never queried", async () => {
   // Regression (#9 review): "acme staging" with only prod, dev and qa searched all
   // of them, and the hosted acme-prod too, with no staging constraint at all.

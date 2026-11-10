@@ -95,6 +95,31 @@ test("resolveClient: an env word narrows the map to that deployment", () => {
   assert.equal(out.env_filter_applied, true);
 });
 
+test("resolveClient: an env word is not absorbed into another customer's name", () => {
+  // Regression: with acmedevices in the map, "acme dev" resolved to acmedevices'
+  // prod data plane and never searched acme.
+  const map = {
+    ...MAP,
+    rows: parseCustomerCsv(
+      CUSTOMERS_CSV +
+        "acmedevices,cp1111,cp1111-dp0009,unitedstates,aws,us-east-1,None,prod-org-acmedevices.us-aws-us-east-1.gateway.gravitee.io\n",
+    ),
+  };
+  const out = resolveClient({ phrase: "acme dev", namespaceValues: [...ACME_DATA_PLANES, "apim-dp-cp1111-dp0009"], map });
+  assert.deepEqual(out.namespaces, ["apim-dp-cp1111-dp0002"]);
+  assert.deepEqual([...new Set(out.matched_deployments.map((d) => d.customer))], ["acme"]);
+  assert.equal(out.env_filter_applied, true);
+});
+
+test("resolveClient: prod is not read inside nonprod or preprod", () => {
+  // Regression: "orbit prod" searched orbit-nonprod and orbit-preprod.
+  const out = resolve("orbit prod", ["orbit-nonprod", "orbit-preprod"]);
+  assert.deepEqual(out.namespaces, []);
+  assert.equal(out.refused, true);
+  assert.deepEqual(out.unknown_qualifiers, ["prod"]);
+  assert.deepEqual(out.skipped_namespaces, ["orbit-nonprod", "orbit-preprod"]);
+});
+
 test("resolveClient: an ambiguous fragment takes nothing from the map, and names the withheld customers", () => {
   const out = resolve("beac", ["apim-dp-cp2222-dp0001", "apim-dp-cp3333-dp0001"]);
   assert.deepEqual(out.namespaces, []);
