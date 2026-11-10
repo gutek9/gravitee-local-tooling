@@ -576,6 +576,62 @@ test("resolutionReport: every field a resolution sets reaches the report", () =>
   }
 });
 
+test("every answer carries the map's source, age and warning, refusals included", () => {
+  // Regression: only the answers that searched something carried the map's
+  // age. Every refusal dropped map_generated_at and map_generated_days_ago, so
+  // a refusal from a months-old map read like one from today's.
+  const live = ["acme-prod", ...ACME_DATA_PLANES, "orbit-prod", "orbis-prod", "apim-dp-cp9999-dp0001", "apim-cp-cp7777"];
+  const cases = [
+    ["Cloud name", "acme", {}],
+    ["hosted name", "orbit", {}],
+    ["nothing found", "zzxqq", {}],
+    ["word matching no deployment", "acme staging", {}],
+    ["control_plane_id of another organization", "acme", { controlPlaneId: "cp2222" }],
+    ["control_plane_id for a name not in the map", "orbit", { controlPlaneId: "cp1111" }],
+    ["ambiguous Cloud fragment", "beac", {}],
+    ["two hosted customers", "orb", {}],
+    ["part of a name, Loki list failed", "northw", { namespaceValues: null }],
+    ["nothing found, Loki list failed", "zzxqq", { namespaceValues: null }],
+    ["control plane id", "cp1111", {}],
+    ["data plane id", "apim-dp-cp1111-dp0001", {}],
+    ["data plane id, another organization", "apim-dp-cp1111-dp0001", { controlPlaneId: "cp2222" }],
+    ["live data plane the map lacks", "cp9999-dp0001", {}],
+    ["live data plane the map lacks, with control_plane_id", "cp9999-dp0001", { controlPlaneId: "cp9999" }],
+    ["control plane namespace the map lacks", "cp7777", {}],
+    ["data plane in neither the map nor Loki", "cp1111-dp0099", {}],
+    ["data plane id alone", "dp0001", {}],
+  ];
+  const run = (map) =>
+    cases.map(([label, phrase, { namespaceValues = live, ...extra }]) => [
+      label,
+      resolutionReport(resolveClient({ phrase, namespaceValues, map, ...extra })),
+    ]);
+  const snapshot = { ...MAP, source: "bundled_snapshot", generated_days_ago: 45, warning: "from the snapshot" };
+  for (const map of [MAP, snapshot]) {
+    for (const [label, report] of run(map)) {
+      assert.equal(report.map_source, map.source, label);
+      assert.equal(report.map_generated_at, map.generated_at, label);
+      assert.equal(report.map_generated_days_ago, map.generated_days_ago, label);
+      assert.equal(report.map_warning, map.warning, label);
+    }
+  }
+  // An unreadable map has no age: left out, never sent as null.
+  const unavailable = { rows: [], source: "unavailable", generated_at: null, warning: "map unavailable" };
+  for (const [label, report] of run(unavailable)) {
+    assert.equal(report.map_source, "unavailable", label);
+    assert.ok(!("map_generated_at" in report) && !("map_generated_days_ago" in report), label);
+    assert.equal(report.map_warning, "map unavailable", label);
+  }
+  // find_customer says the same about the map, and returns it without a
+  // report in between, so an unreadable map must not give it a null age either.
+  const found = findCustomerMatches({ query: "acme", namespaceValues: live, map: snapshot });
+  assert.equal(found.map_generated_at, snapshot.generated_at);
+  assert.equal(found.map_generated_days_ago, 45);
+  assert.equal(found.map_warning, "from the snapshot");
+  const foundUnreadable = findCustomerMatches({ query: "acme", namespaceValues: live, map: unavailable });
+  assert.ok(!("map_generated_at" in foundUnreadable) && !("map_generated_days_ago" in foundUnreadable));
+});
+
 const find = (query, namespaceValues = [], extra = {}) => findCustomerMatches({ query, namespaceValues, map: MAP, ...extra });
 
 test("findCustomerMatches: a name gives the customer's deployments, organizations and namespaces", () => {

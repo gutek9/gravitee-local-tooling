@@ -47,6 +47,20 @@ function cappedList(list, max, key, truncatedKey) {
   return { [key]: list.slice(0, max), [truncatedKey]: Math.max(0, list.length - max) };
 }
 
+// What every answer says about the map behind it: which source answered, how
+// old the map is, and its warning. Built here once, because copying the fields
+// into each answer by hand is how every refusal came to drop the age. Unknown
+// values are left out (an unreadable map has no age), never sent as null.
+function mapFields(map) {
+  const fields = {
+    map_source: map.source,
+    map_generated_at: map.generated_at,
+    map_generated_days_ago: map.generated_days_ago,
+    map_warning: map.warning,
+  };
+  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined && value !== null));
+}
+
 // At most MAX_NAMES candidates, and how many were left out.
 function cappedCandidates(candidates = []) {
   return {
@@ -213,12 +227,6 @@ function resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKn
   const live = new Set(namespaceValues);
   // An unreadable map looked nothing up: never say an id is not in it.
   const mapUnreadable = map.source === "unavailable";
-  const mapAge = {
-    map_source: map.source,
-    map_generated_at: map.generated_at,
-    map_generated_days_ago: map.generated_days_ago,
-    map_warning: map.warning,
-  };
   const refuse = (matchedById, note, extra = {}) => ({
     namespaces: [],
     via: "none",
@@ -226,8 +234,7 @@ function resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKn
     matched_by_id: matchedById,
     ...extra,
     note,
-    map_source: map.source,
-    map_warning: map.warning,
+    ...mapFields(map),
   });
 
   if (lookup.kind === "data_plane") {
@@ -250,7 +257,7 @@ function resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKn
       matched_by_id: matchedById,
       note: `${lookup.id} is ${lookup.customer}'s data plane, so only it was searched.`,
       ...(absent.length ? { mapped_namespaces_absent_in_range: absent } : {}),
-      ...mapAge,
+      ...mapFields(map),
       label_namespaces: [],
       matched_deployments: rows.map(deploymentOf),
       env_filter_applied: false,
@@ -298,7 +305,7 @@ function resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKn
           ? `${dataPlane} is in Loki, but the customer map could not be read (map_warning says why), so whose it is cannot be said; only it was searched.`
           : `${dataPlane} is in Loki but not in the customer map, so whose it is cannot be said; only it was searched.`) +
         (lookup.kind === "unlisted_data_plane" ? ` ${lookup.note}` : ""),
-      ...mapAge,
+      ...mapFields(map),
       label_namespaces: [dataPlane],
     };
   }
@@ -355,8 +362,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
       via: "none",
       refused: true,
       ...scope.refusal,
-      map_source: map.source,
-      map_warning: map.warning,
+      ...mapFields(map),
     };
   }
   const label = scope.useLabel ? found : { ...found, namespaces: [] };
@@ -397,8 +403,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
       note: resolved.unknown_qualifiers
         ? [labelPart, resolved.reason, componentHint].filter(Boolean).join(" ")
         : `${labelPart} Nothing was searched. Retry without it, or with one of those namespaces. ${componentHint}`,
-      map_source: map.source,
-      map_warning: map.warning,
+      ...mapFields(map),
     };
   };
 
@@ -428,8 +433,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
       control_plane_ids: resolved.control_plane_ids || [],
       ...(resolved.ambiguous ? { ambiguous_customer: true, ...cappedCandidates(resolved.candidates) } : {}),
       note,
-      map_source: map.source,
-      map_warning: map.warning,
+      ...mapFields(map),
     };
   }
 
@@ -453,8 +457,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
       note: byLabel.length
         ? `${resolved.reason} Only the namespaces named after "${label.name}" (${byLabel.join(", ")}) were searched.`
         : resolved.reason,
-      map_source: map.source,
-      map_warning: map.warning,
+      ...mapFields(map),
     };
   }
 
@@ -484,8 +487,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
             : `"${phrase}" is the id of ${dataPlanes.length} data planes: ${listNames(named)}. `) +
           "Nothing was searched: pass the full namespace " +
           (dataPlanes.length === 1 ? "to search that data plane." : "of the one you mean."),
-        map_source: map.source,
-        map_warning: map.warning,
+        ...mapFields(map),
       };
     }
     // The service_name search is the last resort for a customer with no
@@ -514,17 +516,13 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
               ? "Retry once the map can be read (map_warning says why), or pass a data plane's full namespace " +
                 "(apim-dp-...), which is searched without the map."
               : "Retry once both can be read (map_warning says why the map could not)."),
-        map_source: map.source,
-        map_warning: map.warning,
+        ...mapFields(map),
       };
     }
     return {
       namespaces: [],
       via: "none",
-      map_source: map.source,
-      map_generated_at: map.generated_at,
-      map_generated_days_ago: map.generated_days_ago,
-      map_warning: map.warning,
+      ...mapFields(map),
     };
   }
 
@@ -581,10 +579,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
     // Reported even when only the namespace label answered: a customer can be
     // hosted and on Cloud at once, so with an unavailable or stale map this
     // result may be missing its Cloud deployments, and the caller must know.
-    map_source: map.source,
-    map_generated_at: map.generated_at,
-    map_generated_days_ago: map.generated_days_ago,
-    map_warning: map.warning,
+    ...mapFields(map),
     label_namespaces: byLabel,
     matched_deployments: resolved.matched.map(deploymentOf),
     env_filter_applied: resolved.env_filter_applied,
@@ -721,10 +716,7 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
   const result = {
     query,
     ...(byId && byId.kind !== "unknown" ? { matched_by_id: byId } : {}),
-    map_source: map.source,
-    ...(map.generated_at ? { map_generated_at: map.generated_at } : {}),
-    ...(map.generated_days_ago !== undefined ? { map_generated_days_ago: map.generated_days_ago } : {}),
-    ...(map.warning ? { map_warning: map.warning } : {}),
+    ...mapFields(map),
     // max_results caps every list, each with how many were left out.
     ...cappedList(cockpit, maxResults, "gravitee_cloud_customers", "gravitee_cloud_truncated"),
     ...cappedList(hostedNamespaces, maxResults, "hosted_namespaces", "hosted_namespaces_truncated"),

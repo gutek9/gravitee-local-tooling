@@ -47,9 +47,11 @@ northwind,cp5555,cp5555-dp0001,europe,az,westeurope,None,prod-org-northwind-b.eu
 // ---------------------------------------------------------------------------
 
 // Answer the customer map's two GitHub calls: the CSV itself, and the commit
-// lookup used for the map's age (an empty list means "age unknown").
-function githubResponse(u) {
-  const body = u.includes("/commits?") ? "[]" : CUSTOMERS_CSV;
+// lookup used for the map's age (an empty list means "age unknown", a
+// `commitDate` gives the map that date).
+function githubResponse(u, commitDate) {
+  const commits = commitDate ? [{ commit: { committer: { date: commitDate } } }] : [];
+  const body = u.includes("/commits?") ? JSON.stringify(commits) : CUSTOMERS_CSV;
   return Promise.resolve({
     ok: true,
     status: 200,
@@ -66,15 +68,16 @@ const LOKI_DOWN = { lokiDown: true };
 // values are the JSON `data` array Loki would return under `{ status, data }`,
 // or LOKI_DOWN. The customer map is reloaded through the stub on every call, so
 // each test starts from CUSTOMERS_CSV rather than a map cached by an earlier test.
-// `githubDown: true` makes GitHub answer 503 instead.
-function withLokiStub(routes, fn, { githubDown = false } = {}) {
+// `githubDown: true` makes GitHub answer 503 instead; `commitDate` is the date
+// GitHub gives for the map's last commit.
+function withLokiStub(routes, fn, { githubDown = false, commitDate } = {}) {
   const calls = [];
   const origFetch = globalThis.fetch;
   resetCustomerMapCache();
   globalThis.fetch = (url) => {
     if (String(url).startsWith("https://api.github.com/")) {
       if (githubDown) return Promise.resolve({ ok: false, status: 503, text: () => Promise.resolve("") });
-      return githubResponse(String(url));
+      return githubResponse(String(url), commitDate);
     }
     calls.push(String(url));
     const u = String(url);
@@ -547,6 +550,22 @@ test("grafana_logs_link: an env word matching none of the customer's deployments
       assert.match(out.note, /Retry without it/);
       assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
     },
+  );
+});
+
+test("grafana_logs_link: a refusal says how old the customer map is", async () => {
+  // Regression: refusals carried map_source but not the map's age, although the
+  // answers that searched something did.
+  await withLokiStub(
+    { [NS_VALUES]: ["acme-prod", "apim-dp-cp1111-dp0001"], [SERIES]: [] },
+    async () => {
+      const out = await callTool("grafana_logs_link", { client: "acme staging" });
+      assert.equal(out.refused, true);
+      assert.equal(out.map_source, "github");
+      assert.equal(out.map_generated_at, "2026-10-01T00:00:00Z");
+      assert.equal(typeof out.map_generated_days_ago, "number");
+    },
+    { commitDate: "2026-10-01T00:00:00Z" },
   );
 });
 
