@@ -161,26 +161,6 @@ export function groupByCustomer(rows = []) {
   return groups;
 }
 
-// Resolve a customer (and optional env words) to the namespaces to search.
-//
-// Two separate hazards, handled differently because they are not the same thing:
-//
-//  1. A fragment matching SEVERAL customers ("man" -> northwind, southwind; "co" ->
-//     several more). Merging those returns one customer's logs under another
-//     customer's name. That is a data-boundary problem, so it is refused, not
-//     ranked — the caller gets the candidates and picks.
-//
-//  2. ONE customer spanning several control planes, i.e. several Cockpit
-//     organizations sharing a name, which is not rare. Every result really does
-//     belong to the name asked for, so this resolves — but it is reported,
-//     because "N namespaces across M organizations" is a materially different
-//     answer from what the caller probably pictured.
-//
-// Data-plane namespaces only, by default. A control-plane namespace is SHARED by
-// every customer on that control plane (apim-cp-cp1111 carries beacon,
-// thirdco and acme together), so including it would return one
-// customer's logs under another's name — wrong, and a data-boundary problem, not
-// just a precision one.
 // Split a free-text phrase into a customer the map knows and a tail describing
 // the deployment, by asking the map instead of a word list. A list of known
 // environment names left every unlisted word in the customer name, so the name
@@ -215,6 +195,26 @@ function qualifierMatches(row, word) {
   });
 }
 
+// Resolve a customer (and optional env words) to the namespaces to search.
+//
+// Two separate hazards, handled differently because they are not the same thing:
+//
+//  1. A fragment matching SEVERAL customers ("man" -> northwind, southwind; "co" ->
+//     several more). Merging those returns one customer's logs under another
+//     customer's name. That is a data-boundary problem, so it is refused, not
+//     ranked — the caller gets the candidates and picks.
+//
+//  2. ONE customer spanning several control planes, i.e. several Cockpit
+//     organizations sharing a name, which is not rare. Every result really does
+//     belong to the name asked for, so this resolves — but it is reported,
+//     because "N namespaces across M organizations" is a materially different
+//     answer from what the caller probably pictured.
+//
+// Data-plane namespaces only, by default. A control-plane namespace is SHARED by
+// every customer on that control plane (apim-cp-cp1111 carries beacon,
+// thirdco and acme together), so including it would return one
+// customer's logs under another's name — wrong, and a data-boundary problem, not
+// just a precision one.
 export function resolveCustomerNamespaces(rows = [], { core, envs = [], qualifiers = [], includeControlPlane = false, controlPlaneId } = {}) {
   const matched = matchCustomers(rows, core);
   if (!matched.length) return { matched: [], namespaces: [], control_plane_namespaces: [] };

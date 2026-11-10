@@ -77,8 +77,12 @@ function requireValidSettings() {
   );
 }
 
-// A map fetched live can still be months out of date. Report the age rather than
-// letting `source: "github"` imply currency.
+// A map fetched live can still be months out of date: the summary is a
+// GENERATED file committed to its repo, so "fetched from GitHub" says nothing
+// about when it was last regenerated, and a stale map fails by omission, which
+// is the hardest kind of wrong to notice. Report the age rather than letting
+// `source: "github"` imply currency, with a warning once it reaches
+// STALE_AFTER_DAYS.
 function staleness(generatedAt) {
   if (!generatedAt) return {};
   const days = Math.floor((Date.now() - Date.parse(generatedAt)) / 86400000);
@@ -115,11 +119,6 @@ function remember(map, lifetimeMs) {
   cacheUntil = Date.now() + lifetimeMs;
   return map;
 }
-
-// How old the map may be before it is called out (STALE_AFTER_DAYS, above). The
-// summary is a GENERATED artifact committed to its repo, so "fetched from GitHub"
-// says nothing about when it was last regenerated — and a stale map fails by
-// omission, which is the hardest kind of wrong to notice.
 
 // The repository and the file as path segments. A leading, trailing or doubled
 // "/" in a setting adds no empty segment; a "." or ".." stays, for githubGet to
