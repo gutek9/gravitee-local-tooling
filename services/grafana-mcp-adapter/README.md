@@ -409,6 +409,37 @@ Cloud then gets only its hosted part.
 > use a fine-grained token and get a 404, check that its resource owner is
 > `gravitee-io` and that the org has approved it, or use a classic token instead.
 
+### Checking the map against Loki
+
+`validate-customers` measures the customer map against the namespaces Loki has
+seen: customers whose mapped data planes no longer exist, and live data planes
+the map does not know. It exits 0 when the map was measured and no more
+customers have missing namespaces than `VALIDATE_MAX_STALE` allows, so it can
+gate a refresh. It exits 1 when a setting is wrong (before any request), when
+GitHub or Loki cannot be read, when there is nothing to measure (no map, or no
+namespaces in the window), or above the threshold. Its output names customers,
+so share it only where the customer list may be seen.
+
+It runs on the host: the image does not ship `scripts/`, and Node does not read
+`.env` by itself. Pass the repo's `.env` to it, which keeps the tokens out of
+your shell history (Node 20.6 or later):
+
+```bash
+cd services/grafana-mcp-adapter
+node --env-file=../../.env scripts/validate-customers.mjs
+```
+
+It needs `GRAFANA_ENABLED=true`, `GRAFANA_BASE_URL`, `GRAFANA_TOKEN`,
+`GRAFANA_LOGS_DATASOURCE_UID` and `GITHUB_PERSONAL_ACCESS_TOKEN`. With those
+already in the environment, `npm run validate-customers` does the same. It also
+reads two numbers of its own; empty means the default, anything else must be a
+whole number in range:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `VALIDATE_WINDOW_DAYS` | `30` | How many days back a namespace counts as live. 1 to 365. |
+| `VALIDATE_MAX_STALE` | `20` | How many customers may have missing namespaces before it fails. 0 to 10000; 0 fails on any. |
+
 ## Testing
 
 Tests use Node's built-in runner — no extra framework. Run them with:
@@ -442,7 +473,8 @@ Coverage:
 - `scripts/validateCustomerMap.test.js` — the checks behind
   `npm run validate-customers`, including its failure paths: an unavailable or
   empty map, or no live namespaces, fails instead of passing with nothing
-  checked.
+  checked, and a bad setting stops the script before any request (the script
+  is run with `fetch` replaced, so nothing reaches the network).
 - `server.test.js` — the `server.js` orchestration that talks to Loki, with
   `fetch` stubbed per Loki endpoint: `grafana_logs_link`'s namespace resolution
   through both routes (label and customer map), per-namespace drilldown

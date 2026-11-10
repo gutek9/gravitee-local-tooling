@@ -3,7 +3,21 @@
 // including its failure paths, can be unit-tested directly.
 import { resolveCustomerNamespaces, dataPlaneNamespace } from "../customerMatch.js";
 
+// The script's two numbers, read with readNumberSettings like the map settings:
+// empty means the default, anything else must be a whole number in range. A
+// threshold of 0 is the strict setting: any customer with a missing namespace
+// fails the check.
+export const VALIDATE_SETTINGS = [
+  { name: "VALIDATE_WINDOW_DAYS", fallback: 30, min: 1, max: 365 },
+  { name: "VALIDATE_MAX_STALE", fallback: 20, min: 0, max: 10000 },
+];
+
 export function validateCustomerMap({ map, liveNamespaces = [], maxStale = 20 }) {
+  // A threshold that is not a whole number passes every map: "stale > NaN" is
+  // false however many are stale. Refused here too, whoever the caller is.
+  if (!Number.isInteger(maxStale) || maxStale < 0) {
+    throw new Error(`maxStale must be a whole number of 0 or more, got ${maxStale}`);
+  }
   // Nothing to measure is a failure, not a pass. With no map rows (both sources
   // down, or an empty file) or no live namespaces, every count below is zero,
   // which would read as "nothing stale" and exit 0 on a check that never ran.

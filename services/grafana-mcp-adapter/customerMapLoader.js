@@ -40,11 +40,12 @@ const NUMBER_SETTINGS = [
 // range. A value read as-is with Number() fails quietly: "abc" is NaN, and a NaN
 // timeout aborts the GitHub fetch at once, a NaN TTL never caches, a NaN stale
 // threshold calls every map stale. Returns the values by name, and one message
-// per bad setting.
-export function readNumberSettings(env = process.env) {
+// per bad setting. `settings` defaults to the map's; validate-customers passes
+// its own, so every number setting follows the one rule.
+export function readNumberSettings(env = process.env, settings = NUMBER_SETTINGS) {
   const values = {};
   const errors = [];
-  for (const { name, fallback, min, max } of NUMBER_SETTINGS) {
+  for (const { name, fallback, min, max } of settings) {
     const raw = String(env[name] ?? "").trim();
     const value = raw === "" ? fallback : /^[0-9]+$/.test(raw) ? Number(raw) : NaN;
     if (Number.isSafeInteger(value) && value >= min && value <= max) {
