@@ -20,6 +20,7 @@ import {
   dataPlaneNamespace,
   controlPlaneNamespace,
   controlPlaneOf,
+  namespacesOf,
   isCloudNamespace,
   dataPlanesWithId,
 } from "./customerMatch.js";
@@ -263,7 +264,9 @@ function resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKn
       matched_deployments: rows.map(deploymentOf),
       env_filter_applied: false,
       control_plane_ids: controlPlanes,
-      shared_control_plane_namespaces: controlPlanes.map(controlPlaneNamespace),
+      // Only the data plane asked for is searched, even a trial's; its control
+      // plane is reported as shared unless it is the trial's own.
+      shared_control_plane_namespaces: namespacesOf(rows).shared_control_plane_namespaces,
     };
   }
 
@@ -590,7 +593,10 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
     // Control-plane namespaces are SHARED by every customer on that control
     // plane, so they are never searched implicitly under one customer's name.
     // Reported so the caller knows they exist and can ask for them explicitly.
+    // A trial's own control plane is not among them: it is searched, and the
+    // flag says why a control-plane namespace is in the answer.
     shared_control_plane_namespaces: resolved.control_plane_namespaces,
+    ...(resolved.control_plane_is_single_tenant ? { control_plane_is_single_tenant: true } : {}),
   };
 }
 
@@ -612,6 +618,7 @@ export function resolutionReport(resolution = {}) {
     "known_environments",
     "known_regions",
     "shared_control_plane_namespaces",
+    "control_plane_is_single_tenant",
     "ambiguous_customer",
     "candidates",
     "candidates_truncated",
@@ -670,13 +677,8 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
   const { core: mapName } = splitNameAndTail(map.rows, needle);
   const groups = groupByCustomer(matchCustomers(map.rows, mapName));
   const cockpit = [...groups.values()]
-    .map((rows) => ({
-      ...describeCustomer(rows),
-      namespaces: [...new Set(rows.map((r) => dataPlaneNamespace(r.data_plane_id)))],
-      shared_control_plane_namespaces: [
-        ...new Set(rows.map((r) => r.control_plane_id).filter(Boolean).map(controlPlaneNamespace)),
-      ],
-    }))
+    // The same namespaces grafana_logs_link searches for this customer.
+    .map((rows) => ({ ...describeCustomer(rows), ...namespacesOf(rows) }))
     .sort((a, b) => a.customer.localeCompare(b.customer));
 
   // Hosted customers have no map entry; their namespace carries the name. Cloud

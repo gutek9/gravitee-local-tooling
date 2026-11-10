@@ -16,6 +16,23 @@ export const controlPlaneNamespace = (controlPlaneId) => `apim-cp-${controlPlane
 // hold a dash of its own (`trial-tt0001`), so it is everything before the last
 // segment; "" when there is no dash.
 export const controlPlaneOf = (dataPlaneId) => String(dataPlaneId).split("-").slice(0, -1).join("-");
+
+// The namespaces these deployments are searched in, and the control-plane
+// namespaces they only share. A control-plane namespace is SHARED by every
+// customer on that control plane (apim-cp-cp1111 carries several), so it is
+// never searched under one customer's name. A trial's is the exception:
+// `apim-cp-trial-<id>` hosts only that trial, so it is the trial's own,
+// searched with it, and flagged so the answer says why it is there.
+export function namespacesOf(rows = []) {
+  const withControlPlane = rows.filter((r) => r.control_plane_id);
+  const own = withControlPlane.filter((r) => r.is_trial).map((r) => controlPlaneNamespace(r.control_plane_id));
+  const shared = withControlPlane.filter((r) => !r.is_trial).map((r) => controlPlaneNamespace(r.control_plane_id));
+  return {
+    namespaces: [...new Set([...rows.map((r) => dataPlaneNamespace(r.data_plane_id)), ...own])],
+    shared_control_plane_namespaces: [...new Set(shared)],
+    ...(own.length ? { control_plane_is_single_tenant: true } : {}),
+  };
+}
 // Gravitee Cloud namespaces (`apim-dp-<cp>-<dp>`, `apim-cp-<cp>`) carry ids,
 // not a customer's name. One pattern, case-insensitive, for the check here and
 // for the LogQL matcher that keeps the service_name search out of them; LogQL
@@ -270,13 +287,6 @@ export function resolveCustomerNamespaces(rows = [], { core, qualifiers = [], co
     };
   }
 
-  // A trial's control plane is its own: `apim-cp-trial-tt0002` hosts exactly that
-  // trial (verified — every trial control plane maps to a single trial), unlike
-  // `apim-cp-cp1111`, which carries three different customers. So for trials the
-  // control-plane namespace is single-tenant and safe to search, and is included
-  // deliberately rather than arriving by accident through the namespace matcher.
-  const allTrials = rowsToUse.length > 0 && rowsToUse.every((r) => r.is_trial);
-
   // Optional narrowing to one organization when a name spans several.
   const cpFiltered = controlPlaneId ? rowsToUse.filter((r) => r.control_plane_id === controlPlaneId) : rowsToUse;
 
@@ -304,15 +314,17 @@ export function resolveCustomerNamespaces(rows = [], { core, qualifiers = [], co
   }
   const finalRows = cpFiltered;
 
-  const namespaces = [...new Set(finalRows.map((r) => dataPlaneNamespace(r.data_plane_id)))];
-  const controlPlanes = [...new Set(finalRows.map((r) => r.control_plane_id).filter(Boolean).map(controlPlaneNamespace))];
+  // A trial's control plane is searched with it, never a shared one: the
+  // difference is encoded in namespacesOf, not left to the namespace matcher.
+  const { namespaces, shared_control_plane_namespaces: controlPlanes, control_plane_is_single_tenant } =
+    namespacesOf(finalRows);
   const orgs = [...new Set(finalRows.map((r) => r.control_plane_id).filter(Boolean))];
 
   return {
     matched: finalRows,
-    namespaces: allTrials ? [...namespaces, ...controlPlanes] : namespaces,
+    namespaces,
     control_plane_namespaces: controlPlanes,
-    ...(allTrials ? { control_plane_is_single_tenant: true } : {}),
+    ...(control_plane_is_single_tenant ? { control_plane_is_single_tenant: true } : {}),
     env_filter_applied: quals.length > 0,
     control_plane_ids: orgs,
     // Hazard 2: same name, several Cockpit organizations. Resolved, but said out

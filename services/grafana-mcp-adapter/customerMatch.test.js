@@ -44,6 +44,8 @@ test("resolveCustomerNamespaces: a trial's control plane is searched, a shared o
   const trial = resolveCustomerNamespaces(rows, { core: "trial-tt0001" });
   assert.ok(trial.namespaces.includes("apim-cp-trial-tt0001"));
   assert.equal(trial.control_plane_is_single_tenant, true);
+  // Searched, so never also listed as shared.
+  assert.deepEqual(trial.control_plane_namespaces, []);
 
   const shared = resolveCustomerNamespaces(rows, { core: "acme" });
   assert.ok(!shared.namespaces.some((n) => n.startsWith("apim-cp-")));

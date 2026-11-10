@@ -93,7 +93,10 @@ The response also says how the customer was found:
 - `matched_deployments`, `control_plane_ids`, `shared_control_plane_namespaces` —
   the Cloud deployments behind the namespaces. Control-plane namespaces are
   shared by every customer on that control plane, so they are reported but never
-  searched under one customer's name.
+  searched under one customer's name. A trial's own control plane
+  (`apim-cp-trial-<id>`) hosts only that trial: it is searched with the trial
+  (in `resolved_namespaces`, with `control_plane_is_single_tenant`), and never
+  listed as shared.
 - `ambiguous_customer`, `candidates`, `candidates_truncated`, `customer_note` —
   the fragment matched several customers: several Cloud ones, hosted namespaces
   of more than one customer (`plt live` in `nova-plt-live` and `vega-plt-live`),
@@ -305,7 +308,9 @@ alert tells you whose it is. A blank `query` is refused.
 
 It returns, per Gravitee Cloud customer: deployment count, Cockpit
 organizations (`control_plane_ids`, to pass as `control_plane_id`), environments,
-regions, the exact data-plane namespaces, and the shared control-plane
+regions, the exact namespaces `grafana_logs_link` searches for it (its data
+planes, plus a trial's own control plane, flagged `control_plane_is_single_tenant`),
+and the shared control-plane
 namespaces. Hosted customers come back as `hosted_namespaces`. Gravitee Cloud
 namespaces whose name matches (`apim-dp-*`, `apim-cp-*`, for example every data
 plane on `cp1111`) come back apart as `cloud_namespaces`: their name carries

@@ -400,6 +400,38 @@ test("resolveClient: a trial is named by its control-plane id, and resolves as t
   assert.equal(out.via, "customer_map");
 });
 
+test("a trial's control plane is its own in every answer, never called shared", () => {
+  // Regression: it was searched with the trial yet listed in
+  // shared_control_plane_namespaces, and the flag saying why never reached the
+  // answer. A trial's data plane id and find_customer called it shared too.
+  const map = {
+    ...MAP,
+    rows: parseCustomerCsv(
+      CUSTOMERS_CSV + "N/A,trial,trial-tt0001-dp0011,apac,az,australiaeast,None,*.au.trial-tt0001.gateway.gravitee.io\n",
+    ),
+  };
+  const live = ["apim-dp-trial-tt0001-dp0011", "apim-cp-trial-tt0001", ...ACME_DATA_PLANES, "apim-cp-cp1111"];
+
+  const byName = resolutionReport(resolveClient({ phrase: "trial-tt0001", namespaceValues: live, map }));
+  assert.deepEqual(byName.shared_control_plane_namespaces, []);
+  assert.equal(byName.control_plane_is_single_tenant, true);
+
+  const byDataPlane = resolveClient({ phrase: "trial-tt0001-dp0011", namespaceValues: live, map });
+  assert.deepEqual(byDataPlane.namespaces, ["apim-dp-trial-tt0001-dp0011"], "a data plane id searches only that data plane");
+  assert.deepEqual(byDataPlane.shared_control_plane_namespaces, []);
+
+  const [found] = findCustomerMatches({ query: "trial-tt0001", namespaceValues: live, map }).gravitee_cloud_customers;
+  assert.deepEqual(found.namespaces, ["apim-dp-trial-tt0001-dp0011", "apim-cp-trial-tt0001"]);
+  assert.deepEqual(found.shared_control_plane_namespaces, []);
+  assert.equal(found.control_plane_is_single_tenant, true);
+
+  // A shared control plane stays shared, unsearched and unflagged.
+  const acme = resolveClient({ phrase: "acme", namespaceValues: live, map });
+  assert.ok(!acme.namespaces.includes("apim-cp-cp1111"));
+  assert.deepEqual(resolutionReport(acme).shared_control_plane_namespaces, ["apim-cp-cp1111"]);
+  assert.equal(resolutionReport(acme).control_plane_is_single_tenant, undefined);
+});
+
 test("resolveClient: an ambiguous fragment takes nothing from the map, and names the withheld customers", () => {
   const out = resolve("beac", ["apim-dp-cp2222-dp0001", "apim-dp-cp3333-dp0001"]);
   assert.deepEqual(out.namespaces, []);
