@@ -1,6 +1,8 @@
-// Regenerate the bundled customer snapshot used when GitHub is unreachable.
+// Regenerate the bundled customer snapshot used when GitHub is unreachable. How
+// to run it, and how a new snapshot reaches the adapter: README, "The customer
+// snapshot is never committed". In short, from this directory:
 //
-//   GITHUB_PERSONAL_ACCESS_TOKEN=... npm run refresh-customers [-- --out FILE]
+//   node --env-file=../../.env scripts/refresh-customers.mjs [--out FILE]
 //
 // Writes customers-snapshot.json next to server.js, the file the image copies,
 // unless --out names another file. It never reads GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH:

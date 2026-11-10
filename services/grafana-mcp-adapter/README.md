@@ -352,12 +352,35 @@ which is **private**, and it contains the customer list with their control-plane
 and data-plane ids. **This repository is public** — committing that file would
 publish who Gravitee's customers are and how their infrastructure is addressed.
 
-Generate it locally when you want an offline fallback:
+Generate it locally when you want an offline fallback. The script runs on the
+host, and Node does not read `.env` by itself: pass it the repo's `.env`, which
+keeps the token out of your shell history (Node 20.6 or later):
 
 ```bash
 cd services/grafana-mcp-adapter
-GITHUB_PERSONAL_ACCESS_TOKEN=... npm run refresh-customers
+node --env-file=../../.env scripts/refresh-customers.mjs
 ```
+
+It needs `GITHUB_PERSONAL_ACCESS_TOKEN` and uses the same
+`GRAFANA_CUSTOMER_MAP_*` repository and timeout settings as the adapter. With
+those already in the environment, `npm run refresh-customers` does the same. It
+writes `customers-snapshot.json` next to `server.js`, and never reads
+`GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH`, which is a path inside the container. To
+write another file, for example one you mount into the container, add
+`--out FILE`. Keep that file outside this repository, or name it
+`customers-snapshot*.json`: git ignores that name anywhere in the repo.
+
+The adapter does not see a new snapshot until its image is rebuilt. The
+Dockerfile copies the file at build time, and the container your agent starts
+(`docker compose run --rm`) uses the image as last built. From the repo root:
+
+```bash
+./bin/local-tooling start
+```
+
+rebuilds it; then restart your agent, or reconnect its `grafana` MCP server. The
+image now contains the customer list too: keep it on your machine and never push
+it to a registry.
 
 The snapshot records two dates: `source_generated_at`, when the CSV was last
 committed in the source repo, and `refreshed_at`, when you ran the command. The

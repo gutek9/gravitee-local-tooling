@@ -48,8 +48,8 @@ export function parseCsv(text = "") {
 
 // The deployment's environment is the prefix of its gravitee.io gateway host
 // (`prod-org-acme...`). We keep only that derived word, never the hostnames
-// themselves: the snapshot is committed to a repo, and customer DNS is not
-// needed to resolve a namespace.
+// themselves: customer DNS is not needed to resolve a namespace, and the parsed
+// rows end up in the local snapshot file and in an image built with it.
 export function extractEnv(urls = "") {
   for (const raw of String(urls).split(",")) {
     const host = raw.trim();

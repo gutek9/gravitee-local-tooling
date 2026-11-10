@@ -10,6 +10,7 @@
 - Zendesk is disabled by default and, when enabled, exposes only read-only tools plus local vectordb ingestion.
 - Grafana is disabled by default and, when enabled, exposes read-only datasource queries and log links.
 - When Grafana is enabled, its adapter also reads the Gravitee Cloud customer map from a private GitHub repository with `GITHUB_PERSONAL_ACCESS_TOKEN` (GET requests to `api.github.com` only, enforced by the adapter's GitHub client: the CSV and its last commit date). When Grafana is disabled, the adapter does not read the map or use the token, although Compose still passes the token to its container.
+- `npm run refresh-customers` writes that customer list to a local `customers-snapshot.json`, which git ignores and the adapter's image copies when it is built. Keep both on your machine: never commit the file or push the image.
 - Secrets are read from `.env` by `bin/local-tooling`; generated agent configs do not embed tokens.
 
 ## Token guidance

@@ -13,9 +13,11 @@ node_modules/
 # macOS
 .DS_Store
 
-# NEVER COMMIT: the customer map snapshot is a local fallback cache generated from
+# NEVER COMMIT: customer map snapshots are local fallback caches generated from
 # gravitee-io/cloud-deployments-configuration, which is PRIVATE. This repository is
-# PUBLIC, so committing it would publish Gravitee's customer list and their
-# infrastructure ids. Generate it locally with:
-#   cd services/grafana-mcp-adapter && npm run refresh-customers
-services/grafana-mcp-adapter/customers-snapshot.json
+# PUBLIC, so committing one would publish Gravitee's customer list and their
+# infrastructure ids. Ignored under any customers-snapshot*.json name anywhere in
+# the repo, so a copy or an --out file with that name is covered too. Generate
+# the default one with:
+#   cd services/grafana-mcp-adapter && node --env-file=../../.env scripts/refresh-customers.mjs
+**/customers-snapshot*.json
