@@ -10,21 +10,21 @@ import { matchNamespaces, matchNamespacesAnySegment, matchNamespacesPhrase } fro
 const NAMESPACES = [
   "prod",
   "nonprod",
-  "april-prod",
-  "april-rec",
-  "blueyonder-plt-live",
-  "blueyonder-multitenant",
-  "lyonaeroports-prod",
+  "kestrel-prod",
+  "kestrel-rec",
+  "orbit-plt-live",
+  "orbit-multitenant",
+  "vega-prod",
 ];
 
 test("matchNamespaces: returns the customer's own namespaces", () => {
-  assert.deepEqual(matchNamespaces(NAMESPACES, "april"), ["april-prod", "april-rec"]);
-  assert.deepEqual(matchNamespaces(NAMESPACES, "blueyonder"), ["blueyonder-plt-live", "blueyonder-multitenant"]);
+  assert.deepEqual(matchNamespaces(NAMESPACES, "kestrel"), ["kestrel-prod", "kestrel-rec"]);
+  assert.deepEqual(matchNamespaces(NAMESPACES, "orbit"), ["orbit-plt-live", "orbit-multitenant"]);
 });
 
 test("matchNamespaces: customer with no dedicated namespace -> [] (fall back to service_name)", () => {
-  // 'equigy' lives only in the shared `prod`/`nonprod` namespaces.
-  assert.deepEqual(matchNamespaces(NAMESPACES, "equigy"), []);
+  // 'globex' lives only in the shared `prod`/`nonprod` namespaces.
+  assert.deepEqual(matchNamespaces(NAMESPACES, "globex"), []);
 });
 
 test("matchNamespaces: empty core matches nothing (avoids matching every namespace)", () => {

@@ -880,14 +880,14 @@ test("findCustomerMatches: an unreadable map is not reported as nothing matched"
 test("findCustomerMatches: Cloud namespaces that match by name are listed apart, never as hosted", () => {
   // Regression: an id fragment listed the shared control plane and every data
   // plane on it as hosted_namespaces, as if a hosted customer carried the name.
-  const loki = ["acme-prod", ...ACME_DATA_PLANES, "apim-cp-cp1111", "dpd-prod"];
+  const loki = ["acme-prod", ...ACME_DATA_PLANES, "apim-cp-cp1111", "dplex-prod"];
   const byId = find("cp1111", loki);
   assert.deepEqual(byId.hosted_namespaces, []);
   assert.deepEqual(byId.cloud_namespaces, [...ACME_DATA_PLANES, "apim-cp-cp1111"]);
   // Matched apart: "dp" is a whole segment of every data plane, and that exact
   // match must not hide the hosted namespace "dp" is part of.
   const dp = find("dp", loki);
-  assert.deepEqual(dp.hosted_namespaces, ["dpd-prod"]);
+  assert.deepEqual(dp.hosted_namespaces, ["dplex-prod"]);
   assert.deepEqual(dp.cloud_namespaces, ACME_DATA_PLANES);
   // Only Cloud namespaces matched: something matched, so no "nothing matched".
   const apim = find("apim", loki);
