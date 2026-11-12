@@ -483,14 +483,18 @@ Cloud then gets only its hosted part.
 
 `validate-customers` measures the customer map against the namespaces Loki has
 seen: customers whose mapped data planes no longer exist, and live data planes
-the map does not know. It exits 0 when the map was measured, no more customers
-have missing namespaces than `VALIDATE_MAX_STALE` allows, and no data plane is
-listed under more than one customer, so it can gate a refresh. It exits 1 when a
-setting is wrong (before any request), when GitHub or Loki cannot be read, when
-there is nothing to measure (no map, or no namespaces in the window), above the
-threshold, or when the map lists a data plane under more than one customer
-(whatever the threshold: `grafana_logs_link` refuses such a data plane). Its output names customers,
-so share it only where the customer list may be seen.
+the map does not know. It reads the map from GitHub as it is now, like
+`refresh-customers`, and never the bundled snapshot: a fallback measured as if
+it were the map would pass the check meant to catch an outdated one. It exits 0
+when the map was measured, no more customers have missing namespaces than
+`VALIDATE_MAX_STALE` allows, and no data plane is listed under more than one
+customer, so it can gate a refresh. It exits 1 when a setting is wrong or the
+GitHub token missing (before any request), when GitHub or Loki cannot be read (a
+wrong token included), when there is nothing to measure (no map, or no
+namespaces in the window), above the threshold, or when the map lists a data
+plane under more than one customer (whatever the threshold: `grafana_logs_link`
+refuses such a data plane). Its output names customers, so share it only where
+the customer list may be seen.
 
 It runs on the host: the image does not ship `scripts/`, and Node does not read
 `.env` by itself. Pass the repo's `.env` to it, which keeps the tokens out of

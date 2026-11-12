@@ -2,10 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseCustomerCsv } from "../customerCsv.js";
-import { readNumberSettings } from "../customerMapLoader.js";
+import { buildSnapshot, readNumberSettings } from "../customerMapLoader.js";
 import { validateCustomerMap, VALIDATE_SETTINGS } from "./validateCustomerMap.js";
 
 const CSV = `Customer,ControlPlaneId,DataPlaneId,Region,Provider,Cloud Region,Custom DNS,URLs
@@ -136,7 +139,11 @@ const runScript = (env) =>
 test("validate-customers: a bad setting is refused before GitHub or Loki is asked anything", () => {
   // Regression: VALIDATE_MAX_STALE=abc exited 0 however many customers were
   // stale, and VALIDATE_WINDOW_DAYS=30d sent start=NaN to Loki.
-  for (const [name, raw] of [["VALIDATE_MAX_STALE", "abc"], ["VALIDATE_WINDOW_DAYS", "30d"]]) {
+  for (const [name, raw] of [
+    ["VALIDATE_MAX_STALE", "abc"],
+    ["VALIDATE_WINDOW_DAYS", "30d"],
+    ["GRAFANA_CUSTOMER_MAP_TIMEOUT_MS", "abc"],
+  ]) {
     const out = runScript({ ...CONFIGURED, [name]: raw });
     assert.equal(out.status, 1, out.stderr);
     assert.match(out.stderr, new RegExp(`${name} must be a whole number`));
@@ -160,4 +167,69 @@ test("validate-customers: the window reaches Loki as a real start time", () => {
   // Loki wants nanoseconds; 7 days ago, give or take the test's own run time.
   const startMs = Number(url.searchParams.get("start")) / 1e6;
   assert.ok(Math.abs(startMs - (Date.now() - 7 * 86400000)) < 60000, url.searchParams.get("start"));
+});
+
+// The script with fetch answered without network: Loki returns ALL_LIVE, GitHub
+// answers per `github` ("ok": CSV and its commit date, "down": 503). Every
+// request is still printed to stderr.
+const stubbedNetwork = (github) =>
+  `data:text/javascript,${encodeURIComponent(`
+    const csv = ${JSON.stringify(CSV)};
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      process.stderr.write("REQUEST " + u + "\\n");
+      if (u.startsWith("https://api.github.com/")) {
+        if (${JSON.stringify(github)} === "down") return { ok: false, status: 503, text: async () => "" };
+        const body = u.includes("/commits?") ? JSON.stringify([{ commit: { committer: { date: "2026-11-10T23:00:00Z" } } }]) : csv;
+        return { ok: true, status: 200, text: async () => body };
+      }
+      const data = ${JSON.stringify(ALL_LIVE)};
+      return { ok: true, status: 200, text: async () => JSON.stringify({ status: "success", data }), headers: { get: () => null } };
+    };`)}`;
+const runStubbed = (github, env) =>
+  spawnSync(process.execPath, ["--import", stubbedNetwork(github), SCRIPT], {
+    env: { PATH: process.env.PATH, ...env },
+    encoding: "utf8",
+  });
+
+// A snapshot from January, where the adapter would fall back when GitHub fails.
+function withOldSnapshot(fn) {
+  const dir = mkdtempSync(join(tmpdir(), "validate-customers-"));
+  const path = join(dir, "customers-snapshot.json");
+  try {
+    writeFileSync(path, JSON.stringify(buildSnapshot({ customers: parseCustomerCsv(CSV), sourceGeneratedAt: "2026-01-01T00:00:00Z" })));
+    return fn(path);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("validate-customers: measures the map GitHub has now, and says when it was generated", () => {
+  const out = runStubbed("ok", CONFIGURED);
+  assert.equal(out.status, 0, out.stderr);
+  assert.match(out.stdout, /map: 3 rows from GitHub \(CSV generated 2026-11-10\)/);
+  assert.match(out.stdout, /forward: 2 customers \| fully resolvable: 2/);
+  assert.match(out.stderr, /REQUEST https:\/\/api\.github\.com\/repos\/.*\/contents\//);
+});
+
+test("validate-customers: GitHub down fails, never measuring the bundled snapshot instead", () => {
+  // Regression: the snapshot was measured as if it were the map, and the
+  // check passed (exit 0) on data from January.
+  withOldSnapshot((snapshot) => {
+    const out = runStubbed("down", { ...CONFIGURED, GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH: snapshot });
+    assert.equal(out.status, 1, out.stdout);
+    assert.match(out.stderr, /Could not read the customer map from GitHub: GitHub responded 503\. Nothing was validated\./);
+    assert.doesNotMatch(out.stdout, /forward:/);
+  });
+});
+
+test("validate-customers: no GitHub token fails before any request, even with a snapshot", () => {
+  // Regression: without a token the snapshot was measured, and the check passed.
+  withOldSnapshot((snapshot) => {
+    const { GITHUB_PERSONAL_ACCESS_TOKEN, ...noToken } = CONFIGURED;
+    const out = runStubbed("ok", { ...noToken, GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH: snapshot });
+    assert.equal(out.status, 1, out.stdout);
+    assert.match(out.stderr, /GITHUB_PERSONAL_ACCESS_TOKEN is required/);
+    assert.doesNotMatch(out.stderr, /REQUEST/);
+  });
 });

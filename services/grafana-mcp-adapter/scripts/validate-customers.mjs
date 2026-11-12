@@ -6,7 +6,13 @@
 //              lookup returns "no logs" for a customer that has plenty)
 //   reverse  - live data planes the map does not know about at all
 // Run it to get numbers instead of an impression.
-import { loadCustomerMap, readNumberSettings } from "../customerMapLoader.js";
+//
+// It measures the map as GitHub has it now, read the way refresh-customers reads
+// it, and never the bundled snapshot: a fallback measured as if it were the map
+// would pass the very check meant to catch an outdated one, and
+// GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH names a path inside the container, not here.
+import { parseCustomerCsv } from "../customerCsv.js";
+import { fetchCustomerCsv, fetchGeneratedAt, readNumberSettings } from "../customerMapLoader.js";
 import { requireConfig } from "../grafanaClient.js";
 import { fetchLabelValues } from "../lokiDiscovery.js";
 import { validateCustomerMap, VALIDATE_SETTINGS } from "./validateCustomerMap.js";
@@ -14,6 +20,8 @@ import { validateCustomerMap, VALIDATE_SETTINGS } from "./validateCustomerMap.js
 // Every setting is checked before GitHub or Loki is asked anything, and every
 // problem is reported at once.
 const { values, errors } = readNumberSettings(process.env, VALIDATE_SETTINGS);
+// The map's own numbers too (its fetch timeout is used here).
+errors.push(...readNumberSettings(process.env).errors);
 try {
   requireConfig();
 } catch (err) {
@@ -21,6 +29,9 @@ try {
 }
 const UID = (process.env.GRAFANA_LOGS_DATASOURCE_UID || "").trim();
 if (!UID) errors.push("GRAFANA_LOGS_DATASOURCE_UID is required (the uid of the Loki datasource holding your logs).");
+if (!(process.env.GITHUB_PERSONAL_ACCESS_TOKEN || "").trim()) {
+  errors.push("GITHUB_PERSONAL_ACCESS_TOKEN is required: the map is read from GitHub, never from the bundled snapshot.");
+}
 if (errors.length) {
   for (const error of errors) console.error(error);
   process.exit(1);
@@ -29,9 +40,21 @@ if (errors.length) {
 const WINDOW_DAYS = values.VALIDATE_WINDOW_DAYS;
 const live = await fetchLabelValues(UID, "namespace", { from: `now-${WINDOW_DAYS}d` });
 
-const map = await loadCustomerMap({ refresh: true });
-console.log(`window: ${WINDOW_DAYS}d | live namespaces: ${live.length} | map: ${map.rows.length} rows from ${map.source}`);
-if (map.warning) console.log(`WARNING: ${map.warning}`);
+let csv;
+try {
+  csv = await fetchCustomerCsv();
+} catch (err) {
+  console.error(
+    `Could not read the customer map from GitHub: ${err instanceof Error ? err.message : String(err)}. Nothing was validated.`,
+  );
+  process.exit(1);
+}
+const generatedAt = await fetchGeneratedAt();
+const map = { rows: parseCustomerCsv(csv), source: "github" };
+console.log(
+  `window: ${WINDOW_DAYS}d | live namespaces: ${live.length} | map: ${map.rows.length} rows from GitHub ` +
+    `(CSV generated ${generatedAt ? generatedAt.slice(0, 10) : "on an unknown date"})`,
+);
 
 const result = validateCustomerMap({
   map,
