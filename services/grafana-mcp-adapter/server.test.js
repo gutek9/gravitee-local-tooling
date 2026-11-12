@@ -49,9 +49,9 @@ northwind,cp5555,cp5555-dp0001,europe,az,westeurope,None,prod-org-northwind-b.eu
 // Answer the customer map's two GitHub calls: the CSV itself, and the commit
 // lookup used for the map's age (an empty list means "age unknown", a
 // `commitDate` gives the map that date).
-function githubResponse(u, commitDate) {
+function githubResponse(u, commitDate, csv) {
   const commits = commitDate ? [{ commit: { committer: { date: commitDate } } }] : [];
-  const body = u.includes("/commits?") ? JSON.stringify(commits) : CUSTOMERS_CSV;
+  const body = u.includes("/commits?") ? JSON.stringify(commits) : csv;
   return Promise.resolve({
     ok: true,
     status: 200,
@@ -69,15 +69,15 @@ const LOKI_DOWN = { lokiDown: true };
 // or LOKI_DOWN. The customer map is reloaded through the stub on every call, so
 // each test starts from CUSTOMERS_CSV rather than a map cached by an earlier test.
 // `githubDown: true` makes GitHub answer 503 instead; `commitDate` is the date
-// GitHub gives for the map's last commit.
-function withLokiStub(routes, fn, { githubDown = false, commitDate } = {}) {
+// GitHub gives for the map's last commit; `csv` replaces CUSTOMERS_CSV.
+function withLokiStub(routes, fn, { githubDown = false, commitDate, csv = CUSTOMERS_CSV } = {}) {
   const calls = [];
   const origFetch = globalThis.fetch;
   resetCustomerMapCache();
   globalThis.fetch = (url) => {
     if (String(url).startsWith("https://api.github.com/")) {
       if (githubDown) return Promise.resolve({ ok: false, status: 503, text: () => Promise.resolve("") });
-      return githubResponse(String(url), commitDate);
+      return githubResponse(String(url), commitDate, csv);
     }
     calls.push(String(url));
     const u = String(url);
@@ -466,6 +466,31 @@ test("grafana_logs_link: a word found only after a namespace's first segment is 
       assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
     },
     { githubDown: true },
+  );
+});
+
+test("grafana_logs_link: a data plane the map lists under two customers is refused, and Loki /series is never queried", async () => {
+  // Regression: by name it was searched as acme's, by id it was called acme's.
+  const csv =
+    CUSTOMERS_CSV +
+    "globex,cp1111,cp1111-dp0001,unitedstates,aws,us-east-1,None,prod-org-globex.us-aws-us-east-1.gateway.gravitee.io\n";
+  await withLokiStub(
+    {
+      [NS_VALUES]: ["apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp0002", "apim-dp-cp1111-dp0003"],
+      [SERIES]: [stream("apim-dp-cp1111-dp0001", "acme-gateway")],
+    },
+    async (calls) => {
+      for (const client of ["acme", "cp1111-dp0001"]) {
+        const out = await callTool("grafana_logs_link", { client });
+        assert.equal(out.refused, true, client);
+        assert.deepEqual(out.resolved_namespaces, [], client);
+      }
+      const byName = await callTool("grafana_logs_link", { client: "acme" });
+      assert.deepEqual(byName.shared_data_planes, [{ data_plane_id: "cp1111-dp0001", customers: ["acme", "globex"] }]);
+      assert.equal(byName.shared_data_planes_truncated, 0);
+      assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+    },
+    { csv },
   );
 });
 

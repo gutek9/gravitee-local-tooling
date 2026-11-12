@@ -65,6 +65,16 @@ test("validateCustomerMap: customers with missing namespaces fail only above the
   assert.match(above.errors[0], /2 customers have missing namespaces \(threshold 1\)/);
 });
 
+test("validateCustomerMap: a data plane listed under two customers fails, whatever the threshold", () => {
+  // grafana_logs_link refuses such a data plane, so a map with one is not fit
+  // to be refreshed into the snapshot, even with nothing missing.
+  const shared = CSV + "globex,cp1111,cp1111-dp0001,unitedstates,aws,us-east-1,None,prod-org-globex.us-aws-us-east-1.gateway.gravitee.io\n";
+  const out = validateCustomerMap({ map: { rows: parseCustomerCsv(shared), source: "github" }, liveNamespaces: ALL_LIVE, maxStale: 10000 });
+  assert.equal(out.ok, false);
+  assert.equal(out.measured, true);
+  assert.match(out.errors.join("\n"), /1 data plane\(s\) listed under more than one customer: cp1111-dp0001 \(acme, globex\)/);
+});
+
 test("validateCustomerMap: no live data planes at all reports 0%, not NaN", () => {
   const out = validateCustomerMap({ map: MAP, liveNamespaces: ["kestrel-prod"], maxStale: 5 });
   assert.equal(out.liveDataPlanes, 0);

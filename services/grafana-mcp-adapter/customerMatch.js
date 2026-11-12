@@ -33,6 +33,20 @@ export function namespacesOf(rows = []) {
     ...(own.length ? { control_plane_is_single_tenant: true } : {}),
   };
 }
+// The customers the map lists each data plane under, keyed by the data plane's
+// id in lower case. A data plane is one customer's deployment, so a second
+// customer on it is a fault in the map: its logs cannot be said to be either's,
+// and every lookup asks this one place rather than trusting the first row.
+export function dataPlaneOwners(rows = []) {
+  const owners = new Map();
+  for (const r of rows) {
+    const id = String(r.data_plane_id).toLowerCase();
+    if (!owners.has(id)) owners.set(id, new Set());
+    owners.get(id).add(r.customer);
+  }
+  return new Map([...owners].map(([id, customers]) => [id, [...customers].sort()]));
+}
+
 // Gravitee Cloud namespaces (`apim-dp-<cp>-<dp>`, `apim-cp-<cp>`) carry ids,
 // not a customer's name. One pattern, case-insensitive, for the check here and
 // for the LogQL matcher that keeps the service_name search out of them; LogQL
@@ -42,16 +56,19 @@ const CLOUD_NAMESPACE = new RegExp(`^(?:${CLOUD_NAMESPACE_PATTERN})$`, "i");
 export const isCloudNamespace = (namespace) => CLOUD_NAMESPACE.test(String(namespace));
 
 // The data planes whose own id, the last segment of `apim-dp-<cp>-<dp>`, is
-// `id`, in the map or in Loki, with their customer when the map has it. An id
+// `id`, in the map or in Loki, with their customer when the map has one (all
+// of them, as `customers`, when it lists the data plane under several). An id
 // with a dash or a space is not a data plane's own id: lookupById handles
 // `cp1111-dp0001`.
 export function dataPlanesWithId(rows = [], namespaceValues = [], id = "") {
   const want = String(id).trim().toLowerCase();
   if (!want || /[\s-]/.test(want)) return [];
+  const owners = dataPlaneOwners(rows);
   const found = new Map();
   for (const r of rows) {
     const namespace = dataPlaneNamespace(r.data_plane_id);
-    found.set(namespace.toLowerCase(), { namespace, customer: r.customer });
+    const customers = owners.get(String(r.data_plane_id).toLowerCase());
+    found.set(namespace.toLowerCase(), customers.length === 1 ? { namespace, customer: customers[0] } : { namespace, customers });
   }
   for (const namespace of namespaceValues) {
     const key = String(namespace).toLowerCase();
@@ -122,7 +139,17 @@ export function lookupById(rows = [], query = "") {
 
   const byDataPlane = rows.filter((r) => r.data_plane_id.toLowerCase() === id);
   if (byDataPlane.length) {
-    return { kind: "data_plane", id, customer: byDataPlane[0].customer, deployments: byDataPlane };
+    const customers = dataPlaneOwners(byDataPlane).get(id);
+    if (customers.length === 1) return { kind: "data_plane", id, customer: customers[0], deployments: byDataPlane };
+    return {
+      kind: "data_plane",
+      id,
+      customers,
+      deployments: byDataPlane,
+      note:
+        `The customer map lists data plane ${id} under ${customers.length} customers (${listNames(customers)}), ` +
+        "so whose it is cannot be said.",
+    };
   }
 
   const byControlPlane = rows.filter((r) => String(r.control_plane_id).toLowerCase() === id);
@@ -313,6 +340,28 @@ export function resolveCustomerNamespaces(rows = [], { core, qualifiers = [], co
     };
   }
   const finalRows = cpFiltered;
+
+  // A data plane the map lists under another customer too is refused, never
+  // searched under this one's name: its logs may be the other customer's. The
+  // customer's data planes with no second owner are named, so they can still
+  // be searched one by one through their id.
+  const owners = dataPlaneOwners(rows);
+  const ownersOf = (r) => owners.get(String(r.data_plane_id).toLowerCase());
+  const shared = [...new Map(finalRows.filter((r) => ownersOf(r).length > 1).map((r) => [r.data_plane_id, r])).values()];
+  if (shared.length) {
+    const others = [...new Set(matched.filter((r) => ownersOf(r).length === 1).map((r) => r.data_plane_id))];
+    return {
+      matched: [],
+      namespaces: [],
+      control_plane_namespaces: [],
+      shared_data_planes: shared.map((r) => ({ data_plane_id: r.data_plane_id, customers: ownersOf(r) })),
+      reason:
+        `The customer map lists ${listNames(shared.map((r) => `${r.data_plane_id} (${ownersOf(r).join(", ")})`))} ` +
+        `under more than one customer, so whose logs ${shared.length > 1 ? "they hold" : "it holds"} cannot be said. ` +
+        "Nothing was searched." +
+        (others.length ? ` ${matched[0].customer}'s other data planes can be searched by id: ${listNames(others)}.` : ""),
+    };
+  }
 
   // A trial's control plane is searched with it, never a shared one: the
   // difference is encoded in namespacesOf, not left to the namespace matcher.

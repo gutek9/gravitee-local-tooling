@@ -120,13 +120,22 @@ The response also says how the customer was found:
 - `matched_by_id`, `owner_unknown` — `client` was an id from an alert or a pod
   name. A data plane (`apim-dp-cp1111-dp0001` or `cp1111-dp0001`) is searched
   alone, with its customer when the map knows it; when only Loki knows it,
-  `owner_unknown` says whose it is cannot be told. A control plane (`cp1111`) is
+  `owner_unknown` says whose it is cannot be told. One the map lists under more
+  than one customer is refused, naming them all (`matched_by_id.customers`):
+  whose logs it holds cannot be said. A control plane (`cp1111`) is
   refused: its namespace is shared by every customer on that organization. Pass
   the customer's name with `control_plane_id` instead. A trial is named by its
   control-plane id (`trial-tt0001`) and resolves as that customer. A data
   plane's own id alone (`dp0001`) is refused, listing the data planes that carry
-  it (`data_planes`, with their customer when the map knows it): pass the full
-  namespace of the one you mean.
+  it (`data_planes`, with their customer when the map knows it, or `customers`
+  when it lists several, which is never searched): pass the full namespace of
+  the one you mean.
+- `shared_data_planes`, `shared_data_planes_truncated` — what `client` would
+  search includes a data plane the map lists under more than one customer
+  (`data_plane_id`, `customers`; at most ten, with how many were left out). Its logs
+  cannot be said to be either's, so nothing is searched, hosted namespaces
+  included, whatever `control_plane_id` says. The note names the customer's other
+  data planes, which can be searched by their id.
 - `spans_multiple_organizations`, `organizations_note` — one name, several Cockpit
   organizations. Pass `control_plane_id` to narrow to one.
 - `refused`, `unknown_control_plane`, `requested_control_plane_id` — the
@@ -326,7 +335,10 @@ organizations (`control_plane_ids`, to pass as `control_plane_id`), environments
 regions, the exact namespaces `grafana_logs_link` searches for it (its data
 planes, plus a trial's own control plane, flagged `control_plane_is_single_tenant`),
 and the shared control-plane
-namespaces. Hosted customers come back as `hosted_namespaces`. Gravitee Cloud
+namespaces. A data plane the map also lists under another customer is flagged in
+`shared_data_planes`, and `grafana_logs_link` refuses any search that includes
+it; an id the map lists under several customers names them all
+(`matched_by_id.customers`). Hosted customers come back as `hosted_namespaces`. Gravitee Cloud
 namespaces whose name matches (`apim-dp-*`, `apim-cp-*`, for example every data
 plane on `cp1111`) come back apart as `cloud_namespaces`: their name carries
 ids, not the owner, so look one up by its full id. Data planes that
@@ -464,11 +476,13 @@ Cloud then gets only its hosted part.
 
 `validate-customers` measures the customer map against the namespaces Loki has
 seen: customers whose mapped data planes no longer exist, and live data planes
-the map does not know. It exits 0 when the map was measured and no more
-customers have missing namespaces than `VALIDATE_MAX_STALE` allows, so it can
-gate a refresh. It exits 1 when a setting is wrong (before any request), when
-GitHub or Loki cannot be read, when there is nothing to measure (no map, or no
-namespaces in the window), or above the threshold. Its output names customers,
+the map does not know. It exits 0 when the map was measured, no more customers
+have missing namespaces than `VALIDATE_MAX_STALE` allows, and no data plane is
+listed under more than one customer, so it can gate a refresh. It exits 1 when a
+setting is wrong (before any request), when GitHub or Loki cannot be read, when
+there is nothing to measure (no map, or no namespaces in the window), above the
+threshold, or when the map lists a data plane under more than one customer
+(whatever the threshold: `grafana_logs_link` refuses such a data plane). Its output names customers,
 so share it only where the customer list may be seen.
 
 It runs on the host: the image does not ship `scripts/`, and Node does not read

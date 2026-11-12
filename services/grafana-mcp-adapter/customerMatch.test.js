@@ -14,6 +14,7 @@ import {
   controlPlaneOf,
   isCloudNamespace,
   dataPlanesWithId,
+  dataPlaneOwners,
 } from "./customerMatch.js";
 
 // A faithful slice of the real file, including the parts that break naive
@@ -233,6 +234,49 @@ test("lookupById: an unlisted data plane falls back to control-plane candidates"
   assert.equal(out.control_plane_id, "cp1111");
   assert.deepEqual(out.candidate_customers, ["acme", "beacon"]);
   assert.match(out.note, /a lead, not an attribution/);
+});
+
+// A fault in the map: cp1111-dp0001 listed under acme AND globex.
+const SHARED_DP_CSV =
+  CSV +
+  "globex,cp1111,cp1111-dp0001,unitedstates,aws,us-east-1,None,prod-org-globex.us-aws-us-east-1.gateway.gravitee.io\n";
+
+test("dataPlaneOwners: every customer the map lists on a data plane, each once", () => {
+  const owners = dataPlaneOwners(parseCustomerCsv(SHARED_DP_CSV));
+  assert.deepEqual(owners.get("cp1111-dp0001"), ["acme", "globex"]);
+  assert.deepEqual(owners.get("cp1111-dp0002"), ["acme"]);
+  // The same customer on two rows is still one owner.
+  const twice = CSV + "acme,cp1111,cp1111-dp0002,unitedstates,aws,us-east-1,None,dev-org-acme.us-aws-us-east-1.gateway.gravitee.io\n";
+  assert.deepEqual(dataPlaneOwners(parseCustomerCsv(twice)).get("cp1111-dp0002"), ["acme"]);
+});
+
+test("lookupById: a data plane the map lists under two customers names both, never the first", () => {
+  // Regression: the first row's customer was given as the data plane's owner.
+  const rows = parseCustomerCsv(SHARED_DP_CSV);
+  const out = lookupById(rows, "apim-dp-cp1111-dp0001");
+  assert.equal(out.kind, "data_plane");
+  assert.equal(out.customer, undefined);
+  assert.deepEqual(out.customers, ["acme", "globex"]);
+  assert.match(out.note, /The customer map lists data plane cp1111-dp0001 under 2 customers \(acme, globex\)/);
+  assert.equal(lookupById(rows, "cp1111-dp0002").customer, "acme");
+});
+
+test("dataPlanesWithId: a data plane the map lists under two customers names both", () => {
+  // Regression: the last row's customer was given as the owner.
+  assert.deepEqual(dataPlanesWithId(parseCustomerCsv(SHARED_DP_CSV), [], "dp0001"), [
+    { namespace: "apim-dp-cp1111-dp0001", customers: ["acme", "globex"] },
+  ]);
+});
+
+test("resolveCustomerNamespaces: a data plane listed under another customer too is refused, never searched", () => {
+  // Regression: acme's search included cp1111-dp0001, which the map also gives globex.
+  const rows = parseCustomerCsv(SHARED_DP_CSV);
+  const out = resolveCustomerNamespaces(rows, { core: "acme" });
+  assert.deepEqual(out.namespaces, []);
+  assert.deepEqual(out.shared_data_planes, [{ data_plane_id: "cp1111-dp0001", customers: ["acme", "globex"] }]);
+  assert.match(out.reason, /Nothing was searched\. acme's other data planes can be searched by id: cp1111-dp0002\./);
+  // Only what would be searched counts: acme's dev is its own.
+  assert.deepEqual(resolveCustomerNamespaces(rows, { core: "acme", qualifiers: ["dev"] }).namespaces, ["apim-dp-cp1111-dp0002"]);
 });
 
 test("lookupById: a wholly unknown id says so rather than guessing", () => {

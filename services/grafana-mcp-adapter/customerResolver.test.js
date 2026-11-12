@@ -794,6 +794,60 @@ test("findCustomerMatches: Cloud namespaces that match by name are listed apart,
   assert.equal(apim.note, undefined);
 });
 
+// A fault in the map: cp1111-dp0001 listed under acme AND globex.
+const SHARED_DP_ROW =
+  "globex,cp1111,cp1111-dp0001,unitedstates,aws,us-east-1,None,prod-org-globex.us-aws-us-east-1.gateway.gravitee.io\n";
+const SHARED_DP_MAP = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV + SHARED_DP_ROW) };
+
+test("resolveClient: a data plane the map lists under two customers is never searched, by name or by id", () => {
+  const resolveShared = (phrase, values, extra = {}) =>
+    resolveClient({ phrase, namespaceValues: values, map: SHARED_DP_MAP, ...extra });
+  // Regression: "acme" searched cp1111-dp0001 as acme's, with no word about globex.
+  const byName = resolveShared("acme", ["acme-prod", ...ACME_DATA_PLANES]);
+  assert.equal(byName.refused, true);
+  assert.deepEqual(byName.namespaces, []);
+  assert.deepEqual(byName.shared_data_planes, [{ data_plane_id: "cp1111-dp0001", customers: ["acme", "globex"] }]);
+  assert.match(byName.note, /acme's other data planes can be searched by id: cp1111-dp0002, cp1111-dp0003\./);
+  // A control_plane_id does not make it searchable either.
+  assert.equal(resolveShared("acme", ACME_DATA_PLANES, { controlPlaneId: "cp1111" }).refused, true);
+  // Only what would be searched counts: acme's dev is its own.
+  assert.deepEqual(resolveShared("acme dev", ACME_DATA_PLANES).namespaces, ["apim-dp-cp1111-dp0002"]);
+  // Regression: its id said it was acme's data plane, and searched it.
+  for (const id of ["cp1111-dp0001", "apim-dp-cp1111-dp0001"]) {
+    const byId = resolveShared(id, ACME_DATA_PLANES);
+    assert.equal(byId.refused, true, id);
+    assert.deepEqual(byId.namespaces, [], id);
+    assert.deepEqual(byId.matched_by_id, { kind: "data_plane", id: "cp1111-dp0001", customers: ["acme", "globex"] });
+  }
+});
+
+test("resolveClient: a data plane's own id never offers to search one the map lists under two customers", () => {
+  // Regression: "dp0001" named only the last row's customer, and told the
+  // caller to pass the full namespace, which is refused.
+  const map = {
+    ...MAP,
+    rows: parseCustomerCsv(CUSTOMERS_CSV.split("\n").slice(0, 2).join("\n") + "\n" + SHARED_DP_ROW),
+  };
+  const out = resolveClient({ phrase: "dp0001", namespaceValues: ["apim-dp-cp1111-dp0001"], map });
+  assert.equal(out.refused, true);
+  assert.deepEqual(out.matched_by_id.data_planes, [{ namespace: "apim-dp-cp1111-dp0001", customers: ["acme", "globex"] }]);
+  assert.equal(
+    out.note,
+    '"dp0001" is the id of data plane apim-dp-cp1111-dp0001 (listed for acme, globex, so never searched). Nothing was searched.',
+  );
+});
+
+test("findCustomerMatches: a data plane the map lists under two customers is flagged, and its id names both", () => {
+  // Regression: the id was credited to the first row's customer.
+  const byId = findCustomerMatches({ query: "cp1111-dp0001", map: SHARED_DP_MAP, namespaceValues: ACME_DATA_PLANES });
+  assert.equal(byId.matched_by_id.customer, undefined);
+  assert.deepEqual(byId.matched_by_id.customers, ["acme", "globex"]);
+  const byName = findCustomerMatches({ query: "acme", map: SHARED_DP_MAP, namespaceValues: ACME_DATA_PLANES });
+  assert.deepEqual(byName.gravitee_cloud_customers[0].shared_data_planes, [
+    { data_plane_id: "cp1111-dp0001", customers: ["acme", "globex"] },
+  ]);
+});
+
 test("findCustomerMatches: a Cloud id matches a whole segment of any Cloud namespace before part of a longer id", () => {
   // Hosted namespaces are read from their owner's first segment; Cloud ones
   // have none (all start with apim), so an id is any whole segment of them.

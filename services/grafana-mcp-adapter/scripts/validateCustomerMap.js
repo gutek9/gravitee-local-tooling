@@ -1,7 +1,7 @@
 // The checks behind `npm run validate-customers`: the customer map measured
 // against the namespaces Loki has actually seen. Pure, no I/O, so the verdict,
 // including its failure paths, can be unit-tested directly.
-import { resolveCustomerNamespaces, dataPlaneNamespace } from "../customerMatch.js";
+import { resolveCustomerNamespaces, dataPlaneNamespace, dataPlaneOwners } from "../customerMatch.js";
 
 // The script's two numbers, read with readNumberSettings like the map settings:
 // empty means the default, anything else must be a whole number in range. A
@@ -53,14 +53,27 @@ export function validateCustomerMap({ map, liveNamespaces = [], maxStale = 20 })
   const liveDataPlanes = liveNamespaces.filter((n) => n.startsWith("apim-dp-"));
   const orphans = liveDataPlanes.filter((n) => !mapped.has(n));
 
+  // A data plane listed under two customers is a fault in the map whatever the
+  // threshold: grafana_logs_link refuses it, so it is reported and fails.
+  const sharedDataPlanes = [...dataPlaneOwners(map.rows)]
+    .filter(([, customers]) => customers.length > 1)
+    .map(([id, customers]) => ({ data_plane_id: id, customers }));
+
   // Non-zero exit if the map has drifted badly, so this can gate a refresh.
   const tooStale = stale.length > maxStale;
   return {
-    ok: !tooStale,
+    ok: !tooStale && !sharedDataPlanes.length,
     measured: true,
-    errors: tooStale
-      ? [`${stale.length} customers have missing namespaces (threshold ${maxStale}). Run: npm run refresh-customers`]
-      : [],
+    errors: [
+      ...(tooStale ? [`${stale.length} customers have missing namespaces (threshold ${maxStale}). Run: npm run refresh-customers`] : []),
+      ...(sharedDataPlanes.length
+        ? [
+            `${sharedDataPlanes.length} data plane(s) listed under more than one customer: ` +
+              sharedDataPlanes.map((d) => `${d.data_plane_id} (${d.customers.join(", ")})`).join("; ") +
+              ". grafana_logs_link refuses them until the map lists each under one customer.",
+          ]
+        : []),
+    ],
     customers: customers.length,
     full,
     stale,

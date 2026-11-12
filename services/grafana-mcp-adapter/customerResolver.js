@@ -23,6 +23,7 @@ import {
   namespacesOf,
   isCloudNamespace,
   dataPlanesWithId,
+  dataPlaneOwners,
 } from "./customerMatch.js";
 
 // A hosted customer's namespaces are named after it by their first segment
@@ -221,7 +222,8 @@ export function resolveClient({ namespaceValues = [], ...rest }) {
 // matching it as a name searched several customers at once.
 //
 // A data plane is one deployment of one customer, so it is searched alone, and
-// said whose it is when the map knows. A control plane is shared by every
+// said whose it is when the map knows; one the map lists under several
+// customers is refused, naming them. A control plane is shared by every
 // customer on it and is refused. A name the map has whole comes first: a trial
 // is named by its control plane id (`trial-tt0001`), and that is one customer.
 // Returns null when the phrase is not an id.
@@ -241,6 +243,13 @@ function resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKn
     note,
     ...mapFields(map),
   });
+
+  if (lookup.kind === "data_plane" && lookup.customers) {
+    return refuse(
+      { kind: "data_plane", id: lookup.id, customers: lookup.customers.slice(0, MAX_NAMES) },
+      `${lookup.note} Nothing was searched.`,
+    );
+  }
 
   if (lookup.kind === "data_plane") {
     const rows = lookup.deployments;
@@ -388,6 +397,20 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
   const resolved = scope.useMap || answer.ambiguous ? answer : NOTHING;
   const namespaces = [...new Set([...byLabel, ...resolved.namespaces])];
 
+  // A data plane the map gives two owners is refused here, before the two
+  // routes' answers are combined: hosted namespaces included, since the map is
+  // wrong about this customer, and a control_plane_id cannot make it right.
+  if (resolved.shared_data_planes) {
+    return {
+      namespaces: [],
+      via: "none",
+      refused: true,
+      ...cappedList(resolved.shared_data_planes, MAX_NAMES, "shared_data_planes", "shared_data_planes_truncated"),
+      note: resolved.reason,
+      ...mapFields(map),
+    };
+  }
+
   // Words that narrow neither route are refused, not dropped: both routes found
   // the customer only by ignoring them, so searching either would return more
   // than was asked for. What exists is listed so the caller can retry. The
@@ -477,7 +500,16 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
     // now, so a customer actually called like that is still found by name.
     const dataPlanes = dataPlanesWithId(map.rows, namespaceValues, phrase);
     if (dataPlanes.length) {
-      const named = dataPlanes.map((d) => (d.customer ? `${d.namespace} (${d.customer})` : d.namespace));
+      // One the map lists under several customers is never searched, so it is
+      // named as such rather than offered as a full namespace to pass.
+      const named = dataPlanes.map((d) =>
+        d.customer
+          ? `${d.namespace} (${d.customer})`
+          : d.customers
+            ? `${d.namespace} (listed for ${d.customers.join(", ")}, so never searched)`
+            : d.namespace,
+      );
+      const searchable = dataPlanes.filter((d) => !d.customers).length;
       return {
         namespaces: [],
         via: "none",
@@ -492,8 +524,12 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
           (dataPlanes.length === 1
             ? `"${phrase}" is the id of data plane ${named[0]}. `
             : `"${phrase}" is the id of ${dataPlanes.length} data planes: ${listNames(named)}. `) +
-          "Nothing was searched: pass the full namespace " +
-          (dataPlanes.length === 1 ? "to search that data plane." : "of the one you mean."),
+          "Nothing was searched" +
+          (!searchable
+            ? "."
+            : dataPlanes.length === 1
+              ? ": pass the full namespace to search that data plane."
+              : ": pass the full namespace of the one you mean."),
         ...mapFields(map),
       };
     }
@@ -624,6 +660,8 @@ export function resolutionReport(resolution = {}) {
     "known_regions",
     "shared_control_plane_namespaces",
     "control_plane_is_single_tenant",
+    "shared_data_planes",
+    "shared_data_planes_truncated",
     "ambiguous_customer",
     "candidates",
     "candidates_truncated",
@@ -681,9 +719,21 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
   // Ask the map where the name ends, so "acme recette" finds acme.
   const { core: mapName } = splitNameAndTail(map.rows, needle);
   const groups = groupByCustomer(matchCustomers(map.rows, mapName));
+  const owners = dataPlaneOwners(map.rows);
   const cockpit = [...groups.values()]
-    // The same namespaces grafana_logs_link searches for this customer.
-    .map((rows) => ({ ...describeCustomer(rows), ...namespacesOf(rows) }))
+    // The same namespaces grafana_logs_link searches for this customer, except
+    // a data plane the map lists under another customer too: flagged here, and
+    // grafana_logs_link refuses it.
+    .map((rows) => {
+      const shared = [...new Set(rows.map((r) => r.data_plane_id))]
+        .map((id) => ({ data_plane_id: id, customers: owners.get(id.toLowerCase()) }))
+        .filter((d) => d.customers.length > 1);
+      return {
+        ...describeCustomer(rows),
+        ...namespacesOf(rows),
+        ...(shared.length ? cappedList(shared, maxResults, "shared_data_planes", "shared_data_planes_truncated") : {}),
+      };
+    })
     .sort((a, b) => a.customer.localeCompare(b.customer));
 
   // Hosted customers have no map entry; their namespace carries the name. Cloud
