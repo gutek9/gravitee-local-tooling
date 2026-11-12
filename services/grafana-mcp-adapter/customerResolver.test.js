@@ -816,6 +816,35 @@ test("findCustomerMatches: a failed namespace lookup is not reported as nothing 
   assert.equal(acme.namespace_lookup_failed, true);
 });
 
+test("findCustomerMatches: an id the map gives one owner is answered, never 'nothing matched'", () => {
+  // Regression: matched_by_id named acme, while the note said "No Gravitee
+  // Cloud customer or hosted namespace matched" whenever Loki had not seen the
+  // namespace, and said nothing when it had.
+  const stale =
+    "cp1111-dp0001 is acme's data plane in the customer map (namespace apim-dp-cp1111-dp0001). Loki has not seen " +
+    "that namespace in the last 30 days: the customer map is probably stale (the deployment was removed, or " +
+    "recreated under a new id).";
+  const absent = find("cp1111-dp0001", ["apim-dp-cp1111-dp0002"]);
+  assert.equal(absent.matched_by_id.customer, "acme");
+  assert.equal(absent.note, stale);
+  assert.equal(find("apim-dp-cp1111-dp0001", []).note, stale);
+  // Live: the owner, nothing about the map.
+  const live = "cp1111-dp0001 is acme's data plane in the customer map (namespace apim-dp-cp1111-dp0001).";
+  assert.equal(find("cp1111-dp0001", ACME_DATA_PLANES).note, live);
+  // Loki's list failed: the owner, and no claim about what Loki has.
+  const lokiDown = find("cp1111-dp0001", null);
+  assert.equal(lokiDown.note, live);
+  assert.equal(lokiDown.namespace_lookup_failed, true);
+  // The map may spell an id in capitals; Loki's namespaces are lower case.
+  const capitals = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV.replace("acme,cp1111,cp1111-dp0001", "acme,cp1111,CP1111-DP0001")) };
+  assert.doesNotMatch(
+    findCustomerMatches({ query: "cp1111-dp0001", namespaceValues: ACME_DATA_PLANES, map: capitals }).note,
+    /has not seen/,
+  );
+  // A control plane the map lists one customer on.
+  assert.equal(find("cp1111", []).note, "The customer map lists one customer on control plane cp1111: acme.");
+});
+
 test("findCustomerMatches: a failed namespace lookup says why", () => {
   const failure = { reason: "Grafana GET /x failed with HTTP 401", retryable: false };
   const out = find("kestrel", null, { lookupFailure: failure });

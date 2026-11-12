@@ -341,7 +341,9 @@ Cockpit organizations, or to see what a customer has before searching.
 `query` is a customer name or fragment (`acme`), or an id as it appears in an
 alert, pod name or dashboard (`apim-dp-cp1111-dp0001`, `cp1111-dp0001`,
 `cp1111`). The id lookup is always attempted, so pasting a namespace from an
-alert tells you whose it is. A blank `query` is refused.
+alert tells you whose it is: when the map gives the id one owner, the note
+names it, and for a data plane whose namespace Loki has not seen in the last 30
+days it adds that the map is probably stale. A blank `query` is refused.
 
 It returns, per Gravitee Cloud customer: deployment count, Cockpit
 organizations (`control_plane_ids`, to pass as `control_plane_id`), environments,

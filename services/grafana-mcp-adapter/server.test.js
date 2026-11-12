@@ -922,6 +922,20 @@ test("grafana_find_customer: an id from an alert or pod name finds its owner", a
   });
 });
 
+test("grafana_find_customer: a mapped data plane Loki has not seen in 30 days is named, and the map called stale", async () => {
+  // Regression: the answer said "No Gravitee Cloud customer or hosted namespace
+  // matched" next to matched_by_id naming acme.
+  await withLokiStub({ [NS_VALUES]: ["apim-dp-cp1111-dp0002"] }, async (calls) => {
+    const out = await callTool("grafana_find_customer", { query: "cp1111-dp0001" });
+    assert.equal(out.matched_by_id.customer, "acme");
+    assert.match(out.note, /^cp1111-dp0001 is acme's data plane in the customer map/);
+    assert.match(out.note, /Loki has not seen that namespace in the last 30 days: the customer map is probably stale/);
+    // The 30 days the note states are the window Loki was asked about.
+    const start = Number(new URL(calls.find((u) => u.includes(NS_VALUES))).searchParams.get("start")) / 1e6;
+    assert.ok(Math.abs(start - (Date.now() - 30 * 86_400_000)) < 60_000, `start ${new Date(start).toISOString()}`);
+  });
+});
+
 test("grafana_find_customer: a fragment matching several customers says so", async () => {
   await withLokiStub({ [NS_VALUES]: [] }, async () => {
     const out = await callTool("grafana_find_customer", { query: "beac" });

@@ -768,6 +768,10 @@ export function resolutionReport(resolution = {}) {
 // (`apim-dp-cp1111-dp0001`, `cp1111-dp0001`), as opposed to a customer name.
 const ID_SHAPED = /^(apim-(dp|cp)-[0-9a-z-]+|[0-9a-z]+(-[0-9a-z]+)+)$/i;
 
+// How far back grafana_find_customer looks for live namespaces: a deployment
+// absent over that window is taken as gone, not merely quiet.
+const FIND_WINDOW_DAYS = 30;
+
 // A Gravitee Cloud customer's and matched_by_id's own lists, capped by
 // max_results like the answer's. A customer's shared and unattributed data
 // planes are capped where they are built.
@@ -778,8 +782,7 @@ const MATCHED_BY_ID_LISTS = ["customers", "candidate_customers", "deployments"];
 // without querying any logs.
 export async function findCustomer(query, { datasourceUid, maxResults = 20 } = {}) {
   const map = await loadCustomerMap();
-  // 30 days: a deployment absent over that window is gone, not merely quiet.
-  const { namespaceValues, failure } = await namespaceList(datasourceUid, "now-30d");
+  const { namespaceValues, failure } = await namespaceList(datasourceUid, `now-${FIND_WINDOW_DAYS}d`);
   return findCustomerMatches({ query, map, namespaceValues, maxResults, lookupFailure: failure });
 }
 
@@ -911,6 +914,20 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
       "cover — you can still query it directly by namespace, but its owner cannot be determined from the map." : ""}`;
   } else if (byId && byId.kind !== "unknown" && byId.note) {
     result.note = byId.note;
+  } else if (byId && byId.kind === "data_plane") {
+    // A data plane the map gives one owner is an answer, whether or not Loki
+    // has its namespace: never "nothing matched".
+    const namespace = dataPlaneNamespace(byId.deployments[0].data_plane_id);
+    const seen = namespaceValues.some((n) => n.toLowerCase() === namespace.toLowerCase());
+    result.note =
+      `${byId.id} is ${byId.customer}'s data plane in the customer map (namespace ${namespace}).` +
+      (lookupFailed || seen
+        ? ""
+        : ` Loki has not seen that namespace in the last ${FIND_WINDOW_DAYS} days: the customer map is probably ` +
+          "stale (the deployment was removed, or recreated under a new id).");
+  } else if (byId && byId.kind === "control_plane") {
+    // One customer on a control plane (several get byId's own note).
+    result.note = `The customer map lists one customer on control plane ${byId.id}: ${byId.customers[0]}.`;
   } else if (!cockpit.length && lookupFailed) {
     result.note =
       `No Gravitee Cloud customer matched "${query}", and hosted namespaces could not be checked: ` +
