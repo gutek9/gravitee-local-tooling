@@ -78,8 +78,9 @@ reason in `note` (not repeated in `customer_note`), with no `query` or
 `matched_*`: nothing was queried. The default range is the last hour; widen
 with `from`/`to`. When nothing matches on the `service_name` path, it returns
 close `service_name` values as `suggestions`, so typos like `kestrl → kestrel`
-surface. A blank `client` is refused: with nothing to narrow by, it would
-match every stream in Loki.
+surface. They come from outside Gravitee Cloud namespaces only, like the search
+itself. A blank `client` is refused: with nothing to narrow by, it would match
+every stream in Loki.
 
 The response also says how the customer was found:
 

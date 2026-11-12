@@ -51,6 +51,15 @@ test("fetchLabelValues: reads the label's values through the datasource proxy", 
   });
 });
 
+test("fetchLabelValues: sends a query only when given one", async () => {
+  await withFetch({ data: [] }, async (calls) => {
+    await fetchLabelValues("logs-uid", "namespace", { from: "now-1h" });
+    await fetchLabelValues("logs-uid", "service_name", { from: "now-1h", query: '{namespace="kestrel-prod"}' });
+    assert.equal(new URL(calls[0]).searchParams.has("query"), false);
+    assert.equal(new URL(calls[1]).searchParams.get("query"), '{namespace="kestrel-prod"}');
+  });
+});
+
 test("fetchLabelValues: a failed call throws, so the caller decides what it means", async () => {
   await withFetch({ status: 502 }, async () => {
     await assert.rejects(() => fetchLabelValues("logs-uid", "namespace", { from: "now-1h" }), /HTTP 502/);
@@ -62,6 +71,18 @@ test("suggestClients: ranks service_name values close to the client text", async
     const suggestions = await suggestClients("logs-uid", "kestrl", { from: "now-1h" });
     assert.ok(suggestions.includes("graviteeio-ae-kestrel-rec-engine"));
     assert.ok(calls[0].includes("label/service_name/values"));
+  });
+});
+
+test("suggestClients: asks only for the values a service_name search can reach", async () => {
+  // Regression: every service_name value was ranked, Gravitee Cloud ones too,
+  // which the search leaves out, so a suggestion could find nothing.
+  await withFetch({ data: [] }, async (calls) => {
+    await suggestClients("logs-uid", "kestrl", { from: "now-1h" });
+    assert.equal(
+      new URL(calls[0]).searchParams.get("query"),
+      '{namespace!~"(?i)apim-(dp|cp)-.+", service_name=~".+"}',
+    );
   });
 });
 

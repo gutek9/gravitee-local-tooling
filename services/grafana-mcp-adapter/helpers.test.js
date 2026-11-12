@@ -17,6 +17,7 @@ const {
   toLokiNs,
   editDistance,
   rankClientSuggestions,
+  SERVICE_NAME_SEARCH_SCOPE,
 } = await import("./helpers.js");
 
 // ---------------------------------------------------------------------------
@@ -152,6 +153,12 @@ test("buildLogsQuery: without pinned namespaces, Gravitee Cloud namespaces are l
     buildLogsQuery({ client: "acme", namespaces: ["apim-dp-cp1111-dp0001"] }),
     '{namespace=~"^apim-dp-cp1111-dp0001$"}',
   );
+});
+
+test("SERVICE_NAME_SEARCH_SCOPE: the streams a service_name search can reach", () => {
+  // Same Cloud exclusion as the search; Loki refuses a selector whose only
+  // matcher can match an empty value, so service_name=~".+" goes with it.
+  assert.equal(SERVICE_NAME_SEARCH_SCOPE, `{${OUTSIDE_CLOUD}, service_name=~".+"}`);
 });
 
 test("buildLogsQuery: client + component join with .*", () => {

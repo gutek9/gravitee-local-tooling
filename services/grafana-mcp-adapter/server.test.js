@@ -1160,6 +1160,29 @@ test("grafana_logs_link: no namespace + no streams -> suggestions from service_n
   );
 });
 
+test("grafana_logs_link: suggestions come only from outside Gravitee Cloud namespaces, like the search", async () => {
+  // Regression: a Gravitee Cloud service name was suggested, which the
+  // service_name search leaves out, so retyping it found nothing.
+  const hosted = "graviteeio-kestrel-prod-gateway";
+  const cloud = "prod-apim-dp-cp2222-dp0007-gateway";
+  const selectors = [];
+  // Loki applies the selector (checked against the live instance).
+  const serviceNames = (url) => {
+    const query = new URL(url).searchParams.get("query");
+    selectors.push(query);
+    return query?.includes('namespace!~"(?i)apim-(dp|cp)-.+"') ? [hosted] : [cloud, hosted];
+  };
+  await withLokiStub(
+    { [NS_VALUES]: ["kestrel-prod", "apim-dp-cp2222-dp0007"], [SERIES]: [], [SVC_VALUES]: serviceNames },
+    async () => {
+      const out = await callTool("grafana_logs_link", { client: "gatewy" });
+      assert.deepEqual(out.resolved_namespaces, []);
+      assert.deepEqual(out.suggestions, [hosted]);
+      assert.deepEqual(selectors, ['{namespace!~"(?i)apim-(dp|cp)-.+", service_name=~".+"}']);
+    },
+  );
+});
+
 test("grafana_logs_link: no namespace, no streams, no suggestions -> generic note", async () => {
   await withLokiStub(
     {

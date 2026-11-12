@@ -2,7 +2,7 @@
 // and the label sets of the streams a selector matches. Every call goes through
 // grafanaDatasourceProxyGet, so the read-only check in grafanaClient.js covers it.
 import { grafanaDatasourceProxyGet } from "./grafanaClient.js";
-import { toLokiNs, rankClientSuggestions } from "./helpers.js";
+import { toLokiNs, rankClientSuggestions, SERVICE_NAME_SEARCH_SCOPE } from "./helpers.js";
 
 // Discover which log streams match a selector WITHOUT pulling any log lines.
 // Loki's /series returns just the label sets of the matching streams (one object
@@ -24,22 +24,25 @@ export async function fetchMatchingStreams(uid, { query, from, to }) {
   }));
 }
 
-// The values a label takes from `from` on (e.g. every `namespace`). Throws when
-// the call fails: what a failure means for the answer is the caller's decision.
-export async function fetchLabelValues(uid, label, { from } = {}) {
+// The values a label takes from `from` on (e.g. every `namespace`), in the
+// streams `query` selects when given. Throws when the call fails: what a
+// failure means for the answer is the caller's decision.
+export async function fetchLabelValues(uid, label, { from, query } = {}) {
   const data = await grafanaDatasourceProxyGet(uid, `loki/api/v1/label/${encodeURIComponent(label)}/values`, {
     start: toLokiNs(from, 60 * 60),
+    query,
   });
   return data?.data || [];
 }
 
 // When a logs query returns nothing, the `client` text often just doesn't match
-// any `service_name`. Fetch the label's values and suggest the closest ones so
-// the caller can correct the spelling. Returns a small, de-duplicated list.
+// any `service_name`. Fetch the values the same search could have matched and
+// suggest the closest ones so the caller can correct the spelling. Returns a
+// small, de-duplicated list.
 export async function suggestClients(uid, client, { from } = {}) {
   let values = [];
   try {
-    values = await fetchLabelValues(uid, "service_name", { from });
+    values = await fetchLabelValues(uid, "service_name", { from, query: SERVICE_NAME_SEARCH_SCOPE });
   } catch {
     return [];
   }

@@ -93,6 +93,18 @@ const ENV_TOKENS = new Set([
 const SEG_START = "(?:^|[-_.])";
 const SEG_END = "(?:[-_.]|$)";
 
+// Cloud service names carry ids (`prod-apim-dp-<cp>-<dp>-gateway`), so a
+// fragment of an id would reach a shared control plane or several customers'
+// data planes by service_name. A service_name search stays outside Cloud
+// namespaces, which are reached only through the customer map or a full id.
+const OUTSIDE_CLOUD = `namespace!~"(?i)${CLOUD_NAMESPACE_PATTERN}"`;
+
+// The streams a service_name search can reach. The suggestions offered when it
+// finds nothing come from these only: a Cloud service name typed back as client
+// would not be searched. Loki needs a matcher that cannot match an empty value;
+// `.+` is that one, and keeps only streams that have a service_name.
+export const SERVICE_NAME_SEARCH_SCOPE = `{${OUTSIDE_CLOUD}, service_name=~".+"}`;
+
 // Build a LogQL selector from free-text client/component. Both are matched
 // case-insensitively as substrings of `service_name` (which in this instance
 // encodes both the customer and the component, e.g.
@@ -141,11 +153,7 @@ export function buildLogsQuery({ client, component, lineFilter, namespaces } = {
     // so anchor each and join with `|` (regex-escaped) for an exact alternation.
     matchers.push(`namespace=~"${ns.map((n) => `^${escapeRegex(n)}$`).join("|")}"`);
   } else {
-    // Cloud service names carry ids (`prod-apim-dp-<cp>-<dp>-gateway`), so a
-    // fragment of an id would reach a shared control plane or several
-    // customers' data planes by service_name. Cloud is reached only through
-    // the customer map or a full id, which pin their namespaces.
-    matchers.push(`namespace!~"(?i)${CLOUD_NAMESPACE_PATTERN}"`);
+    matchers.push(OUTSIDE_CLOUD);
   }
   // (?i) = case-insensitive; .* between parts so order/extra segments are fine.
   // Omit the service_name matcher entirely when there's nothing left to narrow
