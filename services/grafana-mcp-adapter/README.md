@@ -372,6 +372,7 @@ git-ignored — never hardcode the token):
 GRAFANA_ENABLED=true
 GRAFANA_BASE_URL=https://your-grafana-host   # e.g. https://gravitee.grafana.net
 GRAFANA_TOKEN=...                            # service account token (see Auth above)
+GRAFANA_LOGS_DATASOURCE_UID=...              # uid of the Loki datasource (see below)
 ```
 
 Then rerun `bin/local-tooling setup` with your usual `--agents` and `--repo`
@@ -384,8 +385,11 @@ tools say Grafana is disabled, and it does not read the customer map at startup.
 
 `GRAFANA_LOGS_DATASOURCE_UID` is **required** — it has no default. A uid that is
 correct for one Grafana org is a silent, plausible failure in every other one, so
-the adapter refuses to guess: `doctor` reports it as a config error and the logs
-tools fail with a clear message rather than returning an empty result.
+it is never guessed: `local-tooling doctor` reports it missing, and
+`local-tooling mcp grafana` (what your agent runs) does not start the adapter
+without it, so no Grafana tool is available until it is set. Started some other
+way, the adapter's map tools (`grafana_logs_link`, `grafana_find_customer`)
+refuse with a message naming it rather than returning an empty result.
 
 Find it under Connections > Data sources > (Loki). **The uid is not always the
 same as the display name.** On the Gravitee instance the datasource is displayed
@@ -455,8 +459,10 @@ These variables control where it comes from and how it is cached. Set them in
 the repo's `.env`; `docker compose` forwards all of them to the adapter
 container, and an empty value means the default. A number that is set must be a
 whole number in the range given below: `local-tooling doctor` reports a bad one,
-and the map tools (`grafana_logs_link`, `grafana_find_customer`) refuse to run
-with it, naming the setting. Only the token is required for
+and `local-tooling mcp grafana` does not start the adapter with it, so no
+Grafana tool is available until it is fixed. Started some other way, only the
+map tools (`grafana_logs_link`, `grafana_find_customer`) refuse, naming the
+setting. Only the token is required for
 a live fetch. Without it, the adapter falls back to the local snapshot (if you
 generated one) or reports that Cloud customers cannot be resolved. Hosted
 namespaces still resolve by name, but a customer that also runs on Gravitee

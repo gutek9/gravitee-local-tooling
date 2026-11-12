@@ -66,9 +66,11 @@ const TTL_MS = SETTINGS.values.GRAFANA_CUSTOMER_MAP_TTL_SECONDS * 1000;
 const FETCH_TIMEOUT_MS = SETTINGS.values.GRAFANA_CUSTOMER_MAP_TIMEOUT_MS;
 const STALE_AFTER_DAYS = SETTINGS.values.GRAFANA_CUSTOMER_MAP_STALE_DAYS;
 
-// A bad setting stops every map load, and the refresh script's fetch, with the
-// setting's name, instead of running on a value it cannot use. Tools that do
-// not use the map are unaffected.
+// A bad setting stops every map load, and the scripts' fetch, with the
+// setting's name, instead of running on a value it cannot use. In this process
+// the tools that do not use the map are unaffected, but `local-tooling mcp
+// grafana` checks the same values first (local_tooling/grafana.py) and does not
+// start the adapter at all with a bad one.
 function requireValidSettings() {
   if (!SETTINGS.errors.length) return;
   throw new Error(
