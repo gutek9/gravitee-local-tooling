@@ -561,6 +561,29 @@ test("grafana_logs_link: a control-plane id typed into client is refused, and Lo
   );
 });
 
+test("grafana_logs_link: a trial's control-plane namespace searches only it, as the trial's", async () => {
+  // Regression: it was refused as shared by every customer on it.
+  const csv = CUSTOMERS_CSV + "N/A,trial,trial-tt0001-dp0011,apac,az,australiaeast,None,*.au.trial-tt0001.gateway.gravitee.io\n";
+  await withLokiStub(
+    {
+      [NS_VALUES]: ["apim-cp-trial-tt0001", "apim-dp-trial-tt0001-dp0011", "apim-cp-cp1111"],
+      [SERIES]: [stream("apim-cp-trial-tt0001", "management-api")],
+    },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "apim-cp-trial-tt0001" });
+      assert.equal(out.refused, undefined);
+      assert.deepEqual(out.resolved_namespaces, ["apim-cp-trial-tt0001"]);
+      assert.equal(out.control_plane_is_single_tenant, true);
+      assert.deepEqual(out.shared_control_plane_namespaces, []);
+      assert.match(out.customer_note, /trial-tt0001's own control plane/);
+      const series = decodeURIComponent(calls.find((u) => u.includes(SERIES)));
+      assert.ok(series.includes('namespace=~"^apim-cp-trial-tt0001$"'), series);
+      assert.ok(!series.includes("dp0011") && !series.includes("cp1111"), series);
+    },
+    { csv },
+  );
+});
+
 test("grafana_logs_link: a data-plane id searches that data plane only, and names its customer", async () => {
   await withLokiStub(
     {

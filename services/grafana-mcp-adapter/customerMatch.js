@@ -16,6 +16,12 @@ export const controlPlaneNamespace = (controlPlaneId) => `apim-cp-${controlPlane
 // hold a dash of its own (`trial-tt0001`), so it is everything before the last
 // segment; "" when there is no dash.
 export const controlPlaneOf = (dataPlaneId) => String(dataPlaneId).split("-").slice(0, -1).join("-");
+// A trial is known by one id, `trial-<id>`: its control plane's id, the start
+// of its data planes' ids (`trial-tt0001-dp0011`), and the name the map gives
+// it. Its control plane hosts only that trial.
+export const TRIAL_ID_PATTERN = "trial-[0-9a-z]+";
+const TRIAL_CONTROL_PLANE = new RegExp(`^${TRIAL_ID_PATTERN}$`, "i");
+export const isTrialControlPlane = (controlPlaneId) => TRIAL_CONTROL_PLANE.test(String(controlPlaneId));
 
 // The namespaces these deployments are searched in, and the control-plane
 // namespaces they only share. A control-plane namespace is SHARED by every

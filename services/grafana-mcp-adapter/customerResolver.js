@@ -25,6 +25,7 @@ import {
   isCloudNamespace,
   dataPlanesWithId,
   dataPlaneOwners,
+  isTrialControlPlane,
 } from "./customerMatch.js";
 
 // A hosted customer's namespaces are named after it by their first segment
@@ -261,8 +262,9 @@ export function resolveClient({ namespaceValues = [], lookupFailure: failure = n
 // A data plane is one deployment of one customer, so it is searched alone, and
 // said whose it is when the map knows; one the map lists under several
 // customers is refused, naming them. A control plane is shared by every
-// customer on it and is refused. A name the map has whole comes first: a trial
-// is named by its control plane id (`trial-tt0001`), and that is one customer.
+// customer on it and is refused, except a trial's, which hosts only that trial
+// and is searched alone. A name the map has whole comes first: a trial is
+// named by its control plane id (`trial-tt0001`), and that is one customer.
 // Returns null when the phrase is not an id.
 function resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKnown, map }) {
   if (/\s/.test(phrase) || map.rows.some((r) => sameName(r.customer, phrase))) return null;
@@ -316,6 +318,47 @@ function resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKn
       // Only the data plane asked for is searched, even a trial's; its control
       // plane is reported as shared unless it is the trial's own.
       shared_control_plane_namespaces: namespacesOf(rows).shared_control_plane_namespaces,
+    };
+  }
+
+  // A trial's control plane hosts only that trial, so it is one deployment's,
+  // like a data plane: searched alone, never refused as shared. When the map
+  // does not list the trial, or cannot be read, only if Loki has it.
+  const controlPlane = controlPlaneNamespace(lookup.id);
+  const listedTrial = lookup.kind === "control_plane" && isTrialControlPlane(lookup.id);
+  if (listedTrial || (lookup.kind === "unknown" && isTrialControlPlane(lookup.id) && live.has(controlPlane))) {
+    const matchedById = listedTrial
+      ? { kind: "control_plane", id: lookup.id, customer: lookup.customers[0] }
+      : { kind: lookup.kind, id: lookup.id };
+    if (controlPlaneId && controlPlaneId !== lookup.id) {
+      return refuse(matchedById, `${controlPlane} is control plane ${lookup.id}, not "${controlPlaneId}". Nothing was searched.`, {
+        unknown_control_plane: true,
+        requested_control_plane_id: controlPlaneId,
+        control_plane_ids: [lookup.id],
+      });
+    }
+    const absent = listedTrial && liveNamespacesKnown && !live.has(controlPlane);
+    return {
+      namespaces: [controlPlane],
+      via: listedTrial ? "customer_map" : "namespace_label",
+      matched_by_id: matchedById,
+      ...(listedTrial ? {} : { owner_unknown: true }),
+      note:
+        (listedTrial
+          ? `${controlPlane} is ${lookup.customers[0]}'s own control plane`
+          : mapUnreadable
+            ? `${controlPlane} is in Loki, but the customer map could not be read (map_warning says why); it is a trial's own control plane`
+            : `${controlPlane} is in Loki but not in the customer map; it is a trial's own control plane`) +
+        ", which hosts only that trial, so only it was searched. " +
+        (listedTrial
+          ? `Pass client "${lookup.customers[0]}" to search the whole trial.`
+          : "The trial's data planes are searched by their full namespace (apim-dp-...)."),
+      ...(absent ? { mapped_namespaces_absent_in_range: [controlPlane] } : {}),
+      ...mapFields(map),
+      label_namespaces: listedTrial ? [] : [controlPlane],
+      control_plane_ids: [lookup.id],
+      shared_control_plane_namespaces: [],
+      control_plane_is_single_tenant: true,
     };
   }
 

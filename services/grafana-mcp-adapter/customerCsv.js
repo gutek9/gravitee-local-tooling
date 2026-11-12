@@ -2,7 +2,7 @@
 // cloud-deployments-configuration/docs/summary, read into the minimum needed to
 // resolve a customer to its namespaces. Pure, no I/O, so it can be unit-tested
 // directly.
-import { controlPlaneOf } from "./customerMatch.js";
+import { controlPlaneOf, TRIAL_ID_PATTERN } from "./customerMatch.js";
 
 // Minimal RFC4180-ish CSV reader. Needed because the URLs and Custom DNS columns
 // are quoted lists that themselves contain commas — splitting on "," loses the
@@ -72,7 +72,7 @@ export function extractEnv(urls = "") {
 }
 
 // `trial-tt0001-dp0011` -> `trial-tt0001`, the identifier a trial is known by.
-const TRIAL_ID_RE = /^(trial-[0-9a-z]+)-/i;
+const TRIAL_ID_RE = new RegExp(`^(${TRIAL_ID_PATTERN})-`, "i");
 
 // The columns the map is read from. Customer and the two ids build the
 // namespaces; Region, Provider and URLs (where the environment is read) are

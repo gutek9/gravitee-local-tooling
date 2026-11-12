@@ -532,6 +532,86 @@ test("a trial's control plane is its own in every answer, never called shared", 
   assert.equal(resolutionReport(acme).control_plane_is_single_tenant, undefined);
 });
 
+const TRIAL_ROW = "N/A,trial,trial-tt0001-dp0011,apac,az,australiaeast,None,*.au.trial-tt0001.gateway.gravitee.io\n";
+const TRIAL_MAP = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV + TRIAL_ROW).rows };
+const TRIAL_LIVE = ["apim-dp-trial-tt0001-dp0011", "apim-cp-trial-tt0001", ...ACME_DATA_PLANES, "apim-cp-cp1111"];
+
+test("resolveClient: a trial's control plane typed as client is searched alone, as the trial's", () => {
+  // Regression: it was refused as shared by every customer on it.
+  for (const phrase of ["apim-cp-trial-tt0001", "APIM-CP-TRIAL-TT0001"]) {
+    const out = resolveClient({ phrase, namespaceValues: TRIAL_LIVE, map: TRIAL_MAP });
+    assert.equal(out.refused, undefined, phrase);
+    assert.deepEqual(out.namespaces, ["apim-cp-trial-tt0001"], phrase);
+    assert.equal(out.via, "customer_map");
+    assert.deepEqual(out.matched_by_id, { kind: "control_plane", id: "trial-tt0001", customer: "trial-tt0001" });
+    assert.equal(out.control_plane_is_single_tenant, true);
+    assert.deepEqual(out.shared_control_plane_namespaces, []);
+    assert.deepEqual(out.control_plane_ids, ["trial-tt0001"]);
+    assert.deepEqual(out.label_namespaces, []);
+    assert.equal(out.mapped_namespaces_absent_in_range, undefined);
+    assert.equal(
+      out.note,
+      "apim-cp-trial-tt0001 is trial-tt0001's own control plane, which hosts only that trial, so only it was " +
+        'searched. Pass client "trial-tt0001" to search the whole trial.',
+    );
+  }
+  // Its own id narrows to it; another one is refused.
+  const own = resolveClient({ phrase: "apim-cp-trial-tt0001", namespaceValues: TRIAL_LIVE, map: TRIAL_MAP, controlPlaneId: "trial-tt0001" });
+  assert.deepEqual(own.namespaces, ["apim-cp-trial-tt0001"]);
+  const other = resolveClient({ phrase: "apim-cp-trial-tt0001", namespaceValues: TRIAL_LIVE, map: TRIAL_MAP, controlPlaneId: "cp1111" });
+  assert.equal(other.refused, true);
+  assert.deepEqual(other.namespaces, []);
+  assert.equal(other.unknown_control_plane, true);
+  assert.equal(other.requested_control_plane_id, "cp1111");
+  assert.deepEqual(other.control_plane_ids, ["trial-tt0001"]);
+  assert.equal(other.note, 'apim-cp-trial-tt0001 is control plane trial-tt0001, not "cp1111". Nothing was searched.');
+  // Not in Loki in this range: searched anyway and flagged, like a mapped data plane.
+  const absent = resolveClient({ phrase: "apim-cp-trial-tt0001", namespaceValues: ACME_DATA_PLANES, map: TRIAL_MAP });
+  assert.deepEqual(absent.namespaces, ["apim-cp-trial-tt0001"]);
+  assert.deepEqual(absent.mapped_namespaces_absent_in_range, ["apim-cp-trial-tt0001"]);
+  // Loki's namespace list missing: the map alone answers, and nothing is called absent.
+  const lokiDown = resolveClient({ phrase: "apim-cp-trial-tt0001", namespaceValues: null, map: TRIAL_MAP });
+  assert.deepEqual(lokiDown.namespaces, ["apim-cp-trial-tt0001"]);
+  assert.equal(lokiDown.namespace_lookup_failed, true);
+  assert.equal(lokiDown.mapped_namespaces_absent_in_range, undefined);
+});
+
+test("resolveClient: a trial's control plane the map does not list, or cannot read, is searched alone when Loki has it", () => {
+  // Regression: refused as "shared by every customer on that organization".
+  const live = ["apim-cp-trial-tt9999", "apim-dp-trial-tt9999-dp0001", ...ACME_DATA_PLANES];
+  for (const phrase of ["apim-cp-trial-tt9999", "trial-tt9999"]) {
+    const out = resolveClient({ phrase, namespaceValues: live, map: TRIAL_MAP });
+    assert.equal(out.refused, undefined, phrase);
+    assert.deepEqual(out.namespaces, ["apim-cp-trial-tt9999"], phrase);
+    assert.equal(out.via, "namespace_label");
+    assert.equal(out.owner_unknown, true);
+    assert.deepEqual(out.matched_by_id, { kind: "unknown", id: "trial-tt9999" });
+    assert.equal(out.control_plane_is_single_tenant, true);
+    assert.deepEqual(out.shared_control_plane_namespaces, []);
+    assert.deepEqual(out.label_namespaces, ["apim-cp-trial-tt9999"]);
+    assert.equal(
+      out.note,
+      "apim-cp-trial-tt9999 is in Loki but not in the customer map; it is a trial's own control plane, which hosts " +
+        "only that trial, so only it was searched. The trial's data planes are searched by their full namespace (apim-dp-...).",
+    );
+  }
+  // An unreadable map looked nothing up: the note never says "not in the customer map".
+  const unavailable = { rows: [], source: "unavailable", generated_at: null, warning: "map unavailable" };
+  const mapDown = resolveClient({ phrase: "apim-cp-trial-tt0001", namespaceValues: TRIAL_LIVE, map: unavailable });
+  assert.deepEqual(mapDown.namespaces, ["apim-cp-trial-tt0001"]);
+  assert.equal(mapDown.owner_unknown, true);
+  assert.match(mapDown.note, /the customer map could not be read \(map_warning says why\); it is a trial's own control plane/);
+  assert.doesNotMatch(mapDown.note, /not in the customer map/);
+  // Not in Loki either: it is not searched as a trial's control plane.
+  const gone = resolveClient({ phrase: "apim-cp-trial-tt9999", namespaceValues: ACME_DATA_PLANES, map: TRIAL_MAP });
+  assert.deepEqual(gone.namespaces, []);
+  assert.equal(gone.control_plane_is_single_tenant, undefined);
+  // A control plane that is not a trial's stays refused as shared.
+  const shared = resolveClient({ phrase: "apim-cp-cp1111", namespaceValues: TRIAL_LIVE, map: TRIAL_MAP });
+  assert.equal(shared.refused, true);
+  assert.match(shared.note, /shared by every customer on that organization/);
+});
+
 test("resolveClient: an ambiguous fragment takes nothing from the map, and names the withheld customers", () => {
   const out = resolve("beac", ["apim-dp-cp2222-dp0001", "apim-dp-cp3333-dp0001"]);
   assert.deepEqual(out.namespaces, []);

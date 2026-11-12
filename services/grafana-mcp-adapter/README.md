@@ -128,7 +128,11 @@ The response also says how the customer was found:
   whose logs it holds cannot be said. A control plane (`cp1111`) is
   refused: its namespace is shared by every customer on that organization. Pass
   the customer's name with `control_plane_id` instead. A trial is named by its
-  control-plane id (`trial-tt0001`) and resolves as that customer. A data
+  control-plane id (`trial-tt0001`) and resolves as that customer. A trial's
+  control-plane namespace (`apim-cp-trial-tt0001`) hosts only that trial, so it
+  is searched alone, like a data plane, with `control_plane_is_single_tenant`;
+  when the map does not list the trial or cannot be read, only if Loki has
+  it, with `owner_unknown`. A data
   plane's own id alone (`dp0001`) is refused, listing the data planes that carry
   it (`data_planes`, with their customer when the map knows it, or `customers`
   when it lists several, which is never searched): pass the full namespace of
