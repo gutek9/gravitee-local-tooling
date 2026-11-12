@@ -74,11 +74,12 @@ matched_streams }` plus the fields below, where `matched_streams` is the list of
 Loki's `/series` — no log lines are fetched) and `resolved_namespaces` is the
 namespaces `client` resolved to (empty on the `service_name` path). A refused
 call returns `refused: true`, empty `links` and `resolved_namespaces`, and the
-reason in `note`, with no `query` or `matched_*`: nothing was queried. The
-default range is the last hour; widen with `from`/`to`. When nothing matches on
-the `service_name` path, it returns close `service_name` values as
-`suggestions`, so typos like `kestrl → kestrel` surface. A blank `client` is
-refused: with nothing to narrow by, it would match every stream in Loki.
+reason in `note` (not repeated in `customer_note`), with no `query` or
+`matched_*`: nothing was queried. The default range is the last hour; widen
+with `from`/`to`. When nothing matches on the `service_name` path, it returns
+close `service_name` values as `suggestions`, so typos like `kestrl → kestrel`
+surface. A blank `client` is refused: with nothing to narrow by, it would
+match every stream in Loki.
 
 The response also says how the customer was found:
 
@@ -100,7 +101,8 @@ The response also says how the customer was found:
   (`apim-cp-trial-<id>`) hosts only that trial: it is searched with the trial
   (in `resolved_namespaces`, with `control_plane_is_single_tenant`), and never
   listed as shared.
-- `ambiguous_customer`, `candidates`, `candidates_truncated`, `customer_note` —
+- `ambiguous_customer`, `candidates`, `candidates_truncated`, `customer_note`
+  (`note` when refused) —
   the fragment matched several customers: several Cloud ones, hosted namespaces
   of more than one customer (`plt live` in `nova-plt-live` and `vega-plt-live`),
   or a hosted customer and a different Cloud one. Nothing from them is searched.

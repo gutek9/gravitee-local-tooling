@@ -249,11 +249,13 @@ registerTool(
       // below would fall back to a service_name match across every namespace
       // outside Gravitee Cloud.
       if (resolution.refused) {
+        // The reason is the answer's own `note`; customer_note would repeat it.
+        const { customer_note: _sameAsNote, ...report } = resolutionReport(resolution);
         return textResult({
           refused: true,
           link_style,
           resolved_namespaces: [],
-          ...resolutionReport(resolution),
+          ...report,
           range: { from, to },
           links: [],
           note: resolution.note,

@@ -744,10 +744,10 @@ test("grafana_logs_link: nothing found with a source down is refused, and Loki /
       const out = await callTool("grafana_logs_link", { client: "orbit dev" });
       assert.equal(out.refused, true);
       assert.equal(out.namespace_lookup_failed, true);
-      assert.match(out.customer_note, /Loki did not return its namespace list/);
+      assert.match(out.note, /Loki did not return its namespace list/);
       // A 502 may pass: the reason is given, and so is the retry advice.
-      assert.match(out.customer_note, /failed with HTTP 502\), so "orbit dev"/);
-      assert.match(out.customer_note, /Retry in a moment\./);
+      assert.match(out.note, /failed with HTTP 502\), so "orbit dev"/);
+      assert.match(out.note, /Retry in a moment\./);
       assert.deepEqual(out.links, []);
       assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
     },
@@ -759,7 +759,7 @@ test("grafana_logs_link: nothing found with a source down is refused, and Loki /
       const out = await callTool("grafana_logs_link", { client: "zzxqq" });
       assert.equal(out.refused, true);
       assert.equal(out.map_source, "unavailable");
-      assert.match(out.customer_note, /customer map could not be read/);
+      assert.match(out.note, /customer map could not be read/);
       assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
     },
     { githubDown: true },
@@ -777,9 +777,9 @@ test("customer tools: a Loki lookup no retry fixes says what to check instead, a
       async (calls) => {
         const out = await callTool("grafana_logs_link", { client: "orbit dev" });
         assert.equal(out.refused, true);
-        assert.ok(out.customer_note.includes(`(Grafana GET ${proxyPath} failed with HTTP 404)`), out.customer_note);
-        assert.match(out.customer_note, /A retry will not fix this: check GRAFANA_LOGS_DATASOURCE_UID/);
-        assert.doesNotMatch(out.customer_note, /Retry in a moment/);
+        assert.ok(out.note.includes(`(Grafana GET ${proxyPath} failed with HTTP 404)`), out.note);
+        assert.match(out.note, /A retry will not fix this: check GRAFANA_LOGS_DATASOURCE_UID/);
+        assert.doesNotMatch(out.note, /Retry in a moment/);
         assert.match(out.namespace_lookup_note, /failed with HTTP 404\), so hosted customers/);
         assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
 
@@ -812,10 +812,30 @@ test("grafana_logs_link: a fragment matching several Cloud customers is refused,
       assert.deepEqual(out.links, []);
       assert.equal(out.ambiguous_customer, true);
       assert.deepEqual(out.candidates.map((c) => c.customer), ["beacon", "beaconlabs"]);
-      assert.match(out.customer_note, /matches 2 different customers/);
+      assert.match(out.note, /matches 2 different customers/);
       assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
     },
   );
+});
+
+test("grafana_logs_link: a refusal gives its reason once, in note", async () => {
+  // Regression: every refusal carried the same text in note and in customer_note.
+  const namespaces = ["apim-dp-cp1111-dp0001", "apim-cp-cp1111", "apim-dp-cp4444-dp0001", "apim-dp-cp5555-dp0001"];
+  await withLokiStub({ [NS_VALUES]: namespaces, [SERIES]: [], [SVC_VALUES]: [] }, async (calls) => {
+    for (const args of [
+      { client: "beac" },
+      { client: "acme staging" },
+      { client: "northwind", control_plane_id: "cp9999" },
+      { client: "cp1111" },
+    ]) {
+      const out = await callTool("grafana_logs_link", args);
+      const label = JSON.stringify(args);
+      assert.equal(out.refused, true, label);
+      assert.ok(out.note, label);
+      assert.equal(out.customer_note, undefined, label);
+    }
+    assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+  });
 });
 
 test("grafana_logs_link: an ambiguous fragment still searches a hosted namespace that carries it whole", async () => {
@@ -1064,8 +1084,8 @@ test("map tools: an unreadable map is said to be unreadable, with GitHub's reaso
       assert.match(found.map_warning, /the map could not be read from GitHub \(GitHub responded 503\)/);
       const logs = await callTool("grafana_logs_link", { client: "acme", control_plane_id: "cp1111" });
       assert.equal(logs.refused, true);
-      assert.match(logs.customer_note, /could not be applied: the customer map could not be read/);
-      assert.doesNotMatch(logs.customer_note, /Drop control_plane_id/);
+      assert.match(logs.note, /could not be applied: the customer map could not be read/);
+      assert.doesNotMatch(logs.note, /Drop control_plane_id/);
       assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
     },
     { githubDown: true },
