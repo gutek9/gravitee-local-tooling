@@ -101,7 +101,8 @@ The response also says how the customer was found:
   the fragment matched several customers: several Cloud ones, hosted namespaces
   of more than one customer (`plt live` in `nova-plt-live` and `vega-plt-live`),
   or a hosted customer and a different Cloud one. Nothing from them is searched.
-  Unless a hosted namespace carries the whole fragment, nothing is searched at all
+  Unless a hosted namespace is named after the whole fragment (`beac-prod`, not
+  `zeta-beac-prod`), nothing is searched at all
   (`refused`): a `service_name` match across all of Loki would search the same
   ambiguous fragment. Each candidate says its `kind` (`gravitee_cloud` or
   `hosted`); a Cloud one also has the same `deployments`, `control_plane_ids`,
@@ -249,8 +250,9 @@ an empty name.
 Nothing is classified now. Both routes match the phrase as typed, and give ground
 only when it matches nothing:
 
-- **Namespaces**: the whole name, then every word as a whole `-` segment, and
-  only when nothing matches that way, the first word as part of a segment (the
+- **Namespaces**: the whole name, then the owner's segment (the first) followed
+  by whole `-` segments, and only when nothing matches that way, part of a name:
+  the first word as part of a segment, or whole segments after the owner's (the
   other words still whole). Separators do not count (`north star` finds
   `northstar-prod`), and a word is never matched inside another: `prod` does not
   find `nonprod`. `orbit plt live` returns that namespace, not it plus its
@@ -270,26 +272,39 @@ one. A phrase can still resolve to several deployments when they really are
 several: a customer can run more than one data plane per environment, and a
 region or provider word narrows those.
 
-What is searched belongs to one customer. A hosted customer is the first segment
-of its namespaces (`acmecorp-prod` → acmecorp), and a whole name on either route
-outranks part of a name on the other. Cloud namespaces (`apim-dp-*`,
+On these two routes, what is searched belongs to one customer. A hosted customer
+is the first segment of its namespaces (`acmecorp-prod` → acmecorp), so a word
+found only after it (`nova` in `zeta-nova-prod`) is part of zeta's namespace
+name, never a customer called nova: it is searched as zeta and flagged
+`partial_name_match`, or refused like any other part of a name. A whole name on
+either route outranks part of a name on the other, and parts of two customers'
+names are refused. Cloud namespaces (`apim-dp-*`,
 `apim-cp-*`) carry ids, not names, so the namespace route never matches them:
 they are reached through the map or through an id typed into `client`. The
 `service_name` search used when `client` resolves to no namespace leaves them
 out too (`namespace!~"(?i)apim-(dp|cp)-.+"`): their service names carry ids
 (`prod-apim-dp-cp1111-dp0001-gateway`), so a fragment of one (`cp11`) would
-reach a shared control plane and several customers' data planes. Two limits
-follow from reading names off namespaces:
+reach a shared control plane and several customers' data planes. Some limits
+follow from reading names off namespaces, and one from that search:
 
 - Infrastructure named per tenant (`apim-cloudgate-<id>`, `logstash-<id>`) or
   shared (`redis-*`, `ingress-*`) has no customer in its first segment, so a
-  phrase naming the infrastructure (`cloudgate`) is treated as one customer and
-  searches every tenant's. A tenant id alone (`<id>`) matches both its
+  phrase naming the infrastructure (`cloudgate`) is read as part of one
+  customer's name (`apim`) and searches every tenant's, flagged
+  `partial_name_match`. A tenant id alone (`<id>`) matches both its
   `apim-cloudgate-` and `logstash-` namespaces, reads as two customers, and is
   refused; name the full namespace instead.
 - A namespace called just like an environment (`prod`, `staging`) is shared by
   many customers' services, yet `client: "prod"` searches it, because nothing in
   the namespace list tells it apart from a customer with a single namespace.
+- A Cloud customer and a hosted namespace group with the same name are taken
+  for one customer, and both are searched. Nothing in either source tells them
+  apart when the hosted group is not that customer's, for example shared
+  infrastructure that happens to start with the customer's name.
+- The `service_name` search matches part of a service name and does not check
+  whose it is: a client that has no namespace of its own (it lives in a shared
+  `prod`) also finds other customers' services whose names contain it
+  (`kestrel` finds `kestrelcorp-gateway`).
 
 One consequence: a pinned namespace already expresses the environment, so
 `service_name` no longer repeats it — and the "drop the env token and retry"
@@ -489,8 +504,8 @@ Coverage:
 
 - `helpers.test.js` — the pure helpers (`helpers.js`).
 - `namespaceMatch.test.js` — which namespaces a client phrase names
-  (`namespaceMatch.js`): whole name, then whole segments, then part of the first
-  word only, and giving ground one trailing word at a time.
+  (`namespaceMatch.js`): whole name, then the owner's segment and whole
+  segments, then part of a name, and giving ground one trailing word at a time.
 - `grafanaClient.test.js` — the HTTP client (`grafanaClient.js`): config
   validation, auth headers, param handling.
 - `githubClient.test.js` — the GitHub client (`githubClient.js`): the request it

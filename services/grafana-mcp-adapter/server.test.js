@@ -443,6 +443,32 @@ test("grafana_logs_link: part of a name with the map unavailable is refused, and
   );
 });
 
+test("grafana_logs_link: a word found only after a namespace's first segment is never searched as its owner's", async () => {
+  // Regression: "kestrel prod" read another customer's zeta-kestrel-prod as
+  // kestrel's prod and searched it. kestrel has only kestrel-dev: refused.
+  await withLokiStub(
+    { [NS_VALUES]: ["kestrel-dev", "zeta-kestrel-prod"], [SERIES]: [stream("zeta-kestrel-prod", "zeta-gateway")] },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "kestrel prod" });
+      assert.equal(out.refused, true);
+      assert.deepEqual(out.resolved_namespaces, []);
+      assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+    },
+  );
+  // With the map down, "kestrel" is only part of zeta's namespace name, and
+  // nothing shows it is not a Cloud customer's whole name.
+  await withLokiStub(
+    { [NS_VALUES]: ["zeta-kestrel-prod"], [SERIES]: [stream("zeta-kestrel-prod", "zeta-gateway")] },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "kestrel" });
+      assert.equal(out.refused, true);
+      assert.equal(out.partial_match_unchecked, true);
+      assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+    },
+    { githubDown: true },
+  );
+});
+
 test("grafana_logs_link: a control-plane id typed into client is refused, and Loki is never queried", async () => {
   // Regression: "cp1111" searched the shared apim-cp-cp1111 and the data planes on it.
   await withLokiStub(

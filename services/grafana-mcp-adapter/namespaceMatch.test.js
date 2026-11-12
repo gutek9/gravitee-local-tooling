@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { matchNamespaces, matchNamespacesPhrase } from "./namespaceMatch.js";
+import { matchNamespaces, matchNamespacesAnySegment, matchNamespacesPhrase } from "./namespaceMatch.js";
 
 // ---------------------------------------------------------------------------
 // matchNamespaces
@@ -98,6 +98,39 @@ test("matchNamespacesPhrase: every cut is tried exactly before any is tried part
     tail: ["prod"],
     partial: false,
   });
+});
+
+test("matchNamespacesPhrase: a word after a namespace's first segment names only part of it", () => {
+  // Regression: "nova" read zeta-nova-prod as an exact match, and "nova prod"
+  // returned it instead of nova's own namespace.
+  assert.deepEqual(matchNamespacesPhrase(["zeta-nova-prod", "zeta-prod"], "nova"), {
+    namespaces: ["zeta-nova-prod"],
+    name: "nova",
+    tail: [],
+    partial: true,
+  });
+  assert.deepEqual(matchNamespacesPhrase(["nova-dev", "zeta-nova-prod"], "nova prod"), {
+    namespaces: ["nova-dev"],
+    name: "nova",
+    tail: ["prod"],
+    partial: false,
+  });
+  // The owner first, then whole segments: exact, in one word or several.
+  assert.deepEqual(matchNamespacesPhrase(["zeta-nova-prod", "zeta-prod"], "zeta nova"), {
+    namespaces: ["zeta-nova-prod"],
+    name: "zeta nova",
+    tail: [],
+    partial: false,
+  });
+  assert.deepEqual(matchNamespacesPhrase(["northstar-prod"], "north star prod").partial, false);
+});
+
+test("matchNamespacesAnySegment: for namespaces with no owner segment, any whole segment counts", () => {
+  const cloud = ["apim-cp-cp1111", "apim-dp-cp1111-dp0001", "apim-dp-cp11112-dp0003"];
+  assert.deepEqual(matchNamespacesAnySegment(cloud, "cp1111"), ["apim-cp-cp1111", "apim-dp-cp1111-dp0001"]);
+  assert.deepEqual(matchNamespacesAnySegment(cloud, "dp0003"), ["apim-dp-cp11112-dp0003"]);
+  // Only part of a segment when no whole one matches.
+  assert.deepEqual(matchNamespacesAnySegment(cloud, "cp111"), cloud);
 });
 
 test("matchNamespaces: separators do not count", () => {

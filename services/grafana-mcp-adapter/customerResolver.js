@@ -4,7 +4,7 @@
 // data they are given, so they can be unit-tested directly; resolveNamespaces()
 // and findCustomer() only fetch that data (Loki's namespace values and the
 // customer map) first.
-import { matchNamespaces, matchNamespacesPhrase } from "./namespaceMatch.js";
+import { matchNamespaces, matchNamespacesAnySegment, matchNamespacesPhrase } from "./namespaceMatch.js";
 import { fetchLabelValues } from "./lokiDiscovery.js";
 import { loadCustomerMap } from "./customerMapLoader.js";
 import {
@@ -79,7 +79,9 @@ function cappedCandidates(candidates = []) {
 //    customer's whole name.
 //  - A whole name on one route outranks part of a name on the other: "acme" is
 //    a Cloud customer's whole name, so the hosted `acmecorp-*`, which only
-//    contains it, is set aside and named, not searched. Not a hosted whole name
+//    contains it, is set aside and named, not searched. A word found only after
+//    a hosted namespace's first segment (`au` in `blue-x-au-1`) is part of
+//    that namespace's name too, never its owner's. Not a hosted whole name
 //    with a control_plane_id, though: the id asks for a Cloud organization, a
 //    hosted namespace is on none, and the id itself confirms the customer.
 //  - What is searched belongs to one customer. Hosted namespaces of two
@@ -149,18 +151,19 @@ function scopeToOneCustomer({ phrase, found, split, mapMatched, controlPlaneId, 
   }
 
   // Part of a name that names one customer is searched, as that customer.
-  const partialName =
-    useLabel && labelSearched && found.partial
-      ? labelNames[0]
-      : useMap && split.partial && mapNames.length === 1
-        ? mapNames[0]
-        : null;
+  const partialFromLabel = useLabel && labelSearched && found.partial;
+  const partialName = partialFromLabel
+    ? labelNames[0]
+    : useMap && split.partial && mapNames.length === 1
+      ? mapNames[0]
+      : null;
   return {
     useLabel,
     useMap,
     setAside,
     exactName: found.partial ? split.core : found.name,
     partialName,
+    partialOf: partialFromLabel ? "namespace names" : "name",
     asked: found.partial ? found.name : split.core,
   };
 }
@@ -566,7 +569,8 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
       ? {
           similar_names_not_searched: scope.setAside.slice(0, MAX_NAMES),
           note:
-            `${listNames(scope.setAside.map((c) => c.customer))} only partly match "${scope.exactName}", ` +
+            `${listNames(scope.setAside.map((c) => c.customer))} only partly ` +
+            `${scope.setAside.length > 1 ? "match" : "matches"} "${scope.exactName}", ` +
             `which is another customer's whole name, so ${scope.setAside.length > 1 ? "they were" : "it was"} ` +
             "not searched. Use the full name to search one.",
         }
@@ -575,7 +579,8 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
       ? {
           partial_name_match: true,
           note:
-            `"${scope.asked}" is only part of a customer name, so it was searched as ${scope.partialName}. ` +
+            `"${scope.asked}" is not a whole customer name: it matches only part of ` +
+            `${scope.partialName}'s ${scope.partialOf}, so it was searched as ${scope.partialName}. ` +
             "Use the full name if another customer was meant.",
         }
       : {}),
@@ -685,9 +690,10 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
   // namespaces carry ids, so a name match says nothing about whose they are:
   // they are matched and listed apart, and owners come from the map or an id.
   // Matched apart too, so an exact Cloud match ("dp" is a segment of every
-  // data plane) does not hide a hosted namespace the name matches partly.
+  // data plane) does not hide a hosted namespace the name matches partly. A
+  // Cloud namespace has no owner segment, so any whole segment counts there.
   const hostedNamespaces = matchNamespaces(namespaceValues.filter((n) => !isCloudNamespace(n)), needle);
-  const cloudNamespaces = matchNamespaces(namespaceValues.filter(isCloudNamespace), needle);
+  const cloudNamespaces = matchNamespacesAnySegment(namespaceValues.filter(isCloudNamespace), needle);
 
   // Data planes that are live on this customer's control planes but which the
   // map does not attribute to anyone. They may belong to another customer on

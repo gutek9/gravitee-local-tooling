@@ -23,26 +23,38 @@ function readsAsSegments(phraseWords, segments) {
   return covered[phraseWords.length];
 }
 
-const distinct = (namespaceValues) => [...new Set((namespaceValues || []).filter(Boolean))];
+// The same, but the words must start with the namespace's first segment: a
+// hosted namespace is named after its owner by that segment (`zeta-nova-prod`
+// is zeta's), so "nova" names only part of it, not a namespace of nova's.
+function readsFromOwner(phraseWords, segments) {
+  for (let j = 1; j <= phraseWords.length; j++) {
+    if (phraseWords.slice(0, j).join("") === segments[0]) return readsAsSegments(phraseWords.slice(j), segments);
+  }
+  return false;
+}
+
+const distinct =(namespaceValues) => [...new Set((namespaceValues || []).filter(Boolean))];
 
 // The namespaces the phrase names exactly: the whole namespace, or else every
-// word as whole segments of it. The whole name comes first because names nest:
-// `orbit-plt-live` is a prefix of `orbit-plt-live-ap`, and namespaces exist that
-// are called just `prod` or `dev`. Asking for one must not return its siblings;
-// a customer name alone (`acme`) still returns all of that customer's namespaces.
-function matchNamespacesExactly(namespaceValues, phrase) {
+// word as whole segments of it, starting with its owner's. The whole name comes
+// first because names nest: `orbit-plt-live` is a prefix of `orbit-plt-live-ap`,
+// and namespaces exist that are called just `prod` or `dev`. Asking for one must
+// not return its siblings; a customer name alone (`acme`) still returns all of
+// that customer's namespaces.
+function matchNamespacesExactly(namespaceValues, phrase, reads = readsFromOwner) {
   const phraseWords = words(phrase);
   if (!phraseWords.length) return [];
   const values = distinct(namespaceValues);
   const joined = phraseWords.join("");
   const whole = values.filter((n) => words(n).join("") === joined);
   if (whole.length) return whole;
-  return values.filter((n) => readsAsSegments(phraseWords, words(n)));
+  return values.filter((n) => reads(phraseWords, words(n)));
 }
 
 // Only for when nothing is named exactly: the first word may be part of a
-// segment (`beaconl` -> `beaconlabs-prod`), but every other word must still be
-// a whole one. Those words are what the caller said about the deployment, and
+// segment (`beaconl` -> `beaconlabs-prod`), or whole segments after the
+// owner's (`nova` -> `zeta-nova-prod`), but every other word must still be a
+// whole one. Those words are what the caller said about the deployment, and
 // reading them as parts of words is how "prod" found `nonprod` and "dev" found
 // another customer's `zetadevtools`.
 function matchNamespacesPartly(namespaceValues, phrase) {
@@ -61,6 +73,16 @@ function matchNamespacesPartly(namespaceValues, phrase) {
 // the caller meant by the last word is decided by what exists.
 export function matchNamespaces(namespaceValues = [], phrase = "") {
   const exact = matchNamespacesExactly(namespaceValues, phrase);
+  return exact.length ? exact : matchNamespacesPartly(namespaceValues, phrase);
+}
+
+// The same for namespaces named by ids rather than by an owner (Gravitee
+// Cloud's `apim-dp-<controlPlaneId>-<dataPlaneId>`): their first segment is
+// `apim` for all of them, so every word may be any whole segment, still
+// preferred to part of one (`cp1111` names `apim-cp-cp1111` rather than
+// `apim-cp-cp11112` when both exist).
+export function matchNamespacesAnySegment(namespaceValues = [], phrase = "") {
+  const exact = matchNamespacesExactly(namespaceValues, phrase, readsAsSegments);
   return exact.length ? exact : matchNamespacesPartly(namespaceValues, phrase);
 }
 

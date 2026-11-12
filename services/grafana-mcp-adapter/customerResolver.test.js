@@ -132,7 +132,7 @@ test("resolveClient: a hosted name that only contains a Cloud customer's whole n
   assert.deepEqual(out.namespaces, ACME_DATA_PLANES);
   assert.equal(out.via, "customer_map");
   assert.deepEqual(out.similar_names_not_searched, [{ customer: "acmecorp", kind: "hosted" }]);
-  assert.match(out.note, /acmecorp only partly match "acme", which is another customer's whole name/);
+  assert.match(out.note, /acmecorp only partly matches "acme", which is another customer's whole name/);
   assert.deepEqual(resolve("acme dev", values).namespaces, ["apim-dp-cp1111-dp0002"]);
   // Nor is it named as skipped when a word is refused.
   const refused = resolve("acme staging", values);
@@ -154,6 +154,7 @@ test("resolveClient: with a control_plane_id, a hosted whole name does not set t
   const out = resolve("north", ["north-prod", "apim-dp-cp5555-dp0001"], { controlPlaneId: "cp5555" });
   assert.deepEqual(out.namespaces, ["apim-dp-cp5555-dp0001"]);
   assert.equal(out.partial_name_match, true);
+  assert.match(out.note, /it matches only part of northwind's name, so it was searched as northwind/);
   assert.deepEqual(out.skipped_namespaces, ["north-prod"]);
   // An id that is not the customer's is still refused.
   assert.equal(resolve("north", ["north-prod"], { controlPlaneId: "cp9999" }).refused, true);
@@ -275,7 +276,42 @@ test("resolveClient: part of a name that names one customer is searched, and say
   const out = resolve("beaconl", ["beaconlabs-prod", "apim-dp-cp3333-dp0001"]);
   assert.deepEqual(out.namespaces, ["beaconlabs-prod", "apim-dp-cp3333-dp0001"]);
   assert.equal(out.partial_name_match, true);
-  assert.match(out.note, /"beaconl" is only part of a customer name, so it was searched as beaconlabs/);
+  assert.match(
+    out.note,
+    /"beaconl" is not a whole customer name: it matches only part of beaconlabs's namespace names, so it was searched as beaconlabs/,
+  );
+});
+
+test("resolveClient: a word found only after a hosted namespace's first segment is part of its name, never its owner's", () => {
+  // Regression: `zeta-nova-prod` is zeta's, yet "nova" matched it as a whole
+  // name: it was searched with no note, it outranked a Cloud partial match with
+  // a note calling it a whole name, and with the map down it was not refused.
+  const one = resolve("nova", ["zeta-nova-prod", "zeta-prod"]);
+  assert.deepEqual(one.namespaces, ["zeta-nova-prod"]);
+  assert.equal(one.partial_name_match, true);
+  assert.match(one.note, /it matches only part of zeta's namespace names, so it was searched as zeta/);
+  // Regression: "nova prod" searched zeta's namespace as nova's prod. nova's own
+  // namespace is found by dropping "prod", which it lacks, so it is refused.
+  const owner = resolve("nova prod", ["nova-dev", "zeta-nova-prod"]);
+  assert.equal(owner.refused, true);
+  assert.deepEqual(owner.namespaces, []);
+  // Regression: a Cloud customer's exact name was refused as two customers
+  // because another customer's namespace carries it as a later segment.
+  const cloud = resolve("beacon", ["blue-x-beacon-1", "apim-dp-cp2222-dp0001"]);
+  assert.deepEqual(cloud.namespaces, ["apim-dp-cp2222-dp0001"]);
+  assert.deepEqual(cloud.similar_names_not_searched, [{ customer: "blue", kind: "hosted" }]);
+  // Part of a hosted name and part of a Cloud name: two customers, refused.
+  const both = resolve("north", ["zeta-north-prod", "apim-dp-cp5555-dp0001"]);
+  assert.equal(both.refused, true);
+  assert.deepEqual(
+    both.candidates.map((c) => [c.customer, c.kind]),
+    [["northwind", "gravitee_cloud"], ["zeta", "hosted"]],
+  );
+  // With the map down, nothing shows "nova" is not a Cloud customer's whole name.
+  const unavailable = { rows: [], source: "unavailable", generated_at: null, warning: "map unavailable" };
+  const mapDown = resolveClient({ phrase: "nova", namespaceValues: ["zeta-nova-prod"], map: unavailable });
+  assert.equal(mapDown.refused, true);
+  assert.equal(mapDown.partial_match_unchecked, true);
 });
 
 test("resolveClient: candidates are capped, and say how many were left out", () => {
@@ -756,6 +792,14 @@ test("findCustomerMatches: Cloud namespaces that match by name are listed apart,
   assert.deepEqual(apim.hosted_namespaces, []);
   assert.equal(apim.cloud_namespaces.length, 4);
   assert.equal(apim.note, undefined);
+});
+
+test("findCustomerMatches: a Cloud id matches a whole segment of any Cloud namespace before part of a longer id", () => {
+  // Hosted namespaces are read from their owner's first segment; Cloud ones
+  // have none (all start with apim), so an id is any whole segment of them.
+  const loki = [...ACME_DATA_PLANES, "apim-cp-cp1111", "apim-dp-cp11112-dp0001"];
+  assert.deepEqual(find("cp1111", loki).cloud_namespaces, [...ACME_DATA_PLANES, "apim-cp-cp1111"]);
+  assert.deepEqual(find("cp1111-dp0002", loki).cloud_namespaces, ["apim-dp-cp1111-dp0002"]);
 });
 
 test("findCustomerMatches: max_results caps every list and says how many were left out", () => {
