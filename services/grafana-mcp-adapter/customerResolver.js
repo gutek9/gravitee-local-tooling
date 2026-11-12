@@ -3,10 +3,11 @@
 // name or an id matches. resolveClient() and findCustomerMatches() decide from
 // data they are given, so they can be unit-tested directly; resolveNamespaces()
 // and findCustomer() only fetch that data (Loki's namespace values and the
-// customer map) first.
+// customer map) first, and log why Loki's list could not be read.
 import { matchNamespaces, matchNamespacesAnySegment, matchNamespacesPhrase } from "./namespaceMatch.js";
 import { fetchLabelValues } from "./lokiDiscovery.js";
 import { loadCustomerMap } from "./customerMapLoader.js";
+import { log, RESTART_HINT } from "./grafanaClient.js";
 import {
   splitNameAndTail,
   resolveCustomerNamespaces,
@@ -169,6 +170,31 @@ function scopeToOneCustomer({ phrase, found, split, mapMatched, controlPlaneId, 
   };
 }
 
+// Why Loki's namespace list could not be read, and whether trying again can
+// help: a timeout or a dropped connection (fetch's own error, no status), 408,
+// 429 or a 5xx may pass; any other HTTP status (a wrong datasource uid, a token
+// without access) will not. The reason is the error's message: the HTTP
+// client's gives method, path and status, never the token or the response body.
+export function describeLookupFailure(err) {
+  const status = err?.status;
+  return {
+    reason: err instanceof Error ? err.message : String(err),
+    retryable: status === undefined || status === 408 || status === 429 || status >= 500,
+  };
+}
+
+// Loki's namespace list, or null and why it could not be read. The failure is
+// logged too: it changes every answer until it is fixed.
+async function namespaceList(datasourceUid, from) {
+  try {
+    return { namespaceValues: await fetchLabelValues(datasourceUid, "namespace", { from }), failure: null };
+  } catch (err) {
+    const failure = describeLookupFailure(err);
+    log("warn", "Loki namespace lookup failed", { error: failure.reason, retryable: failure.retryable });
+    return { namespaceValues: null, failure };
+  }
+}
+
 // Resolve a free-text client to the namespaces holding its logs, by two routes:
 //
 //  1. The namespace label itself. Hosted/standalone customers get a namespace
@@ -190,28 +216,25 @@ export async function resolveNamespaces(client, { datasourceUid, from, controlPl
   // already refuses a blank client).
   if (!phrase) throw new Error("client is required");
 
-  let namespaceValues = null;
-  try {
-    namespaceValues = await fetchLabelValues(datasourceUid, "namespace", { from });
-  } catch {
-    namespaceValues = null;
-  }
+  const { namespaceValues, failure } = await namespaceList(datasourceUid, from);
   const map = await loadCustomerMap();
-  return resolveClient({ phrase, controlPlaneId, namespaceValues, map });
+  return resolveClient({ phrase, controlPlaneId, namespaceValues, map, lookupFailure: failure });
 }
 
 // `namespaceValues: null` means Loki did not return its namespace list. That is
 // not "no namespaces": hosted customers cannot be matched by namespace, and
 // mapped namespaces cannot be checked against Loki, so calling them all absent
-// would blame a stale map for a failed lookup. The result says so instead.
-export function resolveClient({ namespaceValues = [], ...rest }) {
+// would blame a stale map for a failed lookup. The result says so instead, with
+// `lookupFailure` (from describeLookupFailure) giving why and whether a retry
+// can help, when the caller knows.
+export function resolveClient({ namespaceValues = [], lookupFailure: failure = null, ...rest }) {
   if (namespaceValues !== null) return resolveFromRoutes({ ...rest, namespaceValues, liveNamespacesKnown: true });
   return {
-    ...resolveFromRoutes({ ...rest, namespaceValues: [], liveNamespacesKnown: false }),
+    ...resolveFromRoutes({ ...rest, namespaceValues: [], liveNamespacesKnown: false, lookupFailure: failure }),
     namespace_lookup_failed: true,
     namespace_lookup_note:
-      "Loki did not return its namespace list, so hosted customers could not be matched by namespace " +
-      "and mapped namespaces were not checked against Loki.",
+      `Loki did not return its namespace list${failure ? ` (${failure.reason})` : ""}, so hosted customers ` +
+      "could not be matched by namespace and mapped namespaces were not checked against Loki.",
   };
 }
 
@@ -348,7 +371,7 @@ function resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKn
   return null;
 }
 
-function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamespacesKnown, map }) {
+function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamespacesKnown, map, lookupFailure: failure = null }) {
   const byId = resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKnown, map });
   if (byId) return byId;
 
@@ -573,25 +596,37 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
     // another customer's logs. A stale snapshot did answer, and says how old.
     const mapUnavailable = map.source === "unavailable";
     if (!liveNamespacesKnown || mapUnavailable) {
+      const lokiReason = failure ? ` (${failure.reason})` : "";
       const failed =
         !liveNamespacesKnown && mapUnavailable
-          ? `Neither Loki's namespace list nor the customer map could be read, so "${phrase}" could not be matched to any customer`
+          ? `Neither Loki's namespace list${lokiReason} nor the customer map could be read, so "${phrase}" could ` +
+            "not be matched to any customer"
           : !liveNamespacesKnown
-            ? `Loki did not return its namespace list, so "${phrase}" could not be matched to a customer's namespaces`
+            ? `Loki did not return its namespace list${lokiReason}, so "${phrase}" could not be matched to a ` +
+              "customer's namespaces"
             : `The customer map could not be read and no hosted namespace is called "${phrase}", so whether it is a ` +
               "Gravitee Cloud customer cannot be checked";
+      // A Loki failure a retry will not fix says what to check instead. When
+      // the map is down too, its own reason is in map_warning.
+      const lokiWillNotPass = !liveNamespacesKnown && failure && !failure.retryable;
+      const checkLoki =
+        "check GRAFANA_LOGS_DATASOURCE_UID (the datasource's uid, not its display name) and GRAFANA_TOKEN in .env";
       return {
         namespaces: [],
         via: "none",
         refused: true,
         note:
           `${failed}. Nothing was searched: a service_name search alone could return another customer's logs. ` +
-          (!mapUnavailable
-            ? "Retry in a moment."
-            : liveNamespacesKnown
-              ? "Retry once the map can be read (map_warning says why), or pass a data plane's full namespace " +
-                "(apim-dp-...), which is searched without the map."
-              : "Retry once both can be read (map_warning says why the map could not)."),
+          (lokiWillNotPass
+            ? (mapUnavailable
+                ? `A retry will not fix Loki's part: ${checkLoki}; map_warning says why the map could not be read. `
+                : `A retry will not fix this: ${checkLoki}. `) + RESTART_HINT
+            : !mapUnavailable
+              ? "Retry in a moment."
+              : liveNamespacesKnown
+                ? "Retry once the map can be read (map_warning says why), or pass a data plane's full namespace " +
+                  "(apim-dp-...), which is searched without the map."
+                : "Retry once both can be read (map_warning says why the map could not)."),
         ...mapFields(map),
       };
     }
@@ -727,20 +762,15 @@ const ID_SHAPED = /^(apim-(dp|cp)-[0-9a-z-]+|[0-9a-z]+(-[0-9a-z]+)+)$/i;
 // without querying any logs.
 export async function findCustomer(query, { datasourceUid, maxResults = 20 } = {}) {
   const map = await loadCustomerMap();
-  let namespaceValues = null;
-  try {
-    // 30 days: a deployment absent over that window is gone, not merely quiet.
-    namespaceValues = await fetchLabelValues(datasourceUid, "namespace", { from: "now-30d" });
-  } catch {
-    namespaceValues = null;
-  }
-  return findCustomerMatches({ query, map, namespaceValues, maxResults });
+  // 30 days: a deployment absent over that window is gone, not merely quiet.
+  const { namespaceValues, failure } = await namespaceList(datasourceUid, "now-30d");
+  return findCustomerMatches({ query, map, namespaceValues, maxResults, lookupFailure: failure });
 }
 
 // `namespaceValues: null` means Loki did not return its namespace list: hosted
 // namespaces and unattributed data planes could not be checked, which is not the
 // same answer as "none matched".
-export function findCustomerMatches({ query, map, namespaceValues: givenValues = [], maxResults = 20 }) {
+export function findCustomerMatches({ query, map, namespaceValues: givenValues = [], maxResults = 20, lookupFailure: failure = null }) {
   const lookupFailed = givenValues === null;
   const namespaceValues = givenValues || [];
   const needle = String(query || "").trim();
@@ -817,8 +847,8 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
       ? {
           namespace_lookup_failed: true,
           namespace_lookup_note:
-            "Loki did not return its namespace list, so hosted namespaces and unattributed data planes " +
-            "could not be checked.",
+            `Loki did not return its namespace list${failure ? ` (${failure.reason})` : ""}, so hosted namespaces ` +
+            "and unattributed data planes could not be checked.",
         }
       : {}),
   };

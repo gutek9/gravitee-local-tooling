@@ -60,8 +60,31 @@ function githubResponse(u, commitDate, csv) {
   });
 }
 
-// A route answered with this fails with HTTP 502, as Loki does when it is down.
-const LOKI_DOWN = { lokiDown: true };
+// A route answered with lokiFails(status) fails with that HTTP status, and with
+// a body that must never reach an answer or a log. LOKI_DOWN is 502, as Loki
+// answers when it is down.
+const LOKI_ERROR_BODY = '{"message":"upstream echo of glsa_test"}';
+const lokiFails = (status) => ({ lokiStatus: status });
+const LOKI_DOWN = lokiFails(502);
+
+// Run fn with the adapter's JSON log lines (stderr) collected instead of printed.
+async function withLogCapture(fn) {
+  const lines = [];
+  const origWrite = process.stderr.write;
+  process.stderr.write = (chunk, ...rest) => {
+    try {
+      lines.push(JSON.parse(String(chunk)));
+      return true;
+    } catch {
+      return origWrite.call(process.stderr, chunk, ...rest);
+    }
+  };
+  try {
+    return await fn(lines);
+  } finally {
+    process.stderr.write = origWrite;
+  }
+}
 
 // Install a fetch stub that answers each Loki endpoint from `routes` (keyed by a
 // substring of the request path) and records every Loki URL it saw. `routes`
@@ -88,8 +111,13 @@ function withLokiStub(routes, fn, { githubDown = false, commitDate, csv = CUSTOM
         break;
       }
     }
-    if (data === LOKI_DOWN) {
-      return Promise.resolve({ ok: false, status: 502, text: () => Promise.resolve(""), headers: { get: () => null } });
+    if (data?.lokiStatus) {
+      return Promise.resolve({
+        ok: false,
+        status: data.lokiStatus,
+        text: () => Promise.resolve(LOKI_ERROR_BODY),
+        headers: { get: () => null },
+      });
     }
     return Promise.resolve({
       ok: true,
@@ -693,6 +721,9 @@ test("grafana_logs_link: nothing found with a source down is refused, and Loki /
       assert.equal(out.refused, true);
       assert.equal(out.namespace_lookup_failed, true);
       assert.match(out.customer_note, /Loki did not return its namespace list/);
+      // A 502 may pass: the reason is given, and so is the retry advice.
+      assert.match(out.customer_note, /failed with HTTP 502\), so "orbit dev"/);
+      assert.match(out.customer_note, /Retry in a moment\./);
       assert.deepEqual(out.links, []);
       assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
     },
@@ -709,6 +740,38 @@ test("grafana_logs_link: nothing found with a source down is refused, and Loki /
     },
     { githubDown: true },
   );
+});
+
+test("customer tools: a Loki lookup no retry fixes says what to check instead, and is logged once per lookup", async () => {
+  // Regression: the lookup error was swallowed: no reason, nothing logged, and
+  // the refusal said "Retry in a moment." also for a 404, which is what
+  // GRAFANA_LOGS_DATASOURCE_UID set to the datasource's display name gives.
+  const proxyPath = "/datasources/proxy/uid/grafanacloud-logs/loki/api/v1/label/namespace/values";
+  await withLogCapture(async (logged) => {
+    await withLokiStub(
+      { [NS_VALUES]: lokiFails(404), [SERIES]: [stream("prod", "graviteeio-apim-orbitalpay-dev-gateway")] },
+      async (calls) => {
+        const out = await callTool("grafana_logs_link", { client: "orbit dev" });
+        assert.equal(out.refused, true);
+        assert.ok(out.customer_note.includes(`(Grafana GET ${proxyPath} failed with HTTP 404)`), out.customer_note);
+        assert.match(out.customer_note, /A retry will not fix this: check GRAFANA_LOGS_DATASOURCE_UID/);
+        assert.doesNotMatch(out.customer_note, /Retry in a moment/);
+        assert.match(out.namespace_lookup_note, /failed with HTTP 404\), so hosted customers/);
+        assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+
+        const found = await callTool("grafana_find_customer", { query: "kestrel" });
+        assert.match(found.namespace_lookup_note, /failed with HTTP 404\), so hosted namespaces/);
+        assert.doesNotMatch(JSON.stringify([out, found, logged]), /upstream echo|glsa_test/);
+      },
+    );
+    const lookups = logged.filter((line) => line.message === "Loki namespace lookup failed");
+    assert.equal(lookups.length, 2, "one warning per failed lookup: logs_link, then find_customer");
+    for (const line of lookups) {
+      assert.equal(line.level, "warn");
+      assert.equal(line.retryable, false);
+      assert.equal(line.error, `Grafana GET ${proxyPath} failed with HTTP 404`);
+    }
+  });
 });
 
 test("grafana_logs_link: a fragment matching several Cloud customers is refused, and Loki is never queried", async () => {

@@ -132,7 +132,11 @@ async function request(method, path, { params = {}, body } = {}) {
     if (!res.ok) {
       const retryAfter = res.headers.get("retry-after");
       const suffix = retryAfter ? `; retry-after=${retryAfter}` : "";
-      throw new Error(`Grafana ${method} ${path} failed with HTTP ${res.status}${suffix}`);
+      // The status rides on the error, so a caller can decide whether a retry
+      // can help. The response body stays out: it may echo request details.
+      throw Object.assign(new Error(`Grafana ${method} ${path} failed with HTTP ${res.status}${suffix}`), {
+        status: res.status,
+      });
     }
     return parsed;
   } finally {

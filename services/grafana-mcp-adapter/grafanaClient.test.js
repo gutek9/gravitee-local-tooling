@@ -147,6 +147,43 @@ test("grafanaGet: throws on non-OK HTTP status", async () => {
   }
 });
 
+test("grafanaGet: a failed request carries its HTTP status, never the token or the response body", async () => {
+  // The status lets a caller tell a failure a retry may fix from one it will
+  // not; the body stays out of the message because it may echo request details.
+  const { grafanaGet } = await freshClient({
+    GRAFANA_ENABLED: "true",
+    GRAFANA_BASE_URL: "https://g.example.com",
+    GRAFANA_TOKEN: "glsa_secret",
+  });
+  const path = "/datasources/proxy/uid/logs/loki/api/v1/label/namespace/values";
+  const origFetch = globalThis.fetch;
+  try {
+    for (const [status, retryAfter] of [
+      [404, null],
+      [503, "30"],
+    ]) {
+      globalThis.fetch = () =>
+        Promise.resolve({
+          ok: false,
+          status,
+          text: () => Promise.resolve('{"message":"body echoing glsa_secret"}'),
+          headers: { get: (name) => (name === "retry-after" ? retryAfter : null) },
+        });
+      await assert.rejects(
+        () => grafanaGet(path),
+        (err) => {
+          assert.equal(err.status, status);
+          assert.ok(err.message.startsWith(`Grafana GET ${path} failed with HTTP ${status}`), err.message);
+          assert.doesNotMatch(err.message, /glsa_secret|body echoing/);
+          return true;
+        },
+      );
+    }
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+
 test("grafanaPost: sends JSON body with Content-Type", async () => {
   const { grafanaPost } = await freshClient({
     GRAFANA_ENABLED: "true",

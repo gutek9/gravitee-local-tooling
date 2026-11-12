@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { parseCustomerCsv } from "./customerCsv.js";
-import { resolveClient, resolutionReport, findCustomerMatches } from "./customerResolver.js";
+import { resolveClient, resolutionReport, findCustomerMatches, describeLookupFailure } from "./customerResolver.js";
 
 // Made-up Gravitee Cloud customers, with the real CSV header (same names as
 // server.test.js, plus one customer on two organizations).
@@ -229,6 +229,70 @@ test("resolveClient: nothing found with a source down is refused, not left to a 
   assert.deepEqual(resolve("dp0002", null).matched_by_id.data_planes, [
     { namespace: "apim-dp-cp1111-dp0002", customer: "acme" },
   ]);
+});
+
+test("describeLookupFailure: a retry can help only for a timeout, a network error, 408, 429 or a 5xx", () => {
+  const httpError = (status) => Object.assign(new Error(`Grafana GET /x failed with HTTP ${status}`), { status });
+  for (const status of [408, 429, 500, 502, 503, 504]) {
+    assert.equal(describeLookupFailure(httpError(status)).retryable, true, `HTTP ${status}`);
+  }
+  for (const status of [400, 401, 403, 404]) {
+    assert.equal(describeLookupFailure(httpError(status)).retryable, false, `HTTP ${status}`);
+  }
+  assert.equal(describeLookupFailure(httpError(404)).reason, "Grafana GET /x failed with HTTP 404");
+  // No status: fetch's own errors, a dropped connection or the client's timeout.
+  assert.deepEqual(describeLookupFailure(new TypeError("fetch failed")), { reason: "fetch failed", retryable: true });
+  assert.deepEqual(describeLookupFailure(new DOMException("This operation was aborted", "AbortError")), {
+    reason: "This operation was aborted",
+    retryable: true,
+  });
+});
+
+test("resolveClient: a failed Loki lookup gives its reason, and retry advice only when a retry can help", () => {
+  // Regression: the reason was dropped, and the refusal said "Retry in a
+  // moment." also for a 404 (the uid set to the datasource's display name) or a
+  // 401, which no retry fixes.
+  const unavailable = { rows: [], source: "unavailable", generated_at: null, warning: "map unavailable" };
+  const notFound = { reason: "Grafana GET /x failed with HTTP 404", retryable: false };
+  const busy = { reason: "Grafana GET /x failed with HTTP 503", retryable: true };
+  const retryAdvice = /Retry (in a moment|once)/;
+
+  const permanent = resolve("orbit dev", null, { lookupFailure: notFound });
+  assert.equal(permanent.refused, true);
+  assert.match(permanent.note, /^Loki did not return its namespace list \(Grafana GET \/x failed with HTTP 404\), so "orbit dev"/);
+  assert.match(
+    permanent.note,
+    /A retry will not fix this: check GRAFANA_LOGS_DATASOURCE_UID \(the datasource's uid, not its display name\) and GRAFANA_TOKEN in \.env\./,
+  );
+  assert.match(permanent.note, /restart your agent/);
+  assert.doesNotMatch(permanent.note, retryAdvice);
+  assert.match(permanent.namespace_lookup_note, /namespace list \(Grafana GET \/x failed with HTTP 404\), so hosted customers/);
+
+  const passing = resolve("orbit dev", null, { lookupFailure: busy });
+  assert.match(passing.note, /namespace list \(Grafana GET \/x failed with HTTP 503\), so "orbit dev"/);
+  assert.match(passing.note, /Retry in a moment\.$/);
+
+  // A whole name still resolves, and the reason still reaches the caller.
+  const mapped = resolve("acme", null, { lookupFailure: notFound });
+  assert.deepEqual(mapped.namespaces, ACME_DATA_PLANES);
+  assert.match(mapped.namespace_lookup_note, /HTTP 404/);
+
+  // With the map down too, the note keeps Loki's reason and points at
+  // map_warning for the map's; a Loki failure no retry fixes keeps both pieces
+  // of advice.
+  const bothPermanent = resolveClient({ phrase: "zzxqq", namespaceValues: null, map: unavailable, lookupFailure: notFound });
+  assert.match(
+    bothPermanent.note,
+    /^Neither Loki's namespace list \(Grafana GET \/x failed with HTTP 404\) nor the customer map could be read/,
+  );
+  assert.match(
+    bothPermanent.note,
+    /A retry will not fix Loki's part: check GRAFANA_LOGS_DATASOURCE_UID .* GRAFANA_TOKEN in \.env; map_warning says why the map could not be read\./,
+  );
+  assert.doesNotMatch(bothPermanent.note, retryAdvice);
+  const bothPassing = resolveClient({ phrase: "zzxqq", namespaceValues: null, map: unavailable, lookupFailure: busy });
+  assert.match(bothPassing.note, /^Neither Loki's namespace list \(Grafana GET \/x failed with HTTP 503\) nor/);
+  assert.match(bothPassing.note, /Retry once both can be read \(map_warning says why the map could not\)\.$/);
 });
 
 test("resolveClient: a stale snapshot counts as an answer, so the service_name search stays open", () => {
@@ -750,6 +814,15 @@ test("findCustomerMatches: a failed namespace lookup is not reported as nothing 
   const acme = find("acme", null);
   assert.equal(acme.gravitee_cloud_customers[0].customer, "acme");
   assert.equal(acme.namespace_lookup_failed, true);
+});
+
+test("findCustomerMatches: a failed namespace lookup says why", () => {
+  const failure = { reason: "Grafana GET /x failed with HTTP 401", retryable: false };
+  const out = find("kestrel", null, { lookupFailure: failure });
+  assert.match(
+    out.namespace_lookup_note,
+    /^Loki did not return its namespace list \(Grafana GET \/x failed with HTTP 401\), so hosted namespaces/,
+  );
 });
 
 test("findCustomerMatches: an unreadable map is not reported as nothing matched", () => {

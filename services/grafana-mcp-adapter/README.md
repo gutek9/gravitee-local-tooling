@@ -162,14 +162,20 @@ The response also says how the customer was found:
   not seen in this range. When nothing matches and these exist, the `note` says
   the map is probably stale rather than reporting "no logs".
 - `namespace_lookup_failed`, `namespace_lookup_note` — Loki did not return its
-  namespace list. Hosted customers could not be matched by namespace, and mapped
-  namespaces were not checked against Loki, so none is reported as absent.
+  namespace list. The note gives the reason (the request and its HTTP status, or
+  the error when Grafana did not answer), and the adapter logs it as a warning.
+  Hosted customers could not be matched by namespace, and mapped namespaces were
+  not checked against Loki, so none is reported as absent.
 - `refused` with `namespace_lookup_failed` or `map_source: "unavailable"` —
   neither route found `client`, and one of them could not run. A customer with
   no namespace of its own (one in a shared `prod`) is found by a `service_name`
   search, but only once both the map and Loki's namespace list answered: without
   them, finding nothing is not "no such customer", and `service_name` alone
-  could return another customer's logs. Nothing is searched; retry in a moment.
+  could return another customer's logs. Nothing is searched, and the note says
+  whether a retry can help. For Loki, it advises a retry only after a timeout, a
+  network error, HTTP 408, 429 or a 5xx; after any other status it says to check
+  `GRAFANA_LOGS_DATASOURCE_UID` (the datasource's uid, not its display name) and
+  `GRAFANA_TOKEN` instead. `map_warning` says why the map could not be read.
   With only the map down, a data plane can still be searched by its full
   namespace. A map from the bundled snapshot counts as an answer.
 - `suggestions` — close `service_name` values (see above), only when the `client`
@@ -356,7 +362,7 @@ they may belong to another customer and are never searched as this one.
 `*_truncated` count says how many were left out. When
 Loki does not return its namespace list, `namespace_lookup_failed` says hosted
 namespaces and unattributed data planes could not be checked, rather than
-reporting that none matched. Likewise, when the customer map cannot be read, the
+reporting that none matched, and `namespace_lookup_note` says why. Likewise, when the customer map cannot be read, the
 note says Gravitee Cloud customers and ids were not checked (`map_warning` says
 why), rather than that none matched.
 
