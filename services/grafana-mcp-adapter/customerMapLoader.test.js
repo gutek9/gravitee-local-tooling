@@ -249,6 +249,19 @@ test("the CSV and its commit date are read from the same file, whatever the path
   });
 });
 
+test("the CSV and its commit date are read from the same branch", async () => {
+  // Without the branch, GitHub dates the file on the repository's default
+  // branch: a map read from another one would report that branch's age.
+  const loader = await loaderWith({ GRAFANA_CUSTOMER_MAP_REF: "release-2026" });
+  await withGitHub({}, async (calls) => {
+    await loader.fetchCustomerCsv();
+    await loader.fetchGeneratedAt();
+    const [contents, commits] = calls.map((u) => new URL(u));
+    assert.equal(contents.searchParams.get("ref"), "release-2026");
+    assert.equal(commits.searchParams.get("sha"), "release-2026");
+  });
+});
+
 test("a repository setting with a '..' segment is refused before GitHub is asked", async () => {
   const loader = await loaderWith({ GRAFANA_CUSTOMER_MAP_REPO: "gravitee-io/.." });
   await withGitHub({}, async (calls) => {

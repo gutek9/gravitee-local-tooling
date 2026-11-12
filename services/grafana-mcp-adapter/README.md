@@ -619,3 +619,7 @@ Coverage:
   the tests never read a local `customers-snapshot.json` or the network. `server.js` only starts the stdio
   transport when run as the entrypoint, so tests import it and invoke the
   registered tool handlers directly (via the exported `tools` map).
+- `server.disabled.test.js` / `server.no-uid.test.js` — the adapter with Grafana
+  disabled (as Compose starts it by default) and with no
+  `GRAFANA_LOGS_DATASOURCE_UID`: the map tools say so and make no request at
+  all. Each is its own file because those settings are read at import.

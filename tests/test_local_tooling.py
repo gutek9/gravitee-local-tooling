@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import json
+import re
 import subprocess
 import tempfile
 import tomllib
@@ -322,6 +323,39 @@ class LocalToolingTest(unittest.TestCase):
                     [f'{name} must be a whole number from 1 to {high}, got "{bad}"'],
                     f"{name}={bad}",
                 )
+
+    def test_compose_forwards_every_setting_the_grafana_adapter_reads(self) -> None:
+        """The adapter runs in the grafana-mcp-adapter service and sees only what
+        docker-compose.yml forwards: a setting it reads that Compose does not pass
+        silently takes its default there. Regression (#9 review): four of the
+        customer-map settings never reached the container. The files read are
+        the ones the Dockerfile copies into the image, and each setting must come
+        from the variable of its own name."""
+        root = Path(__file__).resolve().parents[1]
+        adapter = root / "services" / "grafana-mcp-adapter"
+        copied = re.findall(r"^COPY (\S+\.js) ", (adapter / "Dockerfile").read_text(encoding="utf-8"), re.M)
+        self.assertIn("server.js", copied)
+        read: set[str] = set()
+        for name in copied:
+            source = (adapter / name).read_text(encoding="utf-8")
+            read |= set(re.findall(r"process\.env\.([A-Z][A-Z0-9_]*)", source))
+            # The map's numbers are read by name, through readNumberSettings(env).
+            read |= set(re.findall(r'\bname: "([A-Z][A-Z0-9_]*)"', source))
+        self.assertIn("GRAFANA_LOGS_DATASOURCE_UID", read)
+        self.assertIn("GRAFANA_CUSTOMER_MAP_TTL_SECONDS", read)
+
+        compose = (root / "docker-compose.yml").read_text(encoding="utf-8").splitlines()
+        service: list[str] = []
+        for line in compose[compose.index("  grafana-mcp-adapter:") + 1 :]:
+            if line and not line.startswith("   "):  # the next service, or a top-level key
+                break
+            service.append(line)
+        forwarded = dict(
+            re.findall(r"^      ([A-Z][A-Z0-9_]*): \$\{([A-Z][A-Z0-9_]*)(?::-[^}]*)?\}$", "\n".join(service), re.M)
+        )
+        self.assertIn("GRAFANA_ENABLED", forwarded)
+        self.assertEqual(sorted(read - forwarded.keys()), [], "read by the adapter, not forwarded by Compose")
+        self.assertEqual({k: v for k, v in forwarded.items() if k != v}, {}, "forwarded from another variable")
 
     def test_setup_bootstrap_skips_zendesk_when_disabled(self) -> None:
         cli = load_cli()
