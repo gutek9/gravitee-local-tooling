@@ -30,7 +30,7 @@ N/A,trial,trial-tt0001-dp0011,apac,az,australiaeast,None,*.au.trial-tt0001.gatew
 `;
 
 test("resolveCustomerNamespaces: a trial resolves by its identifier", () => {
-  const rows = parseCustomerCsv(CSV);
+  const rows = parseCustomerCsv(CSV).rows;
   const out = resolveCustomerNamespaces(rows, { core: "trial-tt0001" });
   assert.ok(out.namespaces.includes("apim-dp-trial-tt0001-dp0011"));
   // ...and by a fragment of it, via the substring fallback.
@@ -41,7 +41,7 @@ test("resolveCustomerNamespaces: a trial's control plane is searched, a shared o
   // Verified against Loki: every apim-cp-trial-<id> hosts exactly one trial, so
   // it is single-tenant and safe. apim-cp-cp1111 carries three customers and must
   // stay out. The difference is encoded, not left to the namespace matcher.
-  const rows = parseCustomerCsv(CSV);
+  const rows = parseCustomerCsv(CSV).rows;
   const trial = resolveCustomerNamespaces(rows, { core: "trial-tt0001" });
   assert.ok(trial.namespaces.includes("apim-cp-trial-tt0001"));
   assert.equal(trial.control_plane_is_single_tenant, true);
@@ -60,26 +60,26 @@ test("resolveCustomerNamespaces: a trial's control plane is searched, a shared o
 test("matchCustomers: an exact slug wins over a substring of another slug", () => {
   // "orbit" must not drag in "orbitalis" - a customer-scoped query returning another
   // customer's logs is a data-boundary problem, not a ranking nicety.
-  const rows = parseCustomerCsv(CSV);
+  const rows = parseCustomerCsv(CSV).rows;
   const matched = matchCustomers(rows, "orbit");
   assert.deepEqual([...new Set(matched.map((r) => r.customer))], ["orbit"]);
 });
 
 test("matchCustomers: falls back to substring when nothing matches exactly", () => {
-  const rows = parseCustomerCsv(CSV);
+  const rows = parseCustomerCsv(CSV).rows;
   assert.deepEqual([...new Set(matchCustomers(rows, "acm").map((r) => r.customer))], ["acme"]);
   assert.deepEqual(matchCustomers(rows, "nosuchcustomer"), []);
   assert.deepEqual(matchCustomers(rows, ""), []);
 });
 
 test("resolveCustomerNamespaces: maps a customer to its data-plane namespaces", () => {
-  const rows = parseCustomerCsv(CSV);
+  const rows = parseCustomerCsv(CSV).rows;
   const out = resolveCustomerNamespaces(rows, { core: "acme" });
   assert.deepEqual(out.namespaces.sort(), ["apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp0002"]);
 });
 
 test("resolveCustomerNamespaces: an environment word narrows to that deployment", () => {
-  const rows = parseCustomerCsv(CSV);
+  const rows = parseCustomerCsv(CSV).rows;
   const out = resolveCustomerNamespaces(rows, { core: "acme", qualifiers: ["prod"] });
   assert.deepEqual(out.namespaces, ["apim-dp-cp1111-dp0001"]);
   assert.equal(out.env_filter_applied, true);
@@ -88,7 +88,7 @@ test("resolveCustomerNamespaces: an environment word narrows to that deployment"
 test("resolveCustomerNamespaces: an env that matches nothing is refused, not widened to every deployment", () => {
   // Regression: an env matching none of the customer's deployments fell back to
   // all of them, so "acme qa" searched prod and dev with no qa constraint.
-  const rows = parseCustomerCsv(CSV);
+  const rows = parseCustomerCsv(CSV).rows;
   const out = resolveCustomerNamespaces(rows, { core: "acme", qualifiers: ["qa"] });
   assert.deepEqual(out.namespaces, []);
   assert.deepEqual(out.unknown_qualifiers, ["qa"]);
@@ -99,7 +99,7 @@ test("resolveCustomerNamespaces: an env that matches nothing is refused, not wid
 test("resolveCustomerNamespaces: never searches shared control-plane namespaces", () => {
   // apim-cp-cp1111 carries beacon AND acme. Searching it under one
   // customer's name would return the other's logs.
-  const rows = parseCustomerCsv(CSV);
+  const rows = parseCustomerCsv(CSV).rows;
   const out = resolveCustomerNamespaces(rows, { core: "acme" });
   assert.ok(!out.namespaces.some((n) => n.startsWith("apim-cp-")), "control plane must not be searched implicitly");
   // ...but it is reported, so the caller knows it exists.
@@ -107,7 +107,7 @@ test("resolveCustomerNamespaces: never searches shared control-plane namespaces"
 });
 
 test("resolveCustomerNamespaces: unknown customer resolves to nothing", () => {
-  const out = resolveCustomerNamespaces(parseCustomerCsv(CSV), { core: "definitely-not-a-customer" });
+  const out = resolveCustomerNamespaces(parseCustomerCsv(CSV).rows, { core: "definitely-not-a-customer" });
   assert.deepEqual(out.namespaces, []);
   assert.deepEqual(out.matched, []);
 });
@@ -134,7 +134,7 @@ matt,cp6666,cp6666-dp0010,unitedstates,az,westus2,None,prod-org-matt-b.us-az-wes
 test("resolveCustomerNamespaces: refuses to merge two different customers", () => {
   // "wind" matches northwind AND southwind. Searching both together would return
   // one customer's logs under the other's name.
-  const rows = parseCustomerCsv(AMBIG);
+  const rows = parseCustomerCsv(AMBIG).rows;
   const out = resolveCustomerNamespaces(rows, { core: "wind" });
   assert.equal(out.ambiguous, true);
   assert.deepEqual(out.namespaces, [], "nothing may be searched while ambiguous");
@@ -143,7 +143,7 @@ test("resolveCustomerNamespaces: refuses to merge two different customers", () =
 });
 
 test("resolveCustomerNamespaces: candidates carry enough to choose between them", () => {
-  const out = resolveCustomerNamespaces(parseCustomerCsv(AMBIG), { core: "wind" });
+  const out = resolveCustomerNamespaces(parseCustomerCsv(AMBIG).rows, { core: "wind" });
   const northwind = out.candidates.find((c) => c.customer === "northwind");
   assert.equal(northwind.deployments, 1);
   assert.deepEqual(northwind.control_plane_ids, ["cp3333"]);
@@ -151,7 +151,7 @@ test("resolveCustomerNamespaces: candidates carry enough to choose between them"
 });
 
 test("resolveCustomerNamespaces: an exact name is never ambiguous", () => {
-  const out = resolveCustomerNamespaces(parseCustomerCsv(AMBIG), { core: "northwind" });
+  const out = resolveCustomerNamespaces(parseCustomerCsv(AMBIG).rows, { core: "northwind" });
   assert.equal(out.ambiguous, undefined);
   assert.deepEqual(out.namespaces, ["apim-dp-cp3333-dp0006"]);
 });
@@ -160,7 +160,7 @@ test("resolveCustomerNamespaces: one name over several organizations resolves bu
   // Distinct from the case above: every row really is "matt", so refusing would
   // block a valid lookup. It resolves - and reports that the name covers two
   // separate Cockpit tenants.
-  const out = resolveCustomerNamespaces(parseCustomerCsv(AMBIG), { core: "matt" });
+  const out = resolveCustomerNamespaces(parseCustomerCsv(AMBIG).rows, { core: "matt" });
   assert.equal(out.ambiguous, undefined);
   assert.equal(out.namespaces.length, 2);
   assert.equal(out.spans_multiple_organizations, true);
@@ -169,7 +169,7 @@ test("resolveCustomerNamespaces: one name over several organizations resolves bu
 });
 
 test("resolveCustomerNamespaces: control_plane_id narrows to one organization", () => {
-  const out = resolveCustomerNamespaces(parseCustomerCsv(AMBIG), { core: "matt", controlPlaneId: "cp5555" });
+  const out = resolveCustomerNamespaces(parseCustomerCsv(AMBIG).rows, { core: "matt", controlPlaneId: "cp5555" });
   assert.deepEqual(out.namespaces, ["apim-dp-cp5555-dp0008"]);
   assert.equal(out.spans_multiple_organizations, undefined);
 });
@@ -178,7 +178,7 @@ test("resolveCustomerNamespaces: an unmatched control_plane_id is refused, not i
   // Regression: an id matching none of the customer's organizations fell back to
   // ALL of them, so a mistyped id returned every deployment as if it were the one
   // asked for.
-  const out = resolveCustomerNamespaces(parseCustomerCsv(AMBIG), { core: "matt", controlPlaneId: "cp9999" });
+  const out = resolveCustomerNamespaces(parseCustomerCsv(AMBIG).rows, { core: "matt", controlPlaneId: "cp9999" });
   assert.deepEqual(out.namespaces, []);
   assert.deepEqual(out.matched, []);
   assert.equal(out.unknown_control_plane, true);
@@ -190,7 +190,7 @@ test("resolveCustomerNamespaces: an unmatched control_plane_id is refused, not i
 test("resolveCustomerNamespaces: the customer's own id on another environment is refused, and says so", () => {
   // cp5555 is matt's, but only for dev. Asking for matt prod on cp5555 selects
   // nothing; widening to prod's organization would ignore the id.
-  const out = resolveCustomerNamespaces(parseCustomerCsv(AMBIG), { core: "matt", qualifiers: ["prod"], controlPlaneId: "cp5555" });
+  const out = resolveCustomerNamespaces(parseCustomerCsv(AMBIG).rows, { core: "matt", qualifiers: ["prod"], controlPlaneId: "cp5555" });
   assert.deepEqual(out.namespaces, []);
   assert.equal(out.unknown_control_plane, true);
   assert.deepEqual(out.control_plane_ids, ["cp6666"]);
@@ -198,7 +198,7 @@ test("resolveCustomerNamespaces: the customer's own id on another environment is
 });
 
 test("groupByCustomer: groups rows by slug", () => {
-  const groups = groupByCustomer(parseCustomerCsv(AMBIG));
+  const groups = groupByCustomer(parseCustomerCsv(AMBIG).rows);
   assert.equal(groups.size, 3);
   assert.equal(groups.get("matt").length, 2);
 });
@@ -208,7 +208,7 @@ test("groupByCustomer: groups rows by slug", () => {
 // ---------------------------------------------------------------------------
 
 test("lookupById: a data plane id resolves to its customer", () => {
-  const rows = parseCustomerCsv(CSV);
+  const rows = parseCustomerCsv(CSV).rows;
   for (const q of ["cp1111-dp0001", "apim-dp-cp1111-dp0001", "  cp1111-dp0001  "]) {
     const out = lookupById(rows, q);
     assert.equal(out.kind, "data_plane", `failed for ${q}`);
@@ -219,7 +219,7 @@ test("lookupById: a data plane id resolves to its customer", () => {
 test("lookupById: a control plane id names every customer on it", () => {
   // apim-cp-cp1111 carries acme AND beacon, so the answer is both, with a
   // warning - not a single customer.
-  const out = lookupById(parseCustomerCsv(CSV), "apim-cp-cp1111");
+  const out = lookupById(parseCustomerCsv(CSV).rows, "apim-cp-cp1111");
   assert.equal(out.kind, "control_plane");
   assert.deepEqual(out.customers, ["acme", "beacon"]);
   assert.match(out.note, /shared by 2 customers/);
@@ -229,7 +229,7 @@ test("lookupById: an unlisted data plane falls back to control-plane candidates"
   // The CSV does not list every live data plane. When the specific id is absent
   // but its control plane is known, the field narrows to the customers sharing
   // that control plane - offered as a lead, never as an attribution.
-  const out = lookupById(parseCustomerCsv(CSV), "apim-dp-cp1111-ffffff");
+  const out = lookupById(parseCustomerCsv(CSV).rows, "apim-dp-cp1111-ffffff");
   assert.equal(out.kind, "unlisted_data_plane");
   assert.equal(out.control_plane_id, "cp1111");
   assert.deepEqual(out.candidate_customers, ["acme", "beacon"]);
@@ -242,17 +242,17 @@ const SHARED_DP_CSV =
   "globex,cp1111,cp1111-dp0001,unitedstates,aws,us-east-1,None,prod-org-globex.us-aws-us-east-1.gateway.gravitee.io\n";
 
 test("dataPlaneOwners: every customer the map lists on a data plane, each once", () => {
-  const owners = dataPlaneOwners(parseCustomerCsv(SHARED_DP_CSV));
+  const owners = dataPlaneOwners(parseCustomerCsv(SHARED_DP_CSV).rows);
   assert.deepEqual(owners.get("cp1111-dp0001"), ["acme", "globex"]);
   assert.deepEqual(owners.get("cp1111-dp0002"), ["acme"]);
   // The same customer on two rows is still one owner.
   const twice = CSV + "acme,cp1111,cp1111-dp0002,unitedstates,aws,us-east-1,None,dev-org-acme.us-aws-us-east-1.gateway.gravitee.io\n";
-  assert.deepEqual(dataPlaneOwners(parseCustomerCsv(twice)).get("cp1111-dp0002"), ["acme"]);
+  assert.deepEqual(dataPlaneOwners(parseCustomerCsv(twice).rows).get("cp1111-dp0002"), ["acme"]);
 });
 
 test("lookupById: a data plane the map lists under two customers names both, never the first", () => {
   // Regression: the first row's customer was given as the data plane's owner.
-  const rows = parseCustomerCsv(SHARED_DP_CSV);
+  const rows = parseCustomerCsv(SHARED_DP_CSV).rows;
   const out = lookupById(rows, "apim-dp-cp1111-dp0001");
   assert.equal(out.kind, "data_plane");
   assert.equal(out.customer, undefined);
@@ -263,14 +263,14 @@ test("lookupById: a data plane the map lists under two customers names both, nev
 
 test("dataPlanesWithId: a data plane the map lists under two customers names both", () => {
   // Regression: the last row's customer was given as the owner.
-  assert.deepEqual(dataPlanesWithId(parseCustomerCsv(SHARED_DP_CSV), [], "dp0001"), [
+  assert.deepEqual(dataPlanesWithId(parseCustomerCsv(SHARED_DP_CSV).rows, [], "dp0001"), [
     { namespace: "apim-dp-cp1111-dp0001", customers: ["acme", "globex"] },
   ]);
 });
 
 test("resolveCustomerNamespaces: a data plane listed under another customer too is refused, never searched", () => {
   // Regression: acme's search included cp1111-dp0001, which the map also gives globex.
-  const rows = parseCustomerCsv(SHARED_DP_CSV);
+  const rows = parseCustomerCsv(SHARED_DP_CSV).rows;
   const out = resolveCustomerNamespaces(rows, { core: "acme" });
   assert.deepEqual(out.namespaces, []);
   assert.deepEqual(out.shared_data_planes, [{ data_plane_id: "cp1111-dp0001", customers: ["acme", "globex"] }]);
@@ -280,10 +280,10 @@ test("resolveCustomerNamespaces: a data plane listed under another customer too 
 });
 
 test("lookupById: a wholly unknown id says so rather than guessing", () => {
-  const out = lookupById(parseCustomerCsv(CSV), "apim-dp-zzzzzz-123456");
+  const out = lookupById(parseCustomerCsv(CSV).rows, "apim-dp-zzzzzz-123456");
   assert.equal(out.kind, "unknown");
   assert.match(out.note, /Neither/);
-  assert.equal(lookupById(parseCustomerCsv(CSV), ""), null);
+  assert.equal(lookupById(parseCustomerCsv(CSV).rows, ""), null);
 });
 
 // ---------------------------------------------------------------------------
@@ -299,7 +299,7 @@ const ACMEDEVICES_CSV =
 test("splitNameAndTail: a whole name on a shorter cut wins over part of a name on a longer one", () => {
   // Regression: "acme dev" kept both words as part of acmedevices, so the dev
   // word was absorbed into another customer's name and acme was never searched.
-  const rows = parseCustomerCsv(ACMEDEVICES_CSV);
+  const rows = parseCustomerCsv(ACMEDEVICES_CSV).rows;
   assert.deepEqual(splitNameAndTail(rows, "acme dev"), { core: "acme", tail: ["dev"], partial: false });
   assert.deepEqual(
     resolveCustomerNamespaces(rows, { core: "acme", qualifiers: ["dev"] }).namespaces,
@@ -314,7 +314,7 @@ test("splitNameAndTail: a whole name that is also another customer's name plus w
   // dev" silently meant the customer "acme dev".
   const rows = parseCustomerCsv(
     CSV + "acme dev,cp8888,cp8888-dp0001,europe,az,westeurope,None,prod-org-acmedev.eu-az-westeurope.gateway.gravitee.io\n",
-  );
+  ).rows;
   assert.deepEqual(splitNameAndTail(rows, "acme dev"), {
     core: "acme dev",
     tail: [],
@@ -325,11 +325,11 @@ test("splitNameAndTail: a whole name that is also another customer's name plus w
   // deployments: none of them is both dev and prod.
   assert.deepEqual(splitNameAndTail(rows, "acme dev prod"), { core: "acme dev", tail: ["prod"], partial: false });
   // Nor without a customer called "acme dev".
-  assert.deepEqual(splitNameAndTail(parseCustomerCsv(CSV), "acme dev"), { core: "acme", tail: ["dev"], partial: false });
+  assert.deepEqual(splitNameAndTail(parseCustomerCsv(CSV).rows, "acme dev"), { core: "acme", tail: ["dev"], partial: false });
 });
 
 test("matchCustomers: several words are never read as parts of one name", () => {
-  const rows = parseCustomerCsv(ACMEDEVICES_CSV);
+  const rows = parseCustomerCsv(ACMEDEVICES_CSV).rows;
   assert.deepEqual(matchCustomers(rows, "acme dev"), []);
   assert.deepEqual([...new Set(matchCustomers(rows, "acmed").map((r) => r.customer))], ["acmedevices"]);
 });
@@ -341,14 +341,14 @@ test("listNames: lists at most ten names and says how many more there are", () =
 });
 
 test("matchCustomers: separators do not count", () => {
-  const rows = parseCustomerCsv(ACMEDEVICES_CSV);
+  const rows = parseCustomerCsv(ACMEDEVICES_CSV).rows;
   for (const name of ["north star", "north-star", "NorthStar"]) {
     assert.deepEqual([...new Set(matchCustomers(rows, name).map((r) => r.customer))], ["northstar"], name);
   }
 });
 
 test("splitNameAndTail: the map decides where the name ends", () => {
-  const rows = parseCustomerCsv(CSV);
+  const rows = parseCustomerCsv(CSV).rows;
   assert.deepEqual(splitNameAndTail(rows, "acme"), { core: "acme", tail: [], partial: false });
   assert.deepEqual(splitNameAndTail(rows, "acme prod"), { core: "acme", tail: ["prod"], partial: false });
   // The point of the change: an environment nobody listed is still a tail.
@@ -365,7 +365,7 @@ test("splitNameAndTail: the map decides where the name ends", () => {
 });
 
 test("resolveCustomerNamespaces: a qualifier narrows by environment, region or provider", () => {
-  const rows = parseCustomerCsv(CSV);
+  const rows = parseCustomerCsv(CSV).rows;
   const prod = resolveCustomerNamespaces(rows, { core: "acme", qualifiers: ["prod"] });
   assert.deepEqual(prod.namespaces, ["apim-dp-cp1111-dp0001"]);
   assert.equal(prod.env_filter_applied, true);
@@ -377,7 +377,7 @@ test("resolveCustomerNamespaces: a tail that describes nothing is refused, with 
   // Regression: a tail that matched no environment, region or provider returned
   // all of the customer's deployments, so the answer was broader than the one
   // asked for.
-  const rows = parseCustomerCsv(CSV);
+  const rows = parseCustomerCsv(CSV).rows;
   const out = resolveCustomerNamespaces(rows, { core: "acme", qualifiers: ["gatewaytesting"] });
   assert.deepEqual(out.namespaces, []);
   assert.deepEqual(out.matched, []);
@@ -389,7 +389,7 @@ test("resolveCustomerNamespaces: a tail that describes nothing is refused, with 
 });
 
 test("resolveCustomerNamespaces: an environment and a region narrow together", () => {
-  const rows = parseCustomerCsv(CSV);
+  const rows = parseCustomerCsv(CSV).rows;
   assert.deepEqual(
     resolveCustomerNamespaces(rows, { core: "acme", qualifiers: ["prod", "unitedstates"] }).namespaces,
     ["apim-dp-cp1111-dp0001"],
@@ -418,7 +418,7 @@ test("controlPlaneOf: everything before a data plane's own id", () => {
 });
 
 test("dataPlanesWithId: a data plane's own id finds it in the map and in Loki, with its customer", () => {
-  const rows = parseCustomerCsv(CSV);
+  const rows = parseCustomerCsv(CSV).rows;
   // In the map: the customer is said, even when Loki has not seen it.
   assert.deepEqual(dataPlanesWithId(rows, [], "dp0002"), [{ namespace: "apim-dp-cp1111-dp0002", customer: "acme" }]);
   // A control plane id with a dash (trials) still ends at the data plane's id.

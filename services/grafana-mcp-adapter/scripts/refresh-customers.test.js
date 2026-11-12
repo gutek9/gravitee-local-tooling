@@ -30,17 +30,17 @@ function adapterCopy() {
 const CSV =
   "Customer,ControlPlaneId,DataPlaneId,Region,Provider,Cloud Region,Custom DNS,URLs\n" +
   "acme,cp1111,cp1111-dp0001,unitedstates,aws,us-east-1,None,prod-org-acme.us-aws-us-east-1.gateway.gravitee.io\n";
-const FAKE_GITHUB = `data:text/javascript,${encodeURIComponent(`
+const fakeGitHub = (csv) => `data:text/javascript,${encodeURIComponent(`
 globalThis.fetch = async (url) => {
   process.stderr.write("REQUEST " + url + "\\n");
   const body = new URL(String(url)).pathname.endsWith("/commits")
     ? JSON.stringify([{ commit: { committer: { date: "2026-11-01T00:00:00Z" } } }])
-    : ${JSON.stringify(CSV)};
+    : ${JSON.stringify(csv)};
   return new Response(body);
 };`)}`;
 
-function run(dir, args, env = {}) {
-  return spawnSync(process.execPath, ["--import", FAKE_GITHUB, join(dir, "scripts", "refresh-customers.mjs"), ...args], {
+function run(dir, args, env = {}, csv = CSV) {
+  return spawnSync(process.execPath, ["--import", fakeGitHub(csv), join(dir, "scripts", "refresh-customers.mjs"), ...args], {
     cwd: dir,
     env: { PATH: process.env.PATH, GITHUB_PERSONAL_ACCESS_TOKEN: "test-token", ...env },
     encoding: "utf8",
@@ -95,4 +95,29 @@ test("refresh-customers: a file it cannot write is reported in one line, without
   assert.equal(r.status, 1);
   assert.match(r.stderr, /^Could not write the snapshot to .*no-such-dir.*ENOENT/m);
   assert.doesNotMatch(r.stderr, /^\s+at /m);
+});
+
+test("refresh-customers: a CSV it cannot read as the map writes nothing", () => {
+  // Regression (#9 review): a CSV without URLs or ControlPlaneId was written as a
+  // snapshot whose every row lacked that field.
+  const dir = adapterCopy();
+  const out = join(dir, "picked.json");
+  const r = run(dir, ["--out", out], {}, CSV.replace(",ControlPlaneId,", ",Org,"));
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /^The customer CSV cannot be read, so no snapshot was written: the customer CSV has no ControlPlaneId column/m);
+  assert.equal(existsSync(out), false);
+});
+
+test("refresh-customers: a row it cannot use writes nothing, and every such row is named", () => {
+  // The adapter warns on every answer that rows of a live CSV were left out; a
+  // snapshot cannot carry that warning.
+  const dir = adapterCopy();
+  const out = join(dir, "picked.json");
+  const bad = "globex, inc,cp2222,cp2222-dp0001,europe,az,westeurope,None,None\nglobex,cp2222,cp2222 dp0002,europe,az,westeurope,None,None\n";
+  const r = run(dir, ["--out", out], {}, CSV + bad);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /^2 row\(s\) of the customer CSV cannot be used, so no snapshot was written/m);
+  assert.match(r.stderr, /^ {2}line 3: 9 fields where the header has 8$/m);
+  assert.match(r.stderr, /^ {2}line 4, globex: the data plane id is not /m);
+  assert.equal(existsSync(out), false);
 });

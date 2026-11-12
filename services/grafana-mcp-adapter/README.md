@@ -88,8 +88,11 @@ The response also says how the customer was found:
 - `map_source`, `map_generated_at`, `map_warning` — where the map came from
   (`github`, `bundled_snapshot`, `unavailable`) and whether it is stale, or
   whether its age could not be read. When it is `unavailable`, `map_warning`
-  says why GitHub could not be read (e.g. `GITHUB_PERSONAL_ACCESS_TOKEN is not
-  set`), and no note calls a name or an id "not in the map".
+  says why the map could not be read from GitHub (e.g.
+  `GITHUB_PERSONAL_ACCESS_TOKEN is not set`) and, when a snapshot file is there
+  but cannot be used, why; no note then calls a name or an id "not in the map".
+  When rows of the CSV could not be used (see "What the map must look like"),
+  `map_warning` says how many were left out and names the first three.
 - `matched_deployments`, `control_plane_ids`, `shared_control_plane_namespaces` —
   the Cloud deployments behind the namespaces. Control-plane namespaces are
   shared by every customer on that control plane, so they are reported but never
@@ -430,7 +433,9 @@ writes `customers-snapshot.json` next to `server.js`, and never reads
 `GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH`, which is a path inside the container. To
 write another file, for example one you mount into the container, add
 `--out FILE`. Keep that file outside this repository, or name it
-`customers-snapshot*.json`: git ignores that name anywhere in the repo.
+`customers-snapshot*.json`: git ignores that name anywhere in the repo. It
+writes nothing, and exits 1, when the CSV lacks a column the map needs or has a
+row that cannot be used (see "What the map must look like").
 
 The adapter does not see a new snapshot until its image is rebuilt. The
 Dockerfile copies the file at build time, and the container your agent starts
@@ -453,15 +458,40 @@ record it.
 
 The build does not need it. The Dockerfile's `COPY customers-snapshot.jso[n]` is a
 no-op when the file is absent, so a fresh clone builds; the adapter fetches the
-map from GitHub at runtime and, if GitHub is unreachable AND no usable snapshot
-exists (missing, or with no customers), reports that Gravitee Cloud customers
-cannot be resolved rather than failing or guessing. Hosted namespaces still
+map from GitHub at runtime and, if the map cannot be read from GitHub AND no
+usable snapshot exists, reports that Gravitee Cloud customers cannot be resolved
+rather than failing or guessing. Hosted namespaces still
 resolve from Loki by name, but a customer that also runs on Gravitee Cloud then
 gets only its hosted part, and the response says so (`map_source: "unavailable"`
 and `map_warning`). A `client` that names no hosted namespace is refused rather
 than searched by `service_name` alone, because without the map nobody can tell
 it is not a Gravitee Cloud customer; this includes customers that live only in a
 shared namespace, for as long as the map cannot be read.
+
+A snapshot that is not valid JSON, has no customers, or has a row of another
+shape than `refresh-customers` writes is not used at all: it is the adapter's
+own copy, written only from a CSV whose every row can be used (see "What the map
+must look like"), so one such row means the file is not that copy.
+`map_warning` says why. A source date that cannot be read, or lies more than a
+day in the future, is reported as unknown.
+
+### What the map must look like
+
+The map is read from six columns of the CSV, found by name: `Customer`,
+`ControlPlaneId`, `DataPlaneId`, `Region`, `Provider` and `URLs` (where the
+environment is read). Without one of them the CSV is not used as the map: the
+adapter falls back as when GitHub cannot be read, and `map_warning` names the
+missing column. A row is used when it has as many fields as the header, a
+customer (`N/A` for a trial, whose data plane id then starts `trial-<id>-`), a
+data plane id made of lower-case letters and digits in two or more
+dash-separated parts (what follows `apim-dp-` in a namespace; an id in capitals
+is read in lower case), and a control plane id equal to the data plane id
+without its last part (a trial's is taken from its data plane id).
+Any other row is left out: every answer's `map_warning` says how many, names the
+first three by their line in the CSV, and says that a customer on them resolves
+only partly, or not at all, until the CSV is fixed. A customer whose every row
+was left out is answered as one the map does not list. `refresh-customers` then
+writes nothing, and `validate-customers` fails; both list every row left out.
 
 ### Customer-map environment variables
 
@@ -504,14 +534,17 @@ the map does not know. It reads the map from GitHub as it is now, like
 `refresh-customers`, and never the bundled snapshot: a fallback measured as if
 it were the map would pass the check meant to catch an outdated one. It exits 0
 when the map was measured, no more customers have missing namespaces than
-`VALIDATE_MAX_STALE` allows, and no data plane is listed under more than one
-customer, so it can gate a refresh. It exits 1 when a setting is wrong or the
-GitHub token missing (before any request), when GitHub or Loki cannot be read (a
-wrong token included), when there is nothing to measure (no map, or no
-namespaces in the window), above the threshold, or when the map lists a data
-plane under more than one customer (whatever the threshold: `grafana_logs_link`
-refuses such a data plane). Its output names customers, so share it only where
-the customer list may be seen.
+`VALIDATE_MAX_STALE` allows, no data plane is listed under more than one
+customer, and every row of the CSV could be used, so it can gate a refresh. It
+exits 1 when a setting is wrong or the GitHub token missing (before any
+request), when GitHub or Loki cannot be read (a wrong token included), when the
+CSV lacks a column the map needs, when there is nothing to measure (no usable
+map row, or no namespaces in the window), above the threshold, when the map
+lists a data plane under more than one customer (whatever the threshold:
+`grafana_logs_link` refuses such a data plane), or when a row of the CSV cannot
+be used (the rest is measured, and every such row is listed:
+`grafana_logs_link` leaves them out). Its output names customers, so share it
+only where the customer list may be seen.
 
 It runs on the host: the image does not ship `scripts/`, and Node does not read
 `.env` by itself. Pass the repo's `.env` to it, which keeps the tokens out of
@@ -557,11 +590,12 @@ Coverage:
   `grafana_logs_link` (`fetch` stubbed) and the links it builds from the matched
   streams.
 - `customerCsv.test.js` / `customerMatch.test.js` — the Gravitee Cloud customer
-  map: CSV parsing, name and id lookup, and resolving a customer to namespaces,
-  on made-up rows with the real CSV header. No network.
+  map: CSV parsing (the columns it needs, rows left out with their line), name
+  and id lookup, and resolving a customer to namespaces, on made-up rows with
+  the real CSV header. No network.
 - `customerMapLoader.test.js` — where the map comes from: GitHub, the snapshot
-  fallback, the unavailable case, caching. GitHub is stubbed and the snapshot is
-  a temp file, never a real one.
+  fallback (a malformed snapshot is none), the unavailable case, caching.
+  GitHub is stubbed and the snapshot is a temp file, never a real one.
 - `customerResolver.test.js` — resolving a client through both routes (label and
   customer map) from given namespace values and map rows, what of that
   resolution reaches the caller, and finding which customers a name or an id

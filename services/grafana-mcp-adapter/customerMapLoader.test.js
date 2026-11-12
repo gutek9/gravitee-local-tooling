@@ -90,7 +90,9 @@ test("loadCustomerMap: a live map regenerated long ago is called stale, even tho
 test("loadCustomerMap: a live map whose date cannot be read says its age is unknown", async () => {
   // Regression: no commit date meant no age and no warning, so `source: "github"`
   // read as a current map.
-  for (const committedAt of [null, "not-a-date"]) {
+  // A date in the future too: it gave a negative age, so the map was never
+  // called stale.
+  for (const committedAt of [null, "not-a-date", daysAgo(-3)]) {
     resetCustomerMapCache();
     await withGitHub({ committedAt }, async () => {
       const map = await loadCustomerMap();
@@ -99,6 +101,43 @@ test("loadCustomerMap: a live map whose date cannot be read says its age is unkn
       assert.match(map.warning, /its age is unknown/, `for committedAt=${committedAt}`);
     });
   }
+});
+
+test("loadCustomerMap: a commit date a few hours ahead of this clock is today, not unknown", async () => {
+  await withGitHub({ committedAt: daysAgo(-0.25) }, async () => {
+    const map = await loadCustomerMap();
+    assert.equal(map.generated_days_ago, 0);
+    assert.equal(map.warning, undefined);
+  });
+});
+
+test("loadCustomerMap: a row of the live CSV it cannot use is left out, and the map's warning names it", async () => {
+  // Regression (#9 review): such a row was taken as it was (a shifted row
+  // searched a namespace that does not exist, reported as a stale map), or
+  // dropped with nothing said.
+  const shifted = "globex, inc,cp2222,cp2222-dp0001,europe,az,westeurope,None,None\n";
+  const notAnId = (n) => `globex,cp2222,cp2222 dp000${n},europe,az,westeurope,None,None\n`;
+  await withGitHub({ csv: CSV + shifted + notAnId(2), committedAt: daysAgo(40) }, async () => {
+    const map = await loadCustomerMap();
+    assert.equal(map.source, "github");
+    assert.deepEqual(map.rows.map((r) => r.data_plane_id), ["cp1111-dp0001"]);
+    // Next to the stale warning, not instead of it.
+    assert.match(map.warning, /^The customer map was last regenerated 40 days ago/);
+    assert.ok(
+      map.warning.endsWith(
+        " 2 rows of the customer CSV could not be used and were left out (line 3: 9 fields where the header has 8; " +
+          "line 4, globex: the data plane id is not lower-case letters and digits in dash-separated parts): a " +
+          "customer on them resolves only partly, or not at all, until the CSV is fixed.",
+      ),
+      map.warning,
+    );
+  });
+  // Three are named, then a count.
+  resetCustomerMapCache();
+  await withGitHub({ csv: CSV + [1, 2, 3, 4, 5].map(notAnId).join("") }, async () => {
+    const map = await loadCustomerMap();
+    assert.match(map.warning, /left out \(line 3, globex: [^;]+; line 4, [^;]+; line 5, [^;]+; and 2 more\)/);
+  });
 });
 
 test("loadCustomerMap: GitHub down falls back to the snapshot, dated by its source CSV, not its refresh", async () => {
@@ -230,13 +269,21 @@ test("loadCustomerMap: without a token the snapshot answers and GitHub is never 
   });
 });
 
-test("loadCustomerMap: a CSV that parses to no rows is not taken as the map", async () => {
+test("loadCustomerMap: a CSV it cannot read as the map is not taken, and the warning says why", async () => {
   await writeSnapshot();
-  await withGitHub({ csv: "nothing,useful\n1,2\n" }, async () => {
-    const map = await loadCustomerMap();
-    assert.equal(map.source, "bundled_snapshot");
-    assert.match(map.warning, /parsed to zero rows/);
-  });
+  for (const [csv, reason] of [
+    ["nothing,useful\n1,2\n", "the customer CSV has none of the columns the map needs"],
+    [CSV.replace(",URLs", ",Hosts"), "the customer CSV has no URLs column, which the map needs"],
+    [CSV.split("\n")[0] + "\n", "the customer CSV has no rows"],
+    [CSV.replace("cp1111-dp0001", "cp1111 dp0001"), "no row of the customer CSV can be used: line 2, acme: the data plane id"],
+  ]) {
+    resetCustomerMapCache();
+    await withGitHub({ csv }, async () => {
+      const map = await loadCustomerMap();
+      assert.equal(map.source, "bundled_snapshot");
+      assert.ok(map.warning.includes(`because the map could not be read from GitHub: ${reason}`), map.warning);
+    });
+  }
 });
 
 test("loadCustomerMap: both sources gone gives an empty map marked unavailable, without throwing", async () => {
@@ -253,16 +300,77 @@ test("loadCustomerMap: an unavailable map says why GitHub could not be read", as
   // configured (no token) read like a passing outage worth retrying.
   await withGitHub({ csv: null }, async () => {
     const map = await loadCustomerMap();
-    assert.match(map.warning, /GitHub could not be read \(GitHub responded 503\)/);
+    assert.match(map.warning, /the map could not be read from GitHub \(GitHub responded 503\) and there is no bundled snapshot,/);
   });
   resetCustomerMapCache();
   delete process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
   await withGitHub({}, async (calls) => {
     const map = await loadCustomerMap();
     assert.equal(map.source, "unavailable");
-    assert.match(map.warning, /GitHub could not be read \(GITHUB_PERSONAL_ACCESS_TOKEN is not set\)/);
+    assert.match(map.warning, /the map could not be read from GitHub \(GITHUB_PERSONAL_ACCESS_TOKEN is not set\)/);
     assert.equal(contentsCalls(calls), 0);
   });
+});
+
+test("loadCustomerMap: a snapshot with a row it cannot use is not used at all, and the warning says why", async () => {
+  // Regression (#9 review): a snapshot row without a data plane id loaded, and
+  // both map tools then threw "Cannot read properties of undefined".
+  for (const [customers, reason] of [
+    [[{ customer: "acme" }], "customers[0]: no data plane id"],
+    [[SNAPSHOT_ROW, null], "customers[1]: not a row"],
+    [
+      [SNAPSHOT_ROW, { ...SNAPSHOT_ROW, data_plane_id: 'cp1111-dp"3' }],
+      "customers[1]: the data plane id is not lower-case letters and digits in dash-separated parts",
+    ],
+    [[{ ...SNAPSHOT_ROW, control_plane_id: "cp9999" }], "customers[0]: the control plane id is not the start of the data plane id"],
+  ]) {
+    resetCustomerMapCache();
+    await writeSnapshot(buildSnapshot({ customers, sourceGeneratedAt: CSV_COMMITTED_AT }));
+    await withGitHub({ csv: null }, async () => {
+      const map = await loadCustomerMap();
+      assert.equal(map.source, "unavailable");
+      assert.deepEqual(map.rows, []);
+      assert.ok(map.warning.includes(` and the bundled snapshot cannot be used (${reason}), so `), map.warning);
+    });
+  }
+});
+
+test("loadCustomerMap: a snapshot file that is not a snapshot says so, and never quotes the file", async () => {
+  for (const [content, reason] of [
+    ["not json, but acme-secret.example", "it is not valid JSON"],
+    ["null", "it has no customers list"],
+    [JSON.stringify({ customers: { acme: 1 } }), "it has no customers list"],
+    [JSON.stringify({ customers: [] }), "it has no customers"],
+  ]) {
+    resetCustomerMapCache();
+    await writeFile(SNAPSHOT, content);
+    await withGitHub({ csv: null }, async () => {
+      const map = await loadCustomerMap();
+      assert.equal(map.source, "unavailable");
+      assert.ok(map.warning.includes(` and the bundled snapshot cannot be used (${reason}), so `), map.warning);
+      assert.doesNotMatch(map.warning, /acme-secret/);
+    });
+  }
+});
+
+test("loadCustomerMap: a snapshot date that cannot be read, or lies in the future, is an unknown date", async () => {
+  // Regression (#9 review): a source date in 2099 gave the map a negative age,
+  // so it was never called stale; a refresh date that was not text was printed
+  // as "[object Object]".
+  for (const [dates, refreshed] of [
+    [{ source_generated_at: "2099-01-01T00:00:00Z", refreshed_at: "2026-10-09" }, "2026-10-09"],
+    [{ source_generated_at: "last tuesday", refreshed_at: { day: 9 } }, "unknown"],
+  ]) {
+    resetCustomerMapCache();
+    await writeSnapshot({ ...dates, customers: [SNAPSHOT_ROW] });
+    await withGitHub({ csv: null }, async () => {
+      const map = await loadCustomerMap();
+      assert.equal(map.source, "bundled_snapshot");
+      assert.equal(map.generated_at, null);
+      assert.equal(map.generated_days_ago, undefined);
+      assert.ok(map.warning.includes(`(source CSV date unknown, refreshed ${refreshed})`), map.warning);
+    });
+  }
 });
 
 test("loadCustomerMap: a loaded map is cached, and refresh fetches it again", async () => {

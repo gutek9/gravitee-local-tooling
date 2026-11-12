@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 // server.js imports grafanaClient.js, which reads env at import time and refuses
 // to make calls unless configured. Set a deterministic config before importing so
@@ -1023,7 +1024,7 @@ test("map tools: an unreadable map is said to be unreadable, with GitHub's reaso
       const found = await callTool("grafana_find_customer", { query: "orbitalis" });
       assert.equal(found.map_source, "unavailable");
       assert.match(found.note, /customer map could not be read/);
-      assert.match(found.map_warning, /GitHub could not be read \(GitHub responded 503\)/);
+      assert.match(found.map_warning, /the map could not be read from GitHub \(GitHub responded 503\)/);
       const logs = await callTool("grafana_logs_link", { client: "acme", control_plane_id: "cp1111" });
       assert.equal(logs.refused, true);
       assert.match(logs.customer_note, /could not be applied: the customer map could not be read/);
@@ -1032,6 +1033,32 @@ test("map tools: an unreadable map is said to be unreadable, with GitHub's reaso
     },
     { githubDown: true },
   );
+});
+
+test("map tools: a malformed snapshot is no snapshot: nothing throws, and the refusal searches nothing", async () => {
+  // Regression (#9 review): with GitHub down, a snapshot row without a data
+  // plane id loaded, and both map tools threw "Cannot read properties of
+  // undefined (reading 'toLowerCase')".
+  const snapshot = process.env.GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH;
+  await mkdir(dirname(snapshot), { recursive: true });
+  await writeFile(snapshot, JSON.stringify({ source_generated_at: "2026-11-01T00:00:00Z", customers: [{ customer: "acme" }] }));
+  try {
+    await withLokiStub(
+      { [NS_VALUES]: ["kestrel-prod"], [SERIES]: [] },
+      async (calls) => {
+        const found = await callTool("grafana_find_customer", { query: "acme" });
+        assert.equal(found.map_source, "unavailable");
+        assert.match(found.map_warning, /the bundled snapshot cannot be used \(customers\[0\]: no data plane id\)/);
+        const logs = await callTool("grafana_logs_link", { client: "acme" });
+        assert.equal(logs.refused, true);
+        assert.equal(logs.map_source, "unavailable");
+        assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+      },
+      { githubDown: true },
+    );
+  } finally {
+    await rm(dirname(snapshot), { recursive: true, force: true });
+  }
 });
 
 // ---------------------------------------------------------------------------

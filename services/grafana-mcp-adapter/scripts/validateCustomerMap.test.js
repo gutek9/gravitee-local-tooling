@@ -17,7 +17,7 @@ acme,cp1111,cp1111-dp0002,unitedstates,aws,us-east-1,None,dev-org-acme.us-aws-us
 beacon,cp2222,cp2222-dp0001,europe,az,westeurope,None,prod-org-beacon.eu-az-westeurope.gateway.gravitee.io
 `;
 
-const MAP = { rows: parseCustomerCsv(CSV), source: "github" };
+const MAP = { rows: parseCustomerCsv(CSV).rows, source: "github" };
 const ALL_LIVE = ["apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp0002", "apim-dp-cp2222-dp0001", "kestrel-prod"];
 
 test("validateCustomerMap: an unavailable map fails instead of passing with nothing checked", () => {
@@ -72,10 +72,33 @@ test("validateCustomerMap: a data plane listed under two customers fails, whatev
   // grafana_logs_link refuses such a data plane, so a map with one is not fit
   // to be refreshed into the snapshot, even with nothing missing.
   const shared = CSV + "globex,cp1111,cp1111-dp0001,unitedstates,aws,us-east-1,None,prod-org-globex.us-aws-us-east-1.gateway.gravitee.io\n";
-  const out = validateCustomerMap({ map: { rows: parseCustomerCsv(shared), source: "github" }, liveNamespaces: ALL_LIVE, maxStale: 10000 });
+  const out = validateCustomerMap({ map: { rows: parseCustomerCsv(shared).rows, source: "github" }, liveNamespaces: ALL_LIVE, maxStale: 10000 });
   assert.equal(out.ok, false);
   assert.equal(out.measured, true);
   assert.match(out.errors.join("\n"), /1 data plane\(s\) listed under more than one customer: cp1111-dp0001 \(acme, globex\)/);
+});
+
+test("validateCustomerMap: a row of the CSV it cannot use fails after measuring the rest, naming every one", () => {
+  // grafana_logs_link leaves such a row out, so a customer on it resolves only
+  // partly: the map is not fit to be refreshed into the snapshot.
+  const csv = CSV + "globex, inc,cp3333,cp3333-dp0001,europe,az,westeurope,None,None\nglobex,cp3333,cp3333 dp0002,europe,az,westeurope,None,None\n";
+  const { rows, leftOut } = parseCustomerCsv(csv);
+  const out = validateCustomerMap({ map: { rows, leftOut, source: "github" }, liveNamespaces: ALL_LIVE, maxStale: 10000 });
+  assert.equal(out.ok, false);
+  assert.equal(out.measured, true);
+  assert.equal(out.full, 2);
+  assert.equal(
+    out.errors.join("\n"),
+    "2 row(s) of the customer CSV cannot be used, so grafana_logs_link leaves them out and a customer on them " +
+      "resolves only partly, or not at all:\n" +
+      "  line 5: 9 fields where the header has 8\n" +
+      "  line 6, globex: the data plane id is not lower-case letters and digits in dash-separated parts",
+  );
+  // With no usable row at all, nothing is measured, and both are said.
+  const none = validateCustomerMap({ map: { rows: [], leftOut, source: "github" }, liveNamespaces: ALL_LIVE });
+  assert.equal(none.measured, false);
+  assert.equal(none.errors[0], "No row of the customer map can be used (source: github), so nothing was validated.");
+  assert.match(none.errors[1], /^2 row\(s\) of the customer CSV cannot be used/);
 });
 
 test("validateCustomerMap: no live data planes at all reports 0%, not NaN", () => {
@@ -172,9 +195,9 @@ test("validate-customers: the window reaches Loki as a real start time", () => {
 // The script with fetch answered without network: Loki returns ALL_LIVE, GitHub
 // answers per `github` ("ok": CSV and its commit date, "down": 503). Every
 // request is still printed to stderr.
-const stubbedNetwork = (github) =>
+const stubbedNetwork = (github, csv) =>
   `data:text/javascript,${encodeURIComponent(`
-    const csv = ${JSON.stringify(CSV)};
+    const csv = ${JSON.stringify(csv)};
     globalThis.fetch = async (url) => {
       const u = String(url);
       process.stderr.write("REQUEST " + u + "\\n");
@@ -186,8 +209,8 @@ const stubbedNetwork = (github) =>
       const data = ${JSON.stringify(ALL_LIVE)};
       return { ok: true, status: 200, text: async () => JSON.stringify({ status: "success", data }), headers: { get: () => null } };
     };`)}`;
-const runStubbed = (github, env) =>
-  spawnSync(process.execPath, ["--import", stubbedNetwork(github), SCRIPT], {
+const runStubbed = (github, env, csv = CSV) =>
+  spawnSync(process.execPath, ["--import", stubbedNetwork(github, csv), SCRIPT], {
     env: { PATH: process.env.PATH, ...env },
     encoding: "utf8",
   });
@@ -197,7 +220,7 @@ function withOldSnapshot(fn) {
   const dir = mkdtempSync(join(tmpdir(), "validate-customers-"));
   const path = join(dir, "customers-snapshot.json");
   try {
-    writeFileSync(path, JSON.stringify(buildSnapshot({ customers: parseCustomerCsv(CSV), sourceGeneratedAt: "2026-01-01T00:00:00Z" })));
+    writeFileSync(path, JSON.stringify(buildSnapshot({ customers: parseCustomerCsv(CSV).rows, sourceGeneratedAt: "2026-01-01T00:00:00Z" })));
     return fn(path);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -210,6 +233,26 @@ test("validate-customers: measures the map GitHub has now, and says when it was 
   assert.match(out.stdout, /map: 3 rows from GitHub \(CSV generated 2026-11-10\)/);
   assert.match(out.stdout, /forward: 2 customers \| fully resolvable: 2/);
   assert.match(out.stderr, /REQUEST https:\/\/api\.github\.com\/repos\/.*\/contents\//);
+});
+
+test("validate-customers: a CSV without a column the map is read from fails, with nothing measured", () => {
+  // Regression (#9 review): without ControlPlaneId or URLs every row lost that
+  // field, and the check passed (exit 0).
+  const out = runStubbed("ok", CONFIGURED, CSV.replace(",URLs", ",Hosts"));
+  assert.equal(out.status, 1, out.stdout);
+  assert.match(
+    out.stderr,
+    /The customer map from GitHub cannot be read: the customer CSV has no URLs column, which the map needs\. Nothing was validated\./,
+  );
+  assert.doesNotMatch(out.stdout, /forward:/);
+});
+
+test("validate-customers: a row it cannot use is measured around, then fails, naming its line", () => {
+  const out = runStubbed("ok", CONFIGURED, CSV + "globex,cp3333,cp3333 dp0002,europe,az,westeurope,None,None\n");
+  assert.equal(out.status, 1, out.stderr);
+  assert.match(out.stdout, /map: 3 rows from GitHub, 1 left out \(CSV generated 2026-11-10\)/);
+  assert.match(out.stdout, /forward: 2 customers \| fully resolvable: 2/);
+  assert.match(out.stderr, /^ {2}line 5, globex: the data plane id is not /m);
 });
 
 test("validate-customers: GitHub down fails, never measuring the bundled snapshot instead", () => {

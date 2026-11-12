@@ -49,10 +49,18 @@ try {
   );
   process.exit(1);
 }
+let parsed;
+try {
+  parsed = parseCustomerCsv(csv);
+} catch (err) {
+  console.error(`The customer map from GitHub cannot be read: ${err instanceof Error ? err.message : String(err)}. Nothing was validated.`);
+  process.exit(1);
+}
 const generatedAt = await fetchGeneratedAt();
-const map = { rows: parseCustomerCsv(csv), source: "github" };
+const map = { rows: parsed.rows, leftOut: parsed.leftOut, source: "github" };
 console.log(
-  `window: ${WINDOW_DAYS}d | live namespaces: ${live.length} | map: ${map.rows.length} rows from GitHub ` +
+  `window: ${WINDOW_DAYS}d | live namespaces: ${live.length} | map: ${map.rows.length} rows from GitHub` +
+    `${map.leftOut.length ? `, ${map.leftOut.length} left out` : ""} ` +
     `(CSV generated ${generatedAt ? generatedAt.slice(0, 10) : "on an unknown date"})`,
 );
 

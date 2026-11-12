@@ -21,7 +21,7 @@ northwind,cp6666,cp6666-dp0001,unitedstates,aws,us-east-1,None,dev-org-northwind
 `;
 
 const MAP = {
-  rows: parseCustomerCsv(CUSTOMERS_CSV),
+  rows: parseCustomerCsv(CUSTOMERS_CSV).rows,
   source: "github",
   generated_at: "2026-10-11T00:00:00Z",
   generated_days_ago: 2,
@@ -103,7 +103,7 @@ test("resolveClient: an env word is not absorbed into another customer's name", 
     rows: parseCustomerCsv(
       CUSTOMERS_CSV +
         "acmedevices,cp1111,cp1111-dp0009,unitedstates,aws,us-east-1,None,prod-org-acmedevices.us-aws-us-east-1.gateway.gravitee.io\n",
-    ),
+    ).rows,
   };
   const out = resolveClient({ phrase: "acme dev", namespaceValues: [...ACME_DATA_PLANES, "apim-dp-cp1111-dp0009"], map });
   assert.deepEqual(out.namespaces, ["apim-dp-cp1111-dp0002"]);
@@ -383,7 +383,7 @@ test("resolveClient: candidates are capped, and say how many were left out", () 
     const name = `zed${String(i).padStart(2, "0")}`;
     return `${name},cp9${i},cp9${i}-dp0001,europe,az,westeurope,None,prod-org-${name}.eu-az-westeurope.gateway.gravitee.io`;
   });
-  const map = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV + rows.join("\n") + "\n") };
+  const map = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV + rows.join("\n") + "\n").rows };
   const out = resolveClient({ phrase: "zed", namespaceValues: [], map });
   assert.equal(out.refused, true);
   assert.equal(out.candidates.length, 10);
@@ -488,7 +488,7 @@ test("resolveClient: a trial is named by its control-plane id, and resolves as t
     ...MAP,
     rows: parseCustomerCsv(
       CUSTOMERS_CSV + "N/A,trial,trial-tt0001-dp0011,apac,az,australiaeast,None,*.au.trial-tt0001.gateway.gravitee.io\n",
-    ),
+    ).rows,
   };
   const out = resolveClient({
     phrase: "trial-tt0001",
@@ -508,7 +508,7 @@ test("a trial's control plane is its own in every answer, never called shared", 
     ...MAP,
     rows: parseCustomerCsv(
       CUSTOMERS_CSV + "N/A,trial,trial-tt0001-dp0011,apac,az,australiaeast,None,*.au.trial-tt0001.gateway.gravitee.io\n",
-    ),
+    ).rows,
   };
   const live = ["apim-dp-trial-tt0001-dp0011", "apim-cp-trial-tt0001", ...ACME_DATA_PLANES, "apim-cp-cp1111"];
 
@@ -836,7 +836,7 @@ test("findCustomerMatches: an id the map gives one owner is answered, never 'not
   assert.equal(lokiDown.note, live);
   assert.equal(lokiDown.namespace_lookup_failed, true);
   // The map may spell an id in capitals; Loki's namespaces are lower case.
-  const capitals = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV.replace("acme,cp1111,cp1111-dp0001", "acme,cp1111,CP1111-DP0001")) };
+  const capitals = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV.replace("acme,cp1111,cp1111-dp0001", "acme,cp1111,CP1111-DP0001")).rows };
   assert.doesNotMatch(
     findCustomerMatches({ query: "cp1111-dp0001", namespaceValues: ACME_DATA_PLANES, map: capitals }).note,
     /has not seen/,
@@ -899,7 +899,7 @@ test("findCustomerMatches: Cloud namespaces that match by name are listed apart,
 // A fault in the map: cp1111-dp0001 listed under acme AND globex.
 const SHARED_DP_ROW =
   "globex,cp1111,cp1111-dp0001,unitedstates,aws,us-east-1,None,prod-org-globex.us-aws-us-east-1.gateway.gravitee.io\n";
-const SHARED_DP_MAP = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV + SHARED_DP_ROW) };
+const SHARED_DP_MAP = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV + SHARED_DP_ROW).rows };
 
 test("resolveClient: a data plane the map lists under two customers is never searched, by name or by id", () => {
   const resolveShared = (phrase, values, extra = {}) =>
@@ -928,7 +928,7 @@ test("resolveClient: a data plane's own id never offers to search one the map li
   // caller to pass the full namespace, which is refused.
   const map = {
     ...MAP,
-    rows: parseCustomerCsv(CUSTOMERS_CSV.split("\n").slice(0, 2).join("\n") + "\n" + SHARED_DP_ROW),
+    rows: parseCustomerCsv(CUSTOMERS_CSV.split("\n").slice(0, 2).join("\n") + "\n" + SHARED_DP_ROW).rows,
   };
   const out = resolveClient({ phrase: "dp0001", namespaceValues: ["apim-dp-cp1111-dp0001"], map });
   assert.equal(out.refused, true);
@@ -952,7 +952,7 @@ test("findCustomerMatches: a data plane the map lists under two customers is fla
 
 // Customers "acme dev" and acme, which has a dev: "acme dev" reads both ways.
 const ACME_DEV_ROW = "acme dev,cp8888,cp8888-dp0001,europe,az,westeurope,None,prod-org-acmedev.eu-az-westeurope.gateway.gravitee.io\n";
-const TWO_READINGS_MAP = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV + ACME_DEV_ROW) };
+const TWO_READINGS_MAP = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV + ACME_DEV_ROW).rows };
 
 test("resolveClient: a phrase that reads as two customers is refused, and a control_plane_id on one of them picks it", () => {
   const values = [...ACME_DATA_PLANES, "apim-dp-cp8888-dp0001"];
@@ -971,7 +971,7 @@ test("resolveClient: a phrase that reads as two customers is refused, and a cont
   assert.deepEqual(acmeDev({ controlPlaneId: "cp1111" }).namespaces, ["apim-dp-cp1111-dp0002"]);
   assert.match(acmeDev({ controlPlaneId: "cp9999" }).note, /control_plane_id "cp9999" is on neither of them/);
   // On one organization, only a data plane's full id tells them apart.
-  const sameOrg = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV + ACME_DEV_ROW.replaceAll("cp8888", "cp1111")) };
+  const sameOrg = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV + ACME_DEV_ROW.replaceAll("cp8888", "cp1111")).rows };
   const one = resolveClient({ phrase: "acme dev", namespaceValues: values, map: sameOrg });
   assert.equal(one.refused, true);
   assert.match(one.note, /Pass the full id of the data plane you mean\.$/);
@@ -1044,7 +1044,7 @@ test("findCustomerMatches: max_results caps each customer's own lists and matche
     // One customer on twelve Cockpit organizations.
     ...tenants.map((_, i) => `wideorg,cp80${String(i + 1).padStart(2, "0")},cp80${String(i + 1).padStart(2, "0")}-dp0001,europe,az,westeurope,None,prod-org-wideorg.eu.gateway.gravitee.io`),
   ].join("\n");
-  const shared = { ...MAP, rows: parseCustomerCsv(`${csv}\n`) };
+  const shared = { ...MAP, rows: parseCustomerCsv(`${csv}\n`).rows };
   const findIn = (query) => findCustomerMatches({ query, namespaceValues: [], map: shared, maxResults: 2 });
 
   const controlPlane = findIn("cp9000");

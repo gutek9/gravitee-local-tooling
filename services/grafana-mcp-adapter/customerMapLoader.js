@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { log, RESTART_HINT } from "./grafanaClient.js";
 import { githubGet } from "./githubClient.js";
-import { parseCustomerCsv } from "./customerCsv.js";
+import { parseCustomerCsv, rowProblem, describeLeftOut } from "./customerCsv.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // The snapshot next to this module: the file the image copies at build time and
@@ -79,6 +79,17 @@ function requireValidSettings() {
   );
 }
 
+// A date the map's age can be read from: text Date.parse reads, at most a day
+// ahead (a clock running a little fast is no reason to drop it). Anything else
+// is an unknown date: one from the future gave the map a negative age, so it
+// was never called stale.
+const DAY_MS = 86400000;
+function readDate(value) {
+  if (typeof value !== "string") return null;
+  const time = Date.parse(value);
+  return Number.isFinite(time) && time <= Date.now() + DAY_MS ? value : null;
+}
+
 // A map fetched live can still be months out of date: the summary is a
 // GENERATED file committed to its repo, so "fetched from GitHub" says nothing
 // about when it was last regenerated, and a stale map fails by omission, which
@@ -87,7 +98,8 @@ function requireValidSettings() {
 // STALE_AFTER_DAYS.
 function staleness(generatedAt) {
   if (!generatedAt) return {};
-  const days = Math.floor((Date.now() - Date.parse(generatedAt)) / 86400000);
+  // readDate lets a date through up to a day ahead: that is today.
+  const days = Math.max(0, Math.floor((Date.now() - Date.parse(generatedAt)) / DAY_MS));
   if (!Number.isFinite(days)) return {};
   if (days < STALE_AFTER_DAYS) return { generated_days_ago: days };
   return {
@@ -136,8 +148,8 @@ export async function fetchGeneratedAt() {
       params: { path: PATH_SEGMENTS.join("/"), sha: REF, per_page: 1 },
       timeoutMs: FETCH_TIMEOUT_MS,
     });
-    const commits = JSON.parse(body);
-    return commits?.[0]?.commit?.committer?.date || commits?.[0]?.commit?.author?.date || null;
+    const commit = JSON.parse(body)?.[0]?.commit;
+    return readDate(commit?.committer?.date || commit?.author?.date);
   } catch {
     return null;
   }
@@ -170,18 +182,48 @@ export function buildSnapshot({ customers, sourceGeneratedAt, refreshedAt = new 
 // which was the copy date. It is kept as the refresh date and never passed off
 // as the CSV's.
 //
-// A snapshot with no customers is no map at all, the same as a fetched CSV that
-// parses to zero rows: taking it would report a fallback map that resolves
-// nobody instead of saying the map is unavailable.
+// A snapshot with no customers is no map at all, the same as a fetched CSV with
+// no usable row: taking it would report a fallback map that resolves nobody
+// instead of saying the map is unavailable.
+//
+// A snapshot is this adapter's own copy, which refresh-customers writes only
+// from a CSV whose every row could be used. A row that cannot be used means the
+// file is not such a copy, so none of it is used: a map missing that row would
+// answer without it, and nothing would say so. The reasons thrown name no
+// content of the file; a missing file keeps its `code`.
 async function loadSnapshot() {
-  const raw = JSON.parse(await readFile(SNAPSHOT_PATH, "utf8"));
-  const rows = Array.isArray(raw.customers) ? raw.customers : [];
-  if (!rows.length) throw new Error("bundled snapshot has no customers");
+  const text = await readFile(SNAPSHOT_PATH, "utf8");
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new Error("it is not valid JSON");
+  }
+  if (!Array.isArray(raw?.customers)) throw new Error("it has no customers list");
+  if (!raw.customers.length) throw new Error("it has no customers");
+  for (const [i, row] of raw.customers.entries()) {
+    const problem = rowProblem(row);
+    if (problem) throw new Error(`customers[${i}]: ${problem}`);
+  }
   return {
-    rows,
-    source_generated_at: raw.source_generated_at || null,
-    refreshed_at: raw.refreshed_at || raw.generated_at || null,
+    rows: raw.customers,
+    source_generated_at: readDate(raw.source_generated_at),
+    refreshed_at: readDate(raw.refreshed_at) || readDate(raw.generated_at),
   };
+}
+
+// Why the snapshot did not answer, for the unavailable map's warning. Not
+// having one is the usual case and needs no detail.
+function snapshotReason(err) {
+  if (err?.code === "ENOENT") return "there is no bundled snapshot";
+  return `the bundled snapshot cannot be used (${err?.code || (err instanceof Error ? err.message : String(err))})`;
+}
+
+// The rows of the live CSV that could not be used, at most three named.
+const LEFT_OUT_SHOWN = 3;
+function listLeftOut(leftOut) {
+  const shown = leftOut.slice(0, LEFT_OUT_SHOWN).map(describeLeftOut).join("; ");
+  return leftOut.length > LEFT_OUT_SHOWN ? `${shown}; and ${leftOut.length - LEFT_OUT_SHOWN} more` : shown;
 }
 
 function describeSnapshotDates(snap, days) {
@@ -207,29 +249,40 @@ export async function loadCustomerMap({ refresh = false } = {}) {
 
 async function loadCustomerMapUncached() {
   try {
-    const rows = parseCustomerCsv(await fetchCustomerCsv());
-    if (!rows.length) throw new Error("fetched customer CSV parsed to zero rows");
+    const { rows, leftOut } = parseCustomerCsv(await fetchCustomerCsv());
+    if (!rows.length) {
+      throw new Error(
+        leftOut.length ? `no row of the customer CSV can be used: ${listLeftOut(leftOut)}` : "the customer CSV has no rows",
+      );
+    }
     const generatedAt = await fetchGeneratedAt();
-    const age = staleness(generatedAt);
+    const { warning: staleWarning, ...age } = staleness(generatedAt);
+    const warnings = [
+      // No readable commit date means no age, and `source: "github"` alone must
+      // not pass for a current map.
+      age.generated_days_ago === undefined
+        ? "The customer map was fetched from GitHub, but when it was last regenerated could not be read, " +
+          "so its age is unknown. It is a GENERATED file: fetching it live does not make it current, and a " +
+          "customer that does not resolve may simply be missing from it."
+        : staleWarning,
+      // A row left out is said on every answer: a customer on it resolves only
+      // partly, or not at all, and the CSV is where it is fixed.
+      leftOut.length
+        ? `${leftOut.length === 1 ? "A row" : `${leftOut.length} rows`} of the customer CSV could not be used ` +
+          `and ${leftOut.length === 1 ? "was" : "were"} left out (${listLeftOut(leftOut)}): a customer on ` +
+          `${leftOut.length === 1 ? "it" : "them"} resolves only partly, or not at all, until the CSV is fixed.`
+        : undefined,
+    ].filter(Boolean);
     const live = {
       rows,
       source: "github",
       generated_at: generatedAt,
       ...age,
-      // No readable commit date means no age, and `source: "github"` alone must
-      // not pass for a current map.
-      ...(age.generated_days_ago === undefined
-        ? {
-            warning:
-              "The customer map was fetched from GitHub, but when it was last regenerated could not be read, " +
-              "so its age is unknown. It is a GENERATED file: fetching it live does not make it current, and a " +
-              "customer that does not resolve may simply be missing from it.",
-          }
-        : {}),
+      ...(warnings.length ? { warning: warnings.join(" ") } : {}),
     };
     return remember(live, TTL_MS);
   } catch (err) {
-    log("warn", "Customer map: GitHub fetch failed, falling back to bundled snapshot", {
+    log("warn", "Customer map: GitHub's map could not be used, falling back to the bundled snapshot", {
       error: err instanceof Error ? err.message : String(err),
     });
     try {
@@ -242,7 +295,7 @@ async function loadCustomerMapUncached() {
         ...(days !== undefined ? { generated_days_ago: days } : {}),
         warning:
           `Customer mapping came from the bundled snapshot (${describeSnapshotDates(snap, days)}), ` +
-          `because GitHub could not be reached: ${err instanceof Error ? err.message : String(err)}. ` +
+          `because the map could not be read from GitHub: ${err instanceof Error ? err.message : String(err)}. ` +
           "Customers created or moved since then will not resolve.",
       };
       return remember(fallback, Math.min(RETRY_AFTER_MS, TTL_MS));
@@ -253,15 +306,16 @@ async function loadCustomerMapUncached() {
         github_error: err instanceof Error ? err.message : String(err),
         snapshot_error: snapErr instanceof Error ? snapErr.message : String(snapErr),
       });
-      // The GitHub reason is said: the map is also unavailable for good when it
-      // was never configured (no token), and "retry" would not help then.
+      // Both reasons are said: the map is also unavailable for good when it was
+      // never configured (no token), and "retry" would not help then; a
+      // snapshot that is there but cannot be used is fixed by refreshing it.
       const none = {
         rows: [],
         source: "unavailable",
         generated_at: null,
         warning:
-          `Customer mapping is unavailable: GitHub could not be read (${err instanceof Error ? err.message : String(err)}) ` +
-          "and there is no usable bundled snapshot, so Gravitee Cloud customers cannot be resolved by name. " +
+          `Customer mapping is unavailable: the map could not be read from GitHub (${err instanceof Error ? err.message : String(err)}) ` +
+          `and ${snapshotReason(snapErr)}, so Gravitee Cloud customers cannot be resolved by name. ` +
           "Hosted namespaces are still found by name, but a customer that also runs on Gravitee Cloud gets only " +
           "its hosted part.",
       };

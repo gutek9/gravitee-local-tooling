@@ -2,6 +2,7 @@
 // against the namespaces Loki has actually seen. Pure, no I/O, so the verdict,
 // including its failure paths, can be unit-tested directly.
 import { resolveCustomerNamespaces, dataPlaneNamespace, dataPlaneOwners } from "../customerMatch.js";
+import { describeLeftOut } from "../customerCsv.js";
 
 // The script's two numbers, read with readNumberSettings like the map settings:
 // empty means the default, anything else must be a whole number in range. A
@@ -22,7 +23,10 @@ export function validateCustomerMap({ map, liveNamespaces = [], maxStale = 20 })
   // down, or an empty file) or no live namespaces, every count below is zero,
   // which would read as "nothing stale" and exit 0 on a check that never ran.
   const errors = [];
-  if (map.source === "unavailable" || !map.rows.length) {
+  const leftOut = map.leftOut || [];
+  if (!map.rows.length && leftOut.length) {
+    errors.push(`No row of the customer map can be used (source: ${map.source}), so nothing was validated.`);
+  } else if (map.source === "unavailable" || !map.rows.length) {
     errors.push(
       `The customer map is ${map.source === "unavailable" ? "unavailable" : "empty"} (source: ${map.source}), ` +
         "so nothing was validated. Check GITHUB_PERSONAL_ACCESS_TOKEN, or run: npm run refresh-customers",
@@ -34,7 +38,17 @@ export function validateCustomerMap({ map, liveNamespaces = [], maxStale = 20 })
         "Check GRAFANA_LOGS_DATASOURCE_UID and VALIDATE_WINDOW_DAYS.",
     );
   }
-  if (errors.length) return { ok: false, measured: false, errors };
+  // Rows of the CSV that could not be used are a fault in the map whatever the
+  // threshold: grafana_logs_link leaves them out. Every one is listed, for
+  // whoever fixes the CSV.
+  const leftOutErrors = leftOut.length
+    ? [
+        `${leftOut.length} row(s) of the customer CSV cannot be used, so grafana_logs_link leaves them out ` +
+          "and a customer on them resolves only partly, or not at all:\n" +
+          leftOut.map((entry) => `  ${describeLeftOut(entry)}`).join("\n"),
+      ]
+    : [];
+  if (errors.length) return { ok: false, measured: false, errors: [...errors, ...leftOutErrors] };
 
   const liveSet = new Set(liveNamespaces);
   const customers = [...new Set(map.rows.map((r) => r.customer))];
@@ -62,7 +76,7 @@ export function validateCustomerMap({ map, liveNamespaces = [], maxStale = 20 })
   // Non-zero exit if the map has drifted badly, so this can gate a refresh.
   const tooStale = stale.length > maxStale;
   return {
-    ok: !tooStale && !sharedDataPlanes.length,
+    ok: !tooStale && !sharedDataPlanes.length && !leftOut.length,
     measured: true,
     errors: [
       ...(tooStale ? [`${stale.length} customers have missing namespaces (threshold ${maxStale}). Run: npm run refresh-customers`] : []),
@@ -73,6 +87,7 @@ export function validateCustomerMap({ map, liveNamespaces = [], maxStale = 20 })
               ". grafana_logs_link refuses them until the map lists each under one customer.",
           ]
         : []),
+      ...leftOutErrors,
     ],
     customers: customers.length,
     full,

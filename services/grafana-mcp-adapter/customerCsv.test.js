@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { parseCsv, extractEnv, parseCustomerCsv } from "./customerCsv.js";
+import { parseCsv, extractEnv, parseCustomerCsv, rowProblem, REQUIRED_COLUMNS } from "./customerCsv.js";
 import { dataPlaneNamespace, controlPlaneNamespace } from "./customerMatch.js";
 
 // A faithful slice of the real file, including the parts that break naive
@@ -60,7 +60,8 @@ test("extractEnv: ignores custom DNS and picks the gravitee host from a list", (
 // ---------------------------------------------------------------------------
 
 test("parseCustomerCsv: extracts the ids needed to build a namespace", () => {
-  const rows = parseCustomerCsv(CSV);
+  const { rows, leftOut } = parseCustomerCsv(CSV);
+  assert.deepEqual(leftOut, []);
   const prod = rows.find((r) => r.customer === "acme" && r.env === "prod");
   assert.deepEqual(prod, {
     customer: "acme",
@@ -84,7 +85,7 @@ test("parseCustomerCsv: keeps trials, named by the id they actually have", () =>
   // The CSV has no customer for a trial ("N/A"). Dropping the row made a whole
   // population invisible; instead it is keyed by the trial identifier embedded in
   // the data plane id, which is what someone would search for.
-  const trial = parseCustomerCsv(CSV).find((r) => r.is_trial);
+  const trial = parseCustomerCsv(CSV).rows.find((r) => r.is_trial);
   assert.equal(trial.customer, "trial-tt0001");
   assert.equal(trial.data_plane_id, "trial-tt0001-dp0011");
   // Verified against Loki: apim-cp-trial-<id> is the real namespace, so the CSV's
@@ -95,7 +96,132 @@ test("parseCustomerCsv: keeps trials, named by the id they actually have", () =>
   assert.equal(dataPlaneNamespace(trial.data_plane_id), "apim-dp-trial-tt0001-dp0011");
 });
 
-test("parseCustomerCsv: tolerates junk instead of throwing", () => {
-  assert.deepEqual(parseCustomerCsv(""), []);
-  assert.deepEqual(parseCustomerCsv("nothing,useful\n1,2\n"), []);
+test("parseCustomerCsv: a CSV without a column the map is read from is refused, naming it", () => {
+  // Regression (#9 review): only Customer and DataPlaneId were required. Without
+  // URLs every row lost its environment and `acme prod` was refused as if acme
+  // had no prod; without ControlPlaneId no control plane could be looked up.
+  for (const column of REQUIRED_COLUMNS) {
+    const renamed = CSV.replace(new RegExp(`(^|,)${column}(,|\\n)`), `$1Old ${column}$2`);
+    assert.throws(() => parseCustomerCsv(renamed), { message: `the customer CSV has no ${column} column, which the map needs` });
+  }
+  assert.throws(() => parseCustomerCsv(CSV.replace("Customer,ControlPlaneId,DataPlaneId,Region", "Customer,Org,DataPlaneId,region")), {
+    message: "the customer CSV has no ControlPlaneId or Region column, which the map needs",
+  });
+  assert.throws(() => parseCustomerCsv("nothing,useful\n1,2\n"), {
+    message: "the customer CSV has none of the columns the map needs, so GRAFANA_CUSTOMER_MAP_PATH may name another file",
+  });
+  for (const empty of ["", "\n\n", " , \n"]) {
+    assert.throws(() => parseCustomerCsv(empty), { message: "the customer CSV is empty" }, JSON.stringify(empty));
+  }
+});
+
+test("parseCustomerCsv: the columns are read by name, in any order and next to others", () => {
+  const reordered =
+    "URLs,Notes,DataPlaneId,Provider,Customer,Region,ControlPlaneId\n" +
+    "prod-org-acme.us-aws-us-east-1.gateway.gravitee.io,x,cp1111-dp0001,aws,acme,unitedstates,cp1111\n";
+  assert.deepEqual(parseCustomerCsv(reordered), {
+    rows: [parseCustomerCsv(CSV).rows.find((r) => r.data_plane_id === "cp1111-dp0001")],
+    leftOut: [],
+  });
+});
+
+// The real header, and rows built from cells so each case says what it changes.
+const HEADER = "Customer,ControlPlaneId,DataPlaneId,Region,Provider,Cloud Region,Custom DNS,URLs";
+const row = (customer, cp, dp, env = "prod") =>
+  `${customer},${cp},${dp},europe,az,westeurope,None,${env}-org-${customer}.eu-az-westeurope.gateway.gravitee.io`;
+
+test("parseCustomerCsv: a row with a field too many is left out whole, its customer not named", () => {
+  // An unquoted comma in the Customer cell moves every later field one column
+  // right: the data plane id read was the control plane's, and the search went
+  // to a namespace that does not exist, reported as a stale map.
+  const csv = [
+    HEADER,
+    row("acme", "cp1111", "cp1111-dp0001"),
+    "globex, inc,cp2222,cp2222-dp0001,europe,az,westeurope,None,prod-org-globex.eu-az-westeurope.gateway.gravitee.io",
+  ].join("\n");
+  const { rows, leftOut } = parseCustomerCsv(csv);
+  assert.deepEqual(rows.map((r) => r.customer), ["acme"]);
+  assert.deepEqual(leftOut, [{ line: 3, problem: "9 fields where the header has 8" }]);
+});
+
+test("parseCustomerCsv: a row that names no namespace is left out with its line, never dropped silently", () => {
+  // Regression (#9 review): odd ids reached the LogQL selector as they were (a
+  // quote ended its string), and rows without an id or a name were dropped with
+  // nothing said, so their customer looked absent from the map.
+  const csv = [
+    HEADER,
+    row("acme", "cp1111", "cp1111-dp0001"),
+    row("globex", "cp2222", '"cp2222-dp""1"'),
+    row("globex", "cp2222", "cp2222 dp0002"),
+    row("globex", "cp2222-dp0003", "cp2222"),
+    row("globex", "cp9999", "cp2222-dp0004"),
+    row("globex", "cp2222", ""),
+    row("N/A", "trial", "cp2222-dp0009"),
+    row("", "cp2222", "cp2222-dp0005"),
+  ].join("\n");
+  const { rows, leftOut } = parseCustomerCsv(csv);
+  assert.deepEqual(rows.map((r) => r.data_plane_id), ["cp1111-dp0001"]);
+  const notAnId = "the data plane id is not lower-case letters and digits in dash-separated parts";
+  assert.deepEqual(leftOut, [
+    { line: 3, customer: "globex", problem: notAnId },
+    { line: 4, customer: "globex", problem: notAnId },
+    { line: 5, customer: "globex", problem: notAnId },
+    { line: 6, customer: "globex", problem: "the control plane id is not the start of the data plane id" },
+    { line: 7, customer: "globex", problem: "no data plane id" },
+    { line: 8, problem: "the customer is N/A and the data plane id names no trial" },
+    { line: 9, problem: "no customer" },
+  ]);
+  // No cell is quoted back: a misplaced one can hold a customer's hostname.
+  assert.doesNotMatch(JSON.stringify(leftOut), /dp"|dp0002|cp9999|dp0004|dp0009|dp0005/);
+});
+
+test("parseCustomerCsv: a line number counts every line of a quoted field that spans several", () => {
+  const csv = [
+    HEADER,
+    'acme,cp1111,cp1111-dp0001,europe,az,westeurope,"a.example,\nb.example",prod-org-acme.eu-az-westeurope.gateway.gravitee.io',
+    "",
+    row("globex", "cp2222", "cp2222 dp0001"),
+  ].join("\n");
+  assert.deepEqual(parseCustomerCsv(csv).leftOut.map((r) => r.line), [5]);
+});
+
+test("parseCustomerCsv: an id in capitals names the lower-case namespace", () => {
+  // A Kubernetes namespace is lower case, so CP1111-DP0001 can only be
+  // apim-dp-cp1111-dp0001.
+  const { rows, leftOut } = parseCustomerCsv([HEADER, row("acme", "CP1111", "CP1111-DP0001")].join("\n"));
+  assert.deepEqual(leftOut, []);
+  assert.deepEqual([rows[0].control_plane_id, rows[0].data_plane_id], ["cp1111", "cp1111-dp0001"]);
+});
+
+// ---------------------------------------------------------------------------
+// rowProblem
+// ---------------------------------------------------------------------------
+
+test("rowProblem: every row parseCustomerCsv gives passes, so a snapshot refresh-customers writes loads", () => {
+  for (const r of parseCustomerCsv(CSV).rows) assert.equal(rowProblem(r), null, JSON.stringify(r));
+});
+
+test("rowProblem: a snapshot row of the wrong shape is named by what is wrong", () => {
+  const good = parseCustomerCsv(CSV).rows[0];
+  const notAnId = "the data plane id is not lower-case letters and digits in dash-separated parts";
+  for (const [r, problem] of [
+    [null, "not a row"],
+    [[good], "not a row"],
+    ["acme", "not a row"],
+    [{ ...good, customer: 42 }, "no customer"],
+    [{ ...good, customer: " " }, "no customer"],
+    [{ customer: "acme" }, "no data plane id"],
+    [{ ...good, data_plane_id: 'cp1111-dp"1' }, notAnId],
+    [{ ...good, data_plane_id: "CP1111-DP0001" }, notAnId],
+    [{ ...good, data_plane_id: "cp1111" }, notAnId],
+    [{ ...good, control_plane_id: "cp9999" }, "the control plane id is not the start of the data plane id"],
+    [{ ...good, control_plane_id: undefined }, "the control plane id is not the start of the data plane id"],
+    [{ ...good, region: 3 }, "the region is not text"],
+    [{ ...good, env: {} }, "the env is not text"],
+    [{ ...good, is_trial: "yes" }, "is_trial is not true"],
+  ]) {
+    assert.equal(rowProblem(r), problem, JSON.stringify(r));
+  }
+  // A field the map may lack (no region, no environment) is not a problem.
+  assert.equal(rowProblem({ ...good, region: null, provider: undefined, env: null }), null);
 });

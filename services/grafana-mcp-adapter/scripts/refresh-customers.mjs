@@ -14,7 +14,7 @@
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { parseCustomerCsv } from "../customerCsv.js";
+import { parseCustomerCsv, describeLeftOut } from "../customerCsv.js";
 import { fetchCustomerCsv, fetchGeneratedAt, buildSnapshot, DEFAULT_SNAPSHOT_PATH } from "../customerMapLoader.js";
 
 const USAGE = "Usage: npm run refresh-customers [-- --out FILE]";
@@ -38,7 +38,25 @@ try {
   process.exit(1);
 }
 
-const customers = parseCustomerCsv(csv);
+let parsed;
+try {
+  parsed = parseCustomerCsv(csv);
+} catch (err) {
+  console.error(`The customer CSV cannot be read, so no snapshot was written: ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
+// The adapter warns on every answer that rows of a live CSV were left out. A
+// snapshot cannot carry that warning, so it is written only from a CSV whose
+// every row can be used.
+if (parsed.leftOut.length) {
+  console.error(
+    `${parsed.leftOut.length} row(s) of the customer CSV cannot be used, so no snapshot was written: the adapter ` +
+      "would answer without those rows, and nothing would say so. Fix the CSV, then run this again.",
+  );
+  for (const entry of parsed.leftOut) console.error(`  ${describeLeftOut(entry)}`);
+  process.exit(1);
+}
+const customers = parsed.rows;
 if (!customers.length) {
   console.error("Parsed zero customers - refusing to overwrite the snapshot with an empty file.");
   process.exit(1);
