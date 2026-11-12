@@ -829,6 +829,20 @@ test("grafana_logs_link: a matching control_plane_id narrows to that organizatio
   );
 });
 
+test("grafana_logs_link: control_plane_id matches whatever its case or the spaces around it", async () => {
+  // Regression: " cp5555" and "CP5555" were refused as not northwind's.
+  for (const id of [" cp5555", "CP5555"]) {
+    await withLokiStub(
+      { [NS_VALUES]: NORTHWIND_NS, [SERIES]: [stream("apim-dp-cp5555-dp0001", "apim-gateway")] },
+      async () => {
+        const out = await callTool("grafana_logs_link", { client: "northwind", control_plane_id: id });
+        assert.equal(out.refused, undefined, id);
+        assert.deepEqual(out.resolved_namespaces, ["apim-dp-cp5555-dp0001"], id);
+      },
+    );
+  }
+});
+
 test("grafana_logs_link: a control_plane_id leaves out hosted namespaces, which are on no organization", async () => {
   // Regression: acme + cp1111 also searched the hosted acme-prod, so the id
   // widened past the organization it names.

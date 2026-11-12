@@ -237,7 +237,11 @@ export async function resolveNamespaces(client, { datasourceUid, from, controlPl
 // would blame a stale map for a failed lookup. The result says so instead, with
 // `lookupFailure` (from describeLookupFailure) giving why and whether a retry
 // can help, when the caller knows.
-export function resolveClient({ namespaceValues = [], lookupFailure: failure = null, ...rest }) {
+export function resolveClient({ namespaceValues = [], lookupFailure: failure = null, controlPlaneId, ...given }) {
+  // Every id in the customer map is lower case with no spaces around it (the
+  // loader checks each row), so control_plane_id is compared the same way. A
+  // blank one names no organization: it is not given.
+  const rest = { ...given, controlPlaneId: String(controlPlaneId ?? "").trim().toLowerCase() || undefined };
   if (namespaceValues !== null) return resolveFromRoutes({ ...rest, namespaceValues, liveNamespacesKnown: true });
   return {
     ...resolveFromRoutes({ ...rest, namespaceValues: [], liveNamespacesKnown: false, lookupFailure: failure }),

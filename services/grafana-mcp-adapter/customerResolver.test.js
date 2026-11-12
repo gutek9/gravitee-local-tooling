@@ -977,6 +977,46 @@ test("resolveClient: a phrase that reads as two customers is refused, and a cont
   assert.match(one.note, /Pass the full id of the data plane you mean\.$/);
 });
 
+test("resolveClient: control_plane_id is compared as the map writes ids, on every path", () => {
+  // Regression: " cp5555" and "CP5555" were refused as not northwind's.
+  const values = ["apim-dp-cp5555-dp0001", "apim-dp-cp6666-dp0001"];
+  for (const id of [" cp5555", "CP5555", "cp5555 \t"]) {
+    const out = resolve("northwind", values, { controlPlaneId: id });
+    assert.deepEqual(out.namespaces, ["apim-dp-cp5555-dp0001"], JSON.stringify(id));
+  }
+  // With Loki's namespace list missing, the map still narrows.
+  const lokiDown = resolve("northwind", null, { controlPlaneId: "CP5555" });
+  assert.deepEqual(lokiDown.namespaces, ["apim-dp-cp5555-dp0001"]);
+  assert.equal(lokiDown.namespace_lookup_failed, true);
+  // A data plane's id.
+  const dataPlane = resolve("cp1111-dp0002", ACME_DATA_PLANES, { controlPlaneId: "CP1111" });
+  assert.deepEqual(dataPlane.namespaces, ["apim-dp-cp1111-dp0002"]);
+  // A phrase that reads as two customers: the note said "CP8888" was on neither.
+  const twoReadings = resolveClient({
+    phrase: "acme dev",
+    namespaceValues: [...ACME_DATA_PLANES, "apim-dp-cp8888-dp0001"],
+    map: TWO_READINGS_MAP,
+    controlPlaneId: "CP8888",
+  });
+  assert.deepEqual(twoReadings.namespaces, ["apim-dp-cp8888-dp0001"]);
+  // A refusal shows the id as it was compared.
+  const other = resolve("northwind", values, { controlPlaneId: " CP9999 " });
+  assert.equal(other.refused, true);
+  assert.equal(other.requested_control_plane_id, "cp9999");
+  assert.match(other.note, /"cp9999" is not one of northwind's Cockpit organizations/);
+});
+
+test("resolveClient: a blank control_plane_id is taken as none", () => {
+  const values = ["apim-dp-cp5555-dp0001", "apim-dp-cp6666-dp0001"];
+  const none = resolve("northwind", values);
+  assert.equal(none.namespaces.length, 2);
+  for (const id of ["", "   ", undefined, null]) {
+    const out = resolve("northwind", values, { controlPlaneId: id });
+    assert.equal(out.refused, undefined, JSON.stringify(id));
+    assert.deepEqual(out.namespaces, none.namespaces, JSON.stringify(id));
+  }
+});
+
 test("findCustomerMatches: a phrase that reads as two customers lists both", () => {
   const out = findCustomerMatches({ query: "acme dev", map: TWO_READINGS_MAP, namespaceValues: ACME_DATA_PLANES });
   assert.deepEqual(out.gravitee_cloud_customers.map((c) => c.customer), ["acme", "acme dev"]);
