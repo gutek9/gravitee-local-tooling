@@ -309,6 +309,25 @@ test("splitNameAndTail: a whole name on a shorter cut wins over part of a name o
   assert.deepEqual(splitNameAndTail(rows, "acmed"), { core: "acmed", tail: [], partial: true });
 });
 
+test("splitNameAndTail: a whole name that is also another customer's name plus words describing it reads both ways", () => {
+  // Regression: with customers "acme dev" and acme (which has a dev), "acme
+  // dev" silently meant the customer "acme dev".
+  const rows = parseCustomerCsv(
+    CSV + "acme dev,cp8888,cp8888-dp0001,europe,az,westeurope,None,prod-org-acmedev.eu-az-westeurope.gateway.gravitee.io\n",
+  );
+  assert.deepEqual(splitNameAndTail(rows, "acme dev"), {
+    core: "acme dev",
+    tail: [],
+    partial: false,
+    also: { core: "acme", tail: ["dev"] },
+  });
+  // No second reading when the rest does not describe one of acme's
+  // deployments: none of them is both dev and prod.
+  assert.deepEqual(splitNameAndTail(rows, "acme dev prod"), { core: "acme dev", tail: ["prod"], partial: false });
+  // Nor without a customer called "acme dev".
+  assert.deepEqual(splitNameAndTail(parseCustomerCsv(CSV), "acme dev"), { core: "acme", tail: ["dev"], partial: false });
+});
+
 test("matchCustomers: several words are never read as parts of one name", () => {
   const rows = parseCustomerCsv(ACMEDEVICES_CSV);
   assert.deepEqual(matchCustomers(rows, "acme dev"), []);

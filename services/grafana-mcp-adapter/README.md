@@ -274,7 +274,11 @@ only when it matches nothing:
   merely contains `acmedev`. The tail is then matched against what the
   deployment *is* — environment, region or provider — so `acme dev europe`
   narrows, and a tail describing nothing is refused along with the environments
-  and regions that customer actually has.
+  and regions that customer actually has. When the longest whole name is one
+  customer's and a shorter cut is another's, with the rest describing one of
+  that other's deployments (customers `acme dev` and acme, which has a dev), the
+  phrase reads two ways: it is refused with both as `candidates`, unless
+  `control_plane_id` is on only one of them, which picks it.
 
 Both routes try every cut of the phrase as a whole name before any as part of
 one. A phrase can still resolve to several deployments when they really are
@@ -314,6 +318,9 @@ follow from reading names off namespaces, and one from that search:
   whose it is: a client that has no namespace of its own (it lives in a shared
   `prod`) also finds other customers' services whose names contain it
   (`kestrel` finds `kestrelcorp-gateway`).
+- The namespace route does not look for a second reading the way the map
+  route does: `acme dev` is acme's whole namespace `acme-dev`, even when another
+  hosted owner is called `acmedev` (`acmedev-prod`), and only acme's is searched.
 
 One consequence: a pinned namespace already expresses the environment, so
 `service_name` no longer repeats it — and the "drop the env token and retry"

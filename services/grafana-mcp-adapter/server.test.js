@@ -494,6 +494,27 @@ test("grafana_logs_link: a data plane the map lists under two customers is refus
   );
 });
 
+test("grafana_logs_link: a phrase that reads as two customers is refused, and Loki /series is never queried", async () => {
+  // Regression: with customers "acme dev" and acme (which has a dev), "acme
+  // dev" searched the customer "acme dev", though it may have meant acme's dev.
+  const csv =
+    CUSTOMERS_CSV + "acme dev,cp8888,cp8888-dp0001,europe,az,westeurope,None,prod-org-acmedev.eu-az-westeurope.gateway.gravitee.io\n";
+  await withLokiStub(
+    {
+      [NS_VALUES]: ["apim-dp-cp1111-dp0002", "apim-dp-cp8888-dp0001"],
+      [SERIES]: [stream("apim-dp-cp8888-dp0001", "acmedev-gateway")],
+    },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "acme dev" });
+      assert.equal(out.refused, true);
+      assert.deepEqual(out.resolved_namespaces, []);
+      assert.deepEqual(out.candidates.map((c) => c.customer), ["acme dev", "acme"]);
+      assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
+    },
+    { csv },
+  );
+});
+
 test("grafana_logs_link: a control-plane id typed into client is refused, and Loki is never queried", async () => {
   // Regression: "cp1111" searched the shared apim-cp-cp1111 and the data planes on it.
   await withLokiStub(

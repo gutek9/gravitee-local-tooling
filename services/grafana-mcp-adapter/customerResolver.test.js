@@ -848,6 +848,38 @@ test("findCustomerMatches: a data plane the map lists under two customers is fla
   ]);
 });
 
+// Customers "acme dev" and acme, which has a dev: "acme dev" reads both ways.
+const ACME_DEV_ROW = "acme dev,cp8888,cp8888-dp0001,europe,az,westeurope,None,prod-org-acmedev.eu-az-westeurope.gateway.gravitee.io\n";
+const TWO_READINGS_MAP = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV + ACME_DEV_ROW) };
+
+test("resolveClient: a phrase that reads as two customers is refused, and a control_plane_id on one of them picks it", () => {
+  const values = [...ACME_DATA_PLANES, "apim-dp-cp8888-dp0001"];
+  const acmeDev = (extra = {}) => resolveClient({ phrase: "acme dev", namespaceValues: values, map: TWO_READINGS_MAP, ...extra });
+  // Regression: "acme dev" searched the customer "acme dev" without saying it
+  // is also acme's dev.
+  const both = acmeDev();
+  assert.equal(both.refused, true);
+  assert.deepEqual(both.namespaces, []);
+  assert.equal(both.ambiguous_customer, true);
+  assert.deepEqual(both.candidates.map((c) => c.customer), ["acme dev", "acme"]);
+  assert.match(both.note, /"acme dev" reads two ways: the customer acme dev, or acme's deployments described by "dev"/);
+  assert.match(both.note, /Pass control_plane_id to choose \(acme dev: cp8888; acme: cp1111\)/);
+  // An id only one of them is on picks it.
+  assert.deepEqual(acmeDev({ controlPlaneId: "cp8888" }).namespaces, ["apim-dp-cp8888-dp0001"]);
+  assert.deepEqual(acmeDev({ controlPlaneId: "cp1111" }).namespaces, ["apim-dp-cp1111-dp0002"]);
+  assert.match(acmeDev({ controlPlaneId: "cp9999" }).note, /control_plane_id "cp9999" is on neither of them/);
+  // On one organization, only a data plane's full id tells them apart.
+  const sameOrg = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV + ACME_DEV_ROW.replaceAll("cp8888", "cp1111")) };
+  const one = resolveClient({ phrase: "acme dev", namespaceValues: values, map: sameOrg });
+  assert.equal(one.refused, true);
+  assert.match(one.note, /Pass the full id of the data plane you mean\.$/);
+});
+
+test("findCustomerMatches: a phrase that reads as two customers lists both", () => {
+  const out = findCustomerMatches({ query: "acme dev", map: TWO_READINGS_MAP, namespaceValues: ACME_DATA_PLANES });
+  assert.deepEqual(out.gravitee_cloud_customers.map((c) => c.customer), ["acme", "acme dev"]);
+});
+
 test("findCustomerMatches: a Cloud id matches a whole segment of any Cloud namespace before part of a longer id", () => {
   // Hosted namespaces are read from their owner's first segment; Cloud ones
   // have none (all start with apim), so an id is any whole segment of them.

@@ -218,17 +218,38 @@ export function groupByCustomer(rows = []) {
 // Every cut is tried for a whole name before any is tried for part of one:
 // "acme dev" cuts after "acme", a whole name, rather than keeping both words as
 // part of `acmedevices`. `partial` says which it was.
+//
+// The longest whole name wins, but a shorter one can be another customer's
+// whole name whose deployments the rest of the phrase describes: with
+// customers "acme dev" and acme (which has a dev), "acme dev" reads both ways.
+// That second reading is returned as `also`, so the caller never picks one in
+// silence.
 export function splitNameAndTail(rows = [], phrase = "") {
   const words = String(phrase || "").trim().split(/\s+/).filter(Boolean);
   for (const match of [matchCustomersExactly, matchCustomersPartly]) {
     for (let n = words.length; n > 0; n--) {
       const core = words.slice(0, n).join(" ");
       if (match(rows, core).length) {
-        return { core, tail: words.slice(n), partial: match === matchCustomersPartly };
+        const split = { core, tail: words.slice(n), partial: match === matchCustomersPartly };
+        const also = split.partial ? null : shorterReading(rows, words, n);
+        return also ? { ...split, also } : split;
       }
     }
   }
   return { core: words.join(" "), tail: [], partial: false };
+}
+
+// The longest shorter cut that is another customer's whole name, with the
+// words after it describing one of that customer's deployments, or null.
+function shorterReading(rows, words, n) {
+  const longer = new Set(matchCustomersExactly(rows, words.slice(0, n).join(" ")).map((r) => r.customer));
+  for (let m = n - 1; m > 0; m--) {
+    const core = words.slice(0, m).join(" ");
+    const tail = words.slice(m);
+    const other = matchCustomersExactly(rows, core).filter((r) => !longer.has(r.customer));
+    if (other.some((r) => tail.every((q) => qualifierMatches(r, q)))) return { core, tail };
+  }
+  return null;
 }
 
 // Does this deployment answer to that word? Environment, region and provider are

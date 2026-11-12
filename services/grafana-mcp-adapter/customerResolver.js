@@ -362,7 +362,40 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
   // decided by what exists, not by a list of known environment names.
   // Cloud namespaces carry ids, not names: only the map and resolveById reach them.
   const found = matchNamespacesPhrase(namespaceValues.filter((n) => !isCloudNamespace(n)), phrase);
-  const split = splitNameAndTail(map.rows, phrase);
+  let split = splitNameAndTail(map.rows, phrase);
+  // Two customers in one phrase: "acme dev" is the customer "acme dev", and
+  // acme's dev. A control_plane_id only one of them is on picks it; otherwise
+  // neither is searched, since either could be the other's logs.
+  if (split.also) {
+    const readings = [split, { ...split.also, partial: false }];
+    const rowsOf = (reading) => matchCustomers(map.rows, reading.core);
+    const onId = controlPlaneId
+      ? readings.filter((reading) => rowsOf(reading).some((r) => r.control_plane_id === controlPlaneId))
+      : [];
+    if (onId.length === 1) {
+      split = onId[0];
+    } else {
+      const [whole, other] = readings.map((reading) => describeCustomer(rowsOf(reading)));
+      const sharedOrg = whole.control_plane_ids.some((id) => other.control_plane_ids.includes(id));
+      return {
+        namespaces: [],
+        via: "none",
+        refused: true,
+        ambiguous_customer: true,
+        ...cappedCandidates([whole, other]),
+        note:
+          `"${phrase}" reads two ways: the customer ${whole.customer}, or ${other.customer}'s ` +
+          `deployments described by "${readings[1].tail.join(" ")}". Either could return the other's logs, ` +
+          "so nothing was searched. " +
+          (controlPlaneId ? `control_plane_id "${controlPlaneId}" is on ${onId.length ? "both" : "neither"} of them. ` : "") +
+          (sharedOrg
+            ? "Pass the full id of the data plane you mean."
+            : `Pass control_plane_id to choose (${whole.customer}: ${whole.control_plane_ids.join(", ")}; ` +
+              `${other.customer}: ${other.control_plane_ids.join(", ")}), or the full id of a data plane.`),
+        ...mapFields(map),
+      };
+    }
+  }
   const scope = scopeToOneCustomer({
     phrase,
     found,
@@ -716,9 +749,13 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
   // the reverse lookup is always attempted - no guessing whether the query
   // "looks like" an id.
   const byId = lookupById(map.rows, query);
-  // Ask the map where the name ends, so "acme recette" finds acme.
-  const { core: mapName } = splitNameAndTail(map.rows, needle);
-  const groups = groupByCustomer(matchCustomers(map.rows, mapName));
+  // Ask the map where the name ends, so "acme recette" finds acme. A phrase
+  // that reads as two customers ("acme dev") lists both.
+  const split = splitNameAndTail(map.rows, needle);
+  const groups = groupByCustomer([
+    ...matchCustomers(map.rows, split.core),
+    ...(split.also ? matchCustomers(map.rows, split.also.core) : []),
+  ]);
   const owners = dataPlaneOwners(map.rows);
   const cockpit = [...groups.values()]
     // The same namespaces grafana_logs_link searches for this customer, except
