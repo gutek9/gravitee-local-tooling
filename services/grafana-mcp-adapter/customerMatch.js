@@ -161,7 +161,7 @@ export function lookupById(rows = [], query = "") {
       customers,
       note:
         customers.length > 1
-          ? `Control plane ${id} is shared by ${customers.length} customers (${customers.join(", ")}). ` +
+          ? `Control plane ${id} is shared by ${customers.length} customers (${listNames(customers)}). ` +
             "A log search scoped to it would mix them."
           : undefined,
     };
@@ -179,7 +179,7 @@ export function lookupById(rows = [], query = "") {
       candidate_customers: candidates,
       note:
         `Data plane ${id} is not in the customer map, but its control plane ${cpPart} is, and hosts ` +
-        `${candidates.join(", ")}. It probably belongs to one of them — the map does not say which, so this is ` +
+        `${listNames(candidates)}. It probably belongs to one of them — the map does not say which, so this is ` +
         "a lead, not an attribution.",
     };
   }

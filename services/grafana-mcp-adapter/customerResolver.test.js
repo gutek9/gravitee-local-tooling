@@ -917,7 +917,7 @@ test("findCustomerMatches: a data plane the map lists under two customers is fla
   assert.deepEqual(byId.matched_by_id.customers, ["acme", "globex"]);
   const byName = findCustomerMatches({ query: "acme", map: SHARED_DP_MAP, namespaceValues: ACME_DATA_PLANES });
   assert.deepEqual(byName.gravitee_cloud_customers[0].shared_data_planes, [
-    { data_plane_id: "cp1111-dp0001", customers: ["acme", "globex"] },
+    { data_plane_id: "cp1111-dp0001", customers: ["acme", "globex"], customers_truncated: 0 },
   ]);
 });
 
@@ -983,6 +983,66 @@ test("findCustomerMatches: max_results caps every list and says how many were le
   assert.equal(exact.hosted_namespaces_truncated, 0);
   assert.equal(exact.cloud_namespaces_truncated, 0);
   assert.equal(exact.gravitee_cloud_truncated, 0);
+});
+
+test("findCustomerMatches: max_results caps each customer's own lists and matched_by_id's too", () => {
+  // Regression: only the answer's own lists were capped. A customer's
+  // namespaces, control planes, envs and regions, and matched_by_id's lists,
+  // came back whole however small max_results was, and the notes named every
+  // customer on a control plane.
+  const acme = find("acme", [], { maxResults: 1 }).gravitee_cloud_customers[0];
+  assert.deepEqual(acme.namespaces, ["apim-dp-cp1111-dp0001"]);
+  assert.equal(acme.namespaces_truncated, 2);
+  assert.equal(acme.envs.length, 1);
+  assert.equal(acme.envs_truncated, 2);
+  for (const key of ["control_plane_ids", "regions", "shared_control_plane_namespaces"]) {
+    assert.equal(acme[key].length, 1, key);
+    assert.equal(acme[`${key}_truncated`], 0, key);
+  }
+  const northwind = find("northwind", [], { maxResults: 1 });
+  assert.deepEqual(northwind.gravitee_cloud_customers[0].control_plane_ids, ["cp5555"]);
+  assert.equal(northwind.gravitee_cloud_customers[0].control_plane_ids_truncated, 1);
+  assert.equal(northwind.gravitee_cloud_customers[0].shared_control_plane_namespaces_truncated, 1);
+  // The note still counts and names both organizations.
+  assert.match(northwind.note, /spans 2 separate Cockpit organizations \(cp5555, cp6666\)/);
+
+  // Twelve customers on one control plane, three of them also on one data plane.
+  const tenants = Array.from({ length: 12 }, (_, i) => `tenant${String(i + 1).padStart(2, "0")}`);
+  const csv = [
+    CUSTOMERS_CSV.split("\n")[0],
+    ...tenants.map((t, i) => `${t},cp9000,cp9000-dp${String(i + 1).padStart(4, "0")},europe,az,westeurope,None,prod-org-${t}.eu.gateway.gravitee.io`),
+    ...tenants.slice(0, 3).map((t) => `${t},cp9000,cp9000-dp0099,europe,az,westeurope,None,prod-org-${t}-x.eu.gateway.gravitee.io`),
+    // One customer on twelve Cockpit organizations.
+    ...tenants.map((_, i) => `wideorg,cp80${String(i + 1).padStart(2, "0")},cp80${String(i + 1).padStart(2, "0")}-dp0001,europe,az,westeurope,None,prod-org-wideorg.eu.gateway.gravitee.io`),
+  ].join("\n");
+  const shared = { ...MAP, rows: parseCustomerCsv(`${csv}\n`) };
+  const findIn = (query) => findCustomerMatches({ query, namespaceValues: [], map: shared, maxResults: 2 });
+
+  const controlPlane = findIn("cp9000");
+  assert.deepEqual(controlPlane.matched_by_id.customers, ["tenant01", "tenant02"]);
+  assert.equal(controlPlane.matched_by_id.customers_truncated, 10);
+  assert.match(controlPlane.note, /shared by 12 customers \(tenant01, .*, tenant10 and 2 more\)/);
+  const unlisted = findIn("cp9000-dp0777");
+  assert.deepEqual(unlisted.matched_by_id.candidate_customers, ["tenant01", "tenant02"]);
+  assert.equal(unlisted.matched_by_id.candidate_customers_truncated, 10);
+  assert.match(unlisted.note, /hosts tenant01, .*, tenant10 and 2 more\./);
+  const sharedDataPlane = findIn("cp9000-dp0099");
+  assert.equal(sharedDataPlane.matched_by_id.customers.length, 2);
+  assert.equal(sharedDataPlane.matched_by_id.customers_truncated, 1);
+  assert.equal(sharedDataPlane.matched_by_id.deployments.length, 2);
+  assert.equal(sharedDataPlane.matched_by_id.deployments_truncated, 1);
+  const [tenant] = findIn("tenant01").gravitee_cloud_customers;
+  assert.deepEqual(tenant.shared_data_planes[0].customers, ["tenant01", "tenant02"]);
+  assert.equal(tenant.shared_data_planes[0].customers_truncated, 1);
+  const wide = findIn("wideorg");
+  assert.equal(wide.gravitee_cloud_customers[0].control_plane_ids_truncated, 10);
+  assert.match(wide.note, /spans 12 separate Cockpit organizations \(cp8001, .*, cp8010 and 2 more\)/);
+
+  // Exactly at the limit: everything shown, nothing reported left out.
+  const atLimit = find("acme", [], { maxResults: 3 }).gravitee_cloud_customers[0];
+  assert.equal(atLimit.namespaces.length, 3);
+  assert.equal(atLimit.namespaces_truncated, 0);
+  assert.equal(atLimit.envs_truncated, 0);
 });
 
 test("findCustomerMatches: a live data plane the map does not attribute is reported apart, never claimed", () => {

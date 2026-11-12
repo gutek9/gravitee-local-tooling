@@ -336,8 +336,8 @@ registerTool(
       .default(20)
       .optional()
       .describe(
-        "Caps every list in the answer: customers, hosted and Cloud namespaces, and each customer's " +
-          "unattributed data planes. A *_truncated count says how many were left out.",
+        "Caps every list in the answer, each customer's own lists and matched_by_id's included. A count " +
+          "next to each list (*_truncated) says how many were left out; a note names at most 10.",
       ),
   },
   async ({ query, max_results = 20 }) =>

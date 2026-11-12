@@ -942,6 +942,17 @@ test("grafana_find_customer: max_results caps the namespace lists too, and Cloud
   );
 });
 
+test("grafana_find_customer: max_results reaches each customer's own lists", async () => {
+  // Regression: max_results capped only the answer's lists, never a customer's.
+  await withLokiStub({ [NS_VALUES]: [] }, async () => {
+    const out = await callTool("grafana_find_customer", { query: "acme", max_results: 1 });
+    const [acme] = out.gravitee_cloud_customers;
+    assert.deepEqual(acme.namespaces, ["apim-dp-cp1111-dp0001"]);
+    assert.equal(acme.namespaces_truncated, 2);
+    assert.equal(acme.envs_truncated, 2);
+  });
+});
+
 test("grafana_find_customer: an unmapped data plane on the customer's control plane is reported, not claimed", async () => {
   // dp9999 is live on acme's control plane but the map does not attribute it.
   // A control plane is shared, so it may be someone else's: reported apart,

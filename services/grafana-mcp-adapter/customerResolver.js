@@ -51,6 +51,16 @@ function cappedList(list, max, key, truncatedKey) {
   return { [key]: list.slice(0, max), [truncatedKey]: Math.max(0, list.length - max) };
 }
 
+// `entry` with each of its `keys` that holds a list capped the same way, the
+// count under `<key>_truncated`.
+function cappedLists(entry, max, keys) {
+  const capped = { ...entry };
+  for (const key of keys) {
+    if (Array.isArray(entry[key])) Object.assign(capped, cappedList(entry[key], max, key, `${key}_truncated`));
+  }
+  return capped;
+}
+
 // What every answer says about the map behind it: which source answered, how
 // old the map is, and its warning. Built here once, because copying the fields
 // into each answer by hand is how every refusal came to drop the age. Unknown
@@ -758,6 +768,12 @@ export function resolutionReport(resolution = {}) {
 // (`apim-dp-cp1111-dp0001`, `cp1111-dp0001`), as opposed to a customer name.
 const ID_SHAPED = /^(apim-(dp|cp)-[0-9a-z-]+|[0-9a-z]+(-[0-9a-z]+)+)$/i;
 
+// A Gravitee Cloud customer's and matched_by_id's own lists, capped by
+// max_results like the answer's. A customer's shared and unattributed data
+// planes are capped where they are built.
+const CUSTOMER_LISTS = ["namespaces", "shared_control_plane_namespaces", "control_plane_ids", "envs", "regions"];
+const MATCHED_BY_ID_LISTS = ["customers", "candidate_customers", "deployments"];
+
 // Which customers and deployments a name, or an id seen in an alert, matches,
 // without querying any logs.
 export async function findCustomer(query, { datasourceUid, maxResults = 20 } = {}) {
@@ -798,7 +814,14 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
       return {
         ...describeCustomer(rows),
         ...namespacesOf(rows),
-        ...(shared.length ? cappedList(shared, maxResults, "shared_data_planes", "shared_data_planes_truncated") : {}),
+        ...(shared.length
+          ? cappedList(
+              shared.map((d) => cappedLists(d, maxResults, ["customers"])),
+              maxResults,
+              "shared_data_planes",
+              "shared_data_planes_truncated",
+            )
+          : {}),
       };
     })
     .sort((a, b) => a.customer.localeCompare(b.customer));
@@ -835,12 +858,18 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
     }
   }
 
+  // max_results caps every list, each with how many were left out: a customer
+  // with many deployments or a control plane with many customers must not make
+  // the answer unbounded. The notes below read the whole lists.
+  const customers = cappedList(cockpit, maxResults, "gravitee_cloud_customers", "gravitee_cloud_truncated");
+  customers.gravitee_cloud_customers = customers.gravitee_cloud_customers.map((entry) =>
+    cappedLists(entry, maxResults, CUSTOMER_LISTS),
+  );
   const result = {
     query,
-    ...(byId && byId.kind !== "unknown" ? { matched_by_id: byId } : {}),
+    ...(byId && byId.kind !== "unknown" ? { matched_by_id: cappedLists(byId, maxResults, MATCHED_BY_ID_LISTS) } : {}),
     ...mapFields(map),
-    // max_results caps every list, each with how many were left out.
-    ...cappedList(cockpit, maxResults, "gravitee_cloud_customers", "gravitee_cloud_truncated"),
+    ...customers,
     ...cappedList(hostedNamespaces, maxResults, "hosted_namespaces", "hosted_namespaces_truncated"),
     ...cappedList(cloudNamespaces, maxResults, "cloud_namespaces", "cloud_namespaces_truncated"),
     ...(lookupFailed
@@ -870,7 +899,7 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
   } else if (cockpit.length === 1 && cockpit[0].control_plane_ids.length > 1) {
     result.note =
       `"${cockpit[0].customer}" spans ${cockpit[0].control_plane_ids.length} separate Cockpit organizations ` +
-      `(${cockpit[0].control_plane_ids.join(", ")}). Pass control_plane_id to narrow to one.`;
+      `(${listNames(cockpit[0].control_plane_ids)}). Pass control_plane_id to narrow to one.`;
   } else if (byId && byId.kind === "unknown" && !cockpit.length && ID_SHAPED.test(query.trim())) {
     // A live namespace the map cannot attribute. Such namespaces exist, some on
     // control planes the CSV has never heard of. Saying nothing here would

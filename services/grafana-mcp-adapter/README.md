@@ -350,7 +350,7 @@ planes, plus a trial's own control plane, flagged `control_plane_is_single_tenan
 and the shared control-plane
 namespaces. A data plane the map also lists under another customer is flagged in
 `shared_data_planes`, and `grafana_logs_link` refuses any search that includes
-it; an id the map lists under several customers names them all
+it; an id the map lists under several customers names them
 (`matched_by_id.customers`). Hosted customers come back as `hosted_namespaces`. Gravitee Cloud
 namespaces whose name matches (`apim-dp-*`, `apim-cp-*`, for example every data
 plane on `cp1111`) come back apart as `cloud_namespaces`: their name carries
@@ -358,8 +358,11 @@ ids, not the owner, so look one up by its full id. Data planes that
 are live on a customer's control plane but missing from the map are listed as
 `unattributed_namespaces_on_same_control_plane`: a control plane is shared, so
 they may belong to another customer and are never searched as this one.
-`max_results` (default 20, at most 50) caps every one of these lists, and a
-`*_truncated` count says how many were left out. When
+`max_results` (default 20, at most 50) caps every list in the answer, each
+customer's own lists and `matched_by_id`'s included. A count next to each list
+(`<list>_truncated`; `gravitee_cloud_truncated` and `unattributed_truncated` for
+the customers and their unattributed data planes) says how many were left out,
+0 when none were. A note names at most ten, then "and N more". When
 Loki does not return its namespace list, `namespace_lookup_failed` says hosted
 namespaces and unattributed data planes could not be checked, rather than
 reporting that none matched, and `namespace_lookup_note` says why. Likewise, when the customer map cannot be read, the
