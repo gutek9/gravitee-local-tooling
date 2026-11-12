@@ -19,12 +19,22 @@ import { fetchCustomerCsv, fetchGeneratedAt, buildSnapshot, DEFAULT_SNAPSHOT_PAT
 
 const USAGE = "Usage: npm run refresh-customers [-- --out FILE]";
 
+// A relative --out is taken from the directory the command was typed in. npm
+// runs a script from the package directory, even when typed elsewhere (with
+// `npm --prefix`, or in a subdirectory), and puts the directory it was typed in
+// into INIT_CWD. That is used only when npm runs this script: an INIT_CWD left
+// by another npm command up the process tree names that command's directory.
+function typedIn() {
+  const npmRunsThis = process.env.npm_lifecycle_event === "refresh-customers";
+  return npmRunsThis && process.env.INIT_CWD ? process.env.INIT_CWD : process.cwd();
+}
+
 // The arguments are checked before GitHub is asked anything.
 let outPath;
 try {
   const { values } = parseArgs({ options: { out: { type: "string" } }, strict: true });
   if (values.out === "") throw new Error("--out needs a file name");
-  outPath = values.out === undefined ? DEFAULT_SNAPSHOT_PATH : resolve(values.out);
+  outPath = values.out === undefined ? DEFAULT_SNAPSHOT_PATH : resolve(typedIn(), values.out);
 } catch (err) {
   console.error(`${err instanceof Error ? err.message : String(err)}\n${USAGE}`);
   process.exit(1);

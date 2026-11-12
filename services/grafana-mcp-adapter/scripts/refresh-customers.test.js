@@ -69,6 +69,34 @@ test("refresh-customers: --out is where the snapshot goes, and the container pat
   assert.deepEqual(customersIn(join(dir, "relative.json")), ["acme"]);
 });
 
+test("refresh-customers: run by npm, a relative --out is taken from where npm was typed", () => {
+  // Regression: npm runs the script from the adapter directory, so
+  // `npm --prefix services/grafana-mcp-adapter run refresh-customers -- --out x.json`
+  // typed at the repo root wrote x.json beside server.js, a name git does not
+  // ignore. npm puts the directory it was typed in into INIT_CWD, set here as
+  // npm sets it.
+  const dir = adapterCopy();
+  const typed = mkdtempSync(join(ROOT, "typed-"));
+  const npm = { INIT_CWD: typed, npm_lifecycle_event: "refresh-customers" };
+  const r = run(dir, ["--out", "relative.json"], npm);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(customersIn(join(typed, "relative.json")), ["acme"]);
+  assert.equal(existsSync(join(dir, "relative.json")), false);
+
+  // An INIT_CWD left by another npm command (here `npm test`) names that
+  // command's directory, and without INIT_CWD there is nothing to go by: the
+  // directory the script runs in is used.
+  for (const [file, env] of [
+    ["other.json", { ...npm, npm_lifecycle_event: "test" }],
+    ["no-init-cwd.json", { npm_lifecycle_event: "refresh-customers" }],
+  ]) {
+    const other = run(dir, ["--out", file], env);
+    assert.equal(other.status, 0, other.stderr);
+    assert.deepEqual(customersIn(join(dir, file)), ["acme"]);
+    assert.equal(existsSync(join(typed, file)), false);
+  }
+});
+
 test("refresh-customers: without --out it writes the snapshot next to server.js, whatever the env says", () => {
   const dir = adapterCopy();
   const elsewhere = join(dir, "my-customers.json");

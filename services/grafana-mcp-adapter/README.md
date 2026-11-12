@@ -440,10 +440,12 @@ those already in the environment, `npm run refresh-customers` does the same. It
 writes `customers-snapshot.json` next to `server.js`, and never reads
 `GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH`, which is a path inside the container. To
 write another file, for example one you mount into the container, add
-`--out FILE`. Keep that file outside this repository, or name it
-`customers-snapshot*.json`: git ignores that name anywhere in the repo. It
-writes nothing, and exits 1, when the CSV lacks a column the map needs or has a
-row that cannot be used (see "What the map must look like").
+`--out FILE`. A relative `FILE` is taken from the directory you typed the
+command in, through npm too (`npm --prefix`, or from a subdirectory). Keep that
+file outside this repository, or name it `customers-snapshot*.json`: git
+ignores that name anywhere in the repo. It writes nothing, and exits 1, when the
+CSV lacks a column the map needs or has a row that cannot be used (see "What
+the map must look like").
 
 The adapter does not see a new snapshot until its image is rebuilt. The
 Dockerfile copies the file at build time, and the container your agent starts
@@ -615,8 +617,9 @@ Coverage:
   is run with `fetch` replaced, so nothing reaches the network).
 - `scripts/refresh-customers.test.js` — `npm run refresh-customers`, run on a temp
   copy of the adapter with `fetch` replaced: where the snapshot is written (next
-  to `server.js`, or `--out`, never `GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH`), and
-  that a bad argument stops it before any request.
+  to `server.js`, or `--out`, a relative one from where the command was typed,
+  never `GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH`), and that a bad argument stops it
+  before any request.
 - `server.test.js` — the `server.js` orchestration that talks to Loki, with
   `fetch` stubbed per Loki endpoint: `grafana_logs_link`'s namespace resolution
   through both routes (label and customer map), per-namespace drilldown
