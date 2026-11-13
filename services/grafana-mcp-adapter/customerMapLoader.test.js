@@ -336,6 +336,8 @@ test("loadCustomerMap: a snapshot with a row it cannot use is not used at all, a
       "customers[1]: the data plane id is not lower-case letters and digits in dash-separated parts",
     ],
     [[{ ...SNAPSHOT_ROW, control_plane_id: "cp9999" }], "customers[0]: the control plane id is not the start of the data plane id"],
+    // Its shared control plane would be searched as this customer's own.
+    [[{ ...SNAPSHOT_ROW, is_trial: true }], "customers[0]: is_trial is set, but the control plane id is not a trial's"],
   ]) {
     resetCustomerMapCache();
     await writeSnapshot(buildSnapshot({ customers, sourceGeneratedAt: CSV_COMMITTED_AT }));

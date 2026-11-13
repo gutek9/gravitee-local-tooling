@@ -474,12 +474,15 @@ than searched by `service_name` alone, because without the map nobody can tell
 it is not a Gravitee Cloud customer; this includes customers that live only in a
 shared namespace, for as long as the map cannot be read.
 
-A snapshot that is not valid JSON, has no customers, or has a row of another
-shape than `refresh-customers` writes is not used at all: it is the adapter's
-own copy, written only from a CSV whose every row can be used (see "What the map
-must look like"), so one such row means the file is not that copy.
-`map_warning` says why. A source date that cannot be read, or lies more than a
-day in the future, is reported as unknown.
+A snapshot is not used at all when it is not valid JSON, has no customers, or
+has a row that is not an object, fails the checks in "What the map must look
+like" (an id in capitals fails them here), has a field of the wrong type, or
+disagrees about being a trial's: a row has `is_trial` exactly when its control
+plane id is `trial-<id>`, and its customer is then that id too. The snapshot
+is the adapter's own copy, written only from a CSV whose every row can be
+used, so such a row means the file is not that copy. `map_warning` says why.
+A source date that cannot be read, or lies more than a day in the future, is
+reported as unknown.
 
 ### What the map must look like
 

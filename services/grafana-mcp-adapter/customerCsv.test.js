@@ -225,3 +225,22 @@ test("rowProblem: a snapshot row of the wrong shape is named by what is wrong", 
   // A field the map may lack (no region, no environment) is not a problem.
   assert.equal(rowProblem({ ...good, region: null, provider: undefined, env: null }), null);
 });
+
+test("rowProblem: a snapshot row that mixes a trial with another customer is named", () => {
+  // Regression: these rows passed. A trial's control plane is searched as its
+  // own, so "acme" searched the shared apim-cp-cp1111 when its row said
+  // is_trial, and the trial's control plane was called acme's.
+  const rows = parseCustomerCsv(CSV).rows;
+  const good = rows.find((r) => !r.is_trial);
+  const trial = rows.find((r) => r.is_trial);
+  assert.equal(rowProblem(trial), null);
+  const onTrial = { customer: "acme", control_plane_id: "trial-tt0001", data_plane_id: "trial-tt0001-dp0002" };
+  for (const [r, problem] of [
+    [{ ...good, is_trial: true }, "is_trial is set, but the control plane id is not a trial's"],
+    [onTrial, "the control plane id is a trial's, but is_trial is not set"],
+    [{ ...trial, is_trial: undefined }, "the control plane id is a trial's, but is_trial is not set"],
+    [{ ...onTrial, is_trial: true }, "a trial's customer is not its control plane id"],
+  ]) {
+    assert.equal(rowProblem(r), problem, JSON.stringify(r));
+  }
+});

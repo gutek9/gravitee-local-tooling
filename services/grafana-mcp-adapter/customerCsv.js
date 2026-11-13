@@ -2,7 +2,7 @@
 // cloud-deployments-configuration/docs/summary, read into the minimum needed to
 // resolve a customer to its namespaces. Pure, no I/O, so it can be unit-tested
 // directly.
-import { controlPlaneOf, TRIAL_ID_PATTERN } from "./customerMatch.js";
+import { controlPlaneOf, isTrialControlPlane, TRIAL_ID_PATTERN } from "./customerMatch.js";
 
 // Minimal RFC4180-ish CSV reader. Needed because the URLs and Custom DNS columns
 // are quoted lists that themselves contain commas — splitting on "," loses the
@@ -107,6 +107,16 @@ export function rowProblem(row) {
     if (row[key] != null && typeof row[key] !== "string") return `the ${key} is not text`;
   }
   if (row.is_trial !== undefined && row.is_trial !== true) return "is_trial is not true";
+  // A trial is one id: its customer, its control plane and the start of its
+  // data planes. namespacesOf searches a trial's control plane as its own, so
+  // a row has is_trial exactly when its control plane is a trial's.
+  if (row.is_trial && !isTrialControlPlane(row.control_plane_id)) {
+    return "is_trial is set, but the control plane id is not a trial's";
+  }
+  if (!row.is_trial && isTrialControlPlane(row.control_plane_id)) {
+    return "the control plane id is a trial's, but is_trial is not set";
+  }
+  if (row.is_trial && row.customer !== row.control_plane_id) return "a trial's customer is not its control plane id";
   return null;
 }
 
