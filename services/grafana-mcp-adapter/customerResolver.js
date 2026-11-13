@@ -998,7 +998,9 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
     // A data plane the map gives one owner is an answer, whether or not Loki
     // has its namespace: never "nothing matched".
     const namespace = dataPlaneNamespace(byId.deployments[0].data_plane_id);
-    const seen = namespaceValues.some((n) => n.toLowerCase() === namespace.toLowerCase());
+    // Compared as written, as grafana_logs_link's selector compares it: the
+    // map's ids are lower case, like the Kubernetes namespaces Loki has.
+    const seen = namespaceValues.includes(namespace);
     result.note =
       `${byId.id} is ${byId.customer}'s data plane in the customer map (namespace ${namespace}).` +
       (lookupFailed || seen

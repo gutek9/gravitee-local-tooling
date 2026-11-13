@@ -915,12 +915,6 @@ test("findCustomerMatches: an id the map gives one owner is answered, never 'not
   const lokiDown = find("cp1111-dp0001", null);
   assert.equal(lokiDown.note, live);
   assert.equal(lokiDown.namespace_lookup_failed, true);
-  // The map may spell an id in capitals; Loki's namespaces are lower case.
-  const capitals = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV.replace("acme,cp1111,cp1111-dp0001", "acme,cp1111,CP1111-DP0001")).rows };
-  assert.doesNotMatch(
-    findCustomerMatches({ query: "cp1111-dp0001", namespaceValues: ACME_DATA_PLANES, map: capitals }).note,
-    /has not seen/,
-  );
   // A control plane the map lists one customer on.
   assert.equal(find("cp1111", []).note, "The customer map lists one customer on control plane cp1111: acme.");
 });
