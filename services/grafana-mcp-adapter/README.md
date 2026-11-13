@@ -241,8 +241,8 @@ Just ask in plain language — the agent maps it to the `client` / `component` /
 
 (The environment — `prod`, `rec`, `dev` — isn't a separate argument: fold it
 into `client` as another word. When the customer resolves to its own namespaces,
-the phrase picks the namespace (`northwind prod` → `northwind-prod`) and
-`service_name` is not filtered by it again; see the next section. When it does
+the phrase picks the namespace (`northwind prod` → `northwind-prod`, see the
+next section) and `service_name` is not filtered by it again. When it does
 not, the words are matched against `service_name` as case-insensitive substrings
 with `.*` between them, so `northwind prod` matches `…-northwind-prod-…`. There,
 known environment words (`prod`, `rec`, `dev`, `nonprod`, `preprod`, `qa`,
@@ -262,18 +262,14 @@ map (Cockpit tenants, whose namespaces carry only ids). A customer can be in bot
 populations at once, so stopping at the first route that answers would search
 half of its logs.
 
-`client: "acme rec"` has to be split into a customer and an environment. That
-split used to run against a fixed list of environment words, and no such list
-can be finished: customers name their environments their own way (`staging`,
-`prd`, `sit`, `qualif`, `multitenant`, ...), some with only two letters.
+`client: "acme rec"` has to be split into a customer and an environment, and a
+fixed list of environment words cannot do it. Customers name their environments
+their own way (`staging`, `prd`, `sit`, `qualif`, `multitenant`, ...), some with
+only two letters: a word missing from the list would stay part of the name, and
+the name would match nobody, with no reason given. And some namespaces are
+*called* `prod` or `dev`: the list would leave them no name at all.
 
-Worse, an unlisted word was not noticed at all. It stayed part of the name, the
-name matched nobody, and the answer was empty with no reason given (`acme
-recette`, `beacon staging`, and `production` failing where `prod` worked). The
-reverse bit too: some namespaces are *called* `prod` or `dev`, so the split left
-an empty name.
-
-Nothing is classified now. Both routes match the phrase as typed, and give ground
+So nothing is classified. Both routes match the phrase as typed, and give ground
 only when it matches nothing:
 
 - **Namespaces**: the whole name, then the owner's segment (the first) followed
@@ -338,10 +334,6 @@ follow from reading names off namespaces, and one from that search:
 - The namespace route does not look for a second reading the way the map
   route does: `acme dev` is acme's whole namespace `acme-dev`, even when another
   hosted owner is called `acmedev` (`acmedev-prod`), and only acme's is searched.
-
-One consequence: a pinned namespace already expresses the environment, so
-`service_name` no longer repeats it — and the "drop the env token and retry"
-fallback is gone with it.
 
 ### `grafana_find_customer`
 
@@ -461,9 +453,9 @@ it to a registry.
 The snapshot records two dates: `source_generated_at`, when the CSV was last
 committed in the source repo, and `refreshed_at`, when you ran the command. The
 fallback's freshness warning and `map_generated_days_ago` use the CSV's date, so
-refreshing an old CSV today does not make the map look current. A snapshot from
-before this split says its source date is unknown; run the command again to
-record it.
+refreshing an old CSV today does not make the map look current. A snapshot
+without `source_generated_at` says its source date is unknown; run the command
+again to record it.
 
 The build does not need it. The Dockerfile's `COPY customers-snapshot.jso[n]` is a
 no-op when the file is absent, so a fresh clone builds; the adapter fetches the
@@ -530,10 +522,9 @@ Cloud then gets only its hosted part.
 | `GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH` | `customers-snapshot.json` next to `server.js` (`/app/customers-snapshot.json` in the container) | Where the fallback snapshot is read from. Under Docker this is a path inside the container, and Compose mounts no file into it: leave it empty to use the snapshot built into the image. The tests point it at a file of their own. `npm run refresh-customers` does not read it: it writes the file next to `server.js`, or the one given with `-- --out FILE`. |
 
 > **Token type.** The token needs read access to
-> `gravitee-io/cloud-deployments-configuration`. In our tests a classic token
-> worked and a fine-grained one returned 404. We have not confirmed why. If you
-> use a fine-grained token and get a 404, check that its resource owner is
-> `gravitee-io` and that the org has approved it, or use a classic token instead.
+> `gravitee-io/cloud-deployments-configuration`. If a fine-grained token gets a
+> 404, check that its resource owner is `gravitee-io` and that the org has
+> approved it, or use a classic token instead.
 
 ### Checking the map against Loki
 

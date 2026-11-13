@@ -214,8 +214,7 @@ async function namespaceList(datasourceUid, from) {
 //  2. The Gravitee Cloud customer map. Cockpit tenants live in
 //     `apim-dp-<controlPlaneId>-<dataPlaneId>` and carry their name NOWHERE in
 //     their labels, so route 1 returns nothing for them however the name is
-//     spelled — the customers this tooling is most useful for were exactly the
-//     ones it could not find.
+//     spelled.
 //
 // Returns which route answered, and any warning about the map's freshness, so a
 // caller can tell a live mapping from a fallback one. An empty `namespaces` that
@@ -257,7 +256,7 @@ export function resolveClient({ namespaceValues = [], lookupFailure: failure = n
 // (`apim-dp-cp1111-dp0001`, `cp1111-dp0001`, `cp1111`). Cloud namespaces are
 // reached this way and through the map, never by the namespace label: `cp1111`
 // is a segment of the shared `apim-cp-cp1111` and of every data plane on it, so
-// matching it as a name searched several customers at once.
+// matching it as a name would search several customers at once.
 //
 // A data plane is one deployment of one customer, so it is searched alone, and
 // said whose it is when the map knows; one the map lists under several
@@ -435,7 +434,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
   // BOTH routes, always — never stop at the first hit. A customer can exist in
   // both populations at once: acme has a hosted `acme-prod` namespace
   // AND Cockpit data planes under `apim-dp-cp1111-*`. Returning early on the
-  // label match searched half its logs and reported that as the whole story.
+  // label match would search half its logs and report that as the whole story.
   // Neither route classifies words. The namespace route matches the phrase as
   // typed and gives ground one trailing word at a time; the map route asks the
   // map where the customer name ends. What the caller meant by the last word is

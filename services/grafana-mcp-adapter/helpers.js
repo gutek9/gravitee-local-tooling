@@ -133,14 +133,14 @@ export function buildLogsQuery({ client, component, lineFilter, namespaces } = {
       .map(toWord)
       .join(".*");
   const ns = [...new Set((namespaces || []).filter(Boolean))];
-  // When the customer is pinned to its own namespace(s), those namespaces were
+  // When the customer is pinned to its own namespace(s), those namespaces are
   // chosen from the whole phrase (or from the map, env filter already applied),
   // so the environment is ALREADY expressed by the namespace list. Repeating it
-  // against `service_name` only removes results: some customers call production
-  // `plt-live` or `multitenant`, so `service_name=~".*prod.*"` matched nothing
-  // and the caller got an empty answer for a customer that was logging happily.
-  // Without namespaces we keep the original behaviour: match the client
-  // (+component) against service_name, outside Gravitee Cloud namespaces.
+  // against `service_name` would only remove results: some customers call
+  // production `plt-live` or `multitenant`, so `service_name=~".*prod.*"` would
+  // match nothing for a customer that is logging. Without namespaces, the
+  // client (+component) is matched against service_name, outside Gravitee
+  // Cloud namespaces.
   const svcSource = ns.length ? "" : client;
   const parts = [toPattern(svcSource)].filter(Boolean);
   if (component) {

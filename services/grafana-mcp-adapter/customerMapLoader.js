@@ -81,8 +81,8 @@ function requireValidSettings() {
 
 // A date the map's age can be read from: text Date.parse reads, at most a day
 // ahead (a clock running a little fast is no reason to drop it). Anything else
-// is an unknown date: one from the future gave the map a negative age, so it
-// was never called stale.
+// is an unknown date: one from the future would give the map a negative age, so
+// it would never be called stale.
 const DAY_MS = 86400000;
 function readDate(value) {
   if (typeof value !== "string") return null;
@@ -121,11 +121,12 @@ let cacheUntil = 0;
 let inFlight = null;
 
 // How long a fallback is kept before GitHub is asked again. Not keeping "no map"
-// at all made every map load during a GitHub outage, and so every
+// at all would make every map load during a GitHub outage, and so every
 // grafana_logs_link call, even for a hosted customer, wait out the fetch timeout
-// again; keeping the snapshot for the full TTL hid GitHub's return for an hour.
-// Fixed rather than a setting: it only bounds how often a failing GitHub is
-// asked. Never longer than the TTL, so a fallback never outlives a live map.
+// again; keeping the snapshot for the full TTL would hide GitHub's return for
+// an hour. Fixed rather than a setting: it only bounds how often a failing
+// GitHub is asked. Never longer than the TTL, so a fallback never outlives a
+// live map.
 const RETRY_AFTER_MS = 60_000;
 
 function remember(map, lifetimeMs) {
@@ -178,9 +179,8 @@ export function buildSnapshot({ customers, sourceGeneratedAt, refreshedAt = new 
   };
 }
 
-// A snapshot written before the two dates were split only has `generated_at`,
-// which was the copy date. It is kept as the refresh date and never passed off
-// as the CSV's.
+// A snapshot that has `generated_at` instead of `refreshed_at` holds its copy
+// date there: it is read as the refresh date and never passed off as the CSV's.
 //
 // A snapshot with no customers is no map at all, the same as a fetched CSV with
 // no usable row: taking it would report a fallback map that resolves nobody

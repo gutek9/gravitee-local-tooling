@@ -2,9 +2,8 @@
 //
 // Cockpit customers do not carry their name anywhere in their Loki labels. A
 // tenant lives in `apim-dp-<controlPlaneId>-<dataPlaneId>`, so a free-text search
-// for "acme" matches nothing at all — the customers this tooling is most
-// useful for were the ones it could not find. The mapping from customer name to
-// those ids lives in cloud-deployments-configuration/docs/summary.
+// for "acme" matches nothing at all. The mapping from customer name to those
+// ids lives in cloud-deployments-configuration/docs/summary.
 //
 // Matching a name, an id or a qualifier against the map's rows, and turning the
 // rows that match into namespaces. Pure, no I/O, so it can be unit-tested
@@ -217,9 +216,9 @@ export function groupByCustomer(rows = []) {
 }
 
 // Split a free-text phrase into a customer the map knows and a tail describing
-// the deployment, by asking the map instead of a word list. A list of known
-// environment names left every unlisted word in the customer name, so the name
-// matched nobody (`acme recette`, and `production` failing where `prod` worked).
+// the deployment, by asking the map instead of a word list: with a list, an
+// unlisted environment word (`recette` in `acme recette`) would stay in the
+// customer name, and the name would match nobody.
 //
 // Every cut is tried for a whole name before any is tried for part of one:
 // "acme dev" cuts after "acme", a whole name, rather than keeping both words as

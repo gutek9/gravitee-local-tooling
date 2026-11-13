@@ -152,11 +152,11 @@ export function parseCustomerCsv(text = "") {
     // Trial tenants have no customer name at all — the CSV carries "N/A". They
     // are still findable, by the identifier they DO have, which is embedded in
     // the data plane id: `trial-tt0001-dp0011` belongs to trial `trial-tt0001`.
-    // Dropping them made a whole population invisible to every tool.
+    // Dropping them would hide every trial from every tool.
     //
     // Their control plane id needs deriving too. The CSV's value is the literal
-    // string "trial", which would build `apim-cp-trial` — verified against Loki,
-    // the real namespaces are `apim-cp-trial-<id>` and `apim-dp-<id>-<dp>`.
+    // string "trial", which would build `apim-cp-trial`, but their namespaces
+    // are `apim-cp-trial-<id>` and `apim-dp-<id>-<dp>`.
     const trial = TRIAL_ID_RE.exec(dataPlaneId);
     const isTrial = trial !== null || customer.toUpperCase() === "N/A";
     if (isTrial && !trial) {
