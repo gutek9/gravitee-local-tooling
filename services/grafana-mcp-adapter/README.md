@@ -439,13 +439,12 @@ It needs `GITHUB_PERSONAL_ACCESS_TOKEN` and uses the same
 those already in the environment, `npm run refresh-customers` does the same. It
 writes `customers-snapshot.json` next to `server.js`, and never reads
 `GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH`, which is a path inside the container. To
-write another file, for example one you mount into the container, add
-`--out FILE`. A relative `FILE` is taken from the directory you typed the
-command in, through npm too (`npm --prefix`, or from a subdirectory). Keep that
-file outside this repository, or name it `customers-snapshot*.json`: git
-ignores that name anywhere in the repo. It writes nothing, and exits 1, when the
-CSV lacks a column the map needs or has a row that cannot be used (see "What
-the map must look like").
+write another file, add `--out FILE`. A relative `FILE` is taken from the
+directory you typed the command in, through npm too (`npm --prefix`, or from a
+subdirectory). Keep that file outside this repository, or name it
+`customers-snapshot*.json`: git ignores that name anywhere in the repo. It
+writes nothing, and exits 1, when the CSV lacks a column the map needs or has a
+row that cannot be used (see "What the map must look like").
 
 The adapter does not see a new snapshot until its image is rebuilt. The
 Dockerfile copies the file at build time, and the container your agent starts
@@ -528,7 +527,7 @@ Cloud then gets only its hosted part.
 | `GRAFANA_CUSTOMER_MAP_TTL_SECONDS` | `3600` | How long a successful fetch stays cached in memory. Whole number, 1 to 86400 (a day). A fallback (the snapshot, or no map at all) is kept for at most a minute, so GitHub is asked again soon after it comes back. |
 | `GRAFANA_CUSTOMER_MAP_TIMEOUT_MS` | `5000` | Timeout for the GitHub fetch. Whole number, 1 to 60000. |
 | `GRAFANA_CUSTOMER_MAP_STALE_DAYS` | `30` | Age after which the map is reported as stale. Whole number, 1 to 365. |
-| `GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH` | `customers-snapshot.json` next to `server.js` (`/app/customers-snapshot.json` in the container) | Where the fallback snapshot is read from. Under Docker this is a path inside the container: leave it empty to use the snapshot built into the image, or mount another file and point this at it. The tests point it at a file of their own. `npm run refresh-customers` does not read it: it writes the file next to `server.js`, or the one given with `-- --out FILE`. |
+| `GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH` | `customers-snapshot.json` next to `server.js` (`/app/customers-snapshot.json` in the container) | Where the fallback snapshot is read from. Under Docker this is a path inside the container, and Compose mounts no file into it: leave it empty to use the snapshot built into the image. The tests point it at a file of their own. `npm run refresh-customers` does not read it: it writes the file next to `server.js`, or the one given with `-- --out FILE`. |
 
 > **Token type.** The token needs read access to
 > `gravitee-io/cloud-deployments-configuration`. In our tests a classic token
@@ -544,7 +543,7 @@ the map does not know. It reads the map from GitHub as it is now, like
 `refresh-customers`, and never the bundled snapshot: a fallback measured as if
 it were the map would pass the check meant to catch an outdated one. It exits 0
 when the map was measured, no more customers have missing namespaces than
-`VALIDATE_MAX_STALE` allows, no data plane is listed under more than one
+`GRAFANA_VALIDATE_MAX_STALE` allows, no data plane is listed under more than one
 customer, and every row of the CSV could be used, so it can gate a refresh. It
 exits 1 when a setting is wrong or the GitHub token missing (before any
 request), when GitHub or Loki cannot be read (a wrong token included), when the
@@ -568,13 +567,13 @@ node --env-file=../../.env scripts/validate-customers.mjs
 It needs `GRAFANA_ENABLED=true`, `GRAFANA_BASE_URL`, `GRAFANA_TOKEN`,
 `GRAFANA_LOGS_DATASOURCE_UID` and `GITHUB_PERSONAL_ACCESS_TOKEN`. With those
 already in the environment, `npm run validate-customers` does the same. It also
-reads two numbers of its own; empty means the default, anything else must be a
-whole number in range:
+reads two numbers of its own, listed in `.env.example`; empty means the default,
+anything else must be a whole number in range:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `VALIDATE_WINDOW_DAYS` | `30` | How many days back a namespace counts as live. 1 to 365. |
-| `VALIDATE_MAX_STALE` | `20` | How many customers may have missing namespaces before it fails. 0 to 10000; 0 fails on any. |
+| `GRAFANA_VALIDATE_WINDOW_DAYS` | `30` | How many days back a namespace counts as live. 1 to 365. |
+| `GRAFANA_VALIDATE_MAX_STALE` | `20` | How many customers may have missing namespaces before it fails. 0 to 10000; 0 fails on any. |
 
 ## Testing
 

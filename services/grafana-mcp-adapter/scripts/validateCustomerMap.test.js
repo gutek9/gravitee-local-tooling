@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -108,8 +108,8 @@ test("validateCustomerMap: no live data planes at all reports 0%, not NaN", () =
 });
 
 test("validateCustomerMap: a threshold that is not a whole number is refused, not passed", () => {
-  // Regression: VALIDATE_MAX_STALE=abc became NaN, "stale > NaN" was false, and
-  // the check passed with every customer stale.
+  // Regression: GRAFANA_VALIDATE_MAX_STALE=abc became NaN, "stale > NaN" was
+  // false, and the check passed with every customer stale.
   for (const maxStale of [NaN, -1, 1.5]) {
     assert.throws(
       () => validateCustomerMap({ map: MAP, liveNamespaces: ["apim-dp-cp1111-dp0001"], maxStale }),
@@ -121,24 +121,33 @@ test("validateCustomerMap: a threshold that is not a whole number is refused, no
 
 test("VALIDATE_SETTINGS: the script's numbers are read like the map settings", () => {
   assert.deepEqual(readNumberSettings({}, VALIDATE_SETTINGS), {
-    values: { VALIDATE_WINDOW_DAYS: 30, VALIDATE_MAX_STALE: 20 },
+    values: { GRAFANA_VALIDATE_WINDOW_DAYS: 30, GRAFANA_VALIDATE_MAX_STALE: 20 },
     errors: [],
   });
   // 0 is the strict threshold: fail on any customer with a missing namespace.
-  assert.equal(readNumberSettings({ VALIDATE_MAX_STALE: "0" }, VALIDATE_SETTINGS).values.VALIDATE_MAX_STALE, 0);
+  assert.equal(readNumberSettings({ GRAFANA_VALIDATE_MAX_STALE: "0" }, VALIDATE_SETTINGS).values.GRAFANA_VALIDATE_MAX_STALE, 0);
   for (const bad of ["abc", "30d", "0", "-5", "1.5", "366"]) {
     assert.deepEqual(
-      readNumberSettings({ VALIDATE_WINDOW_DAYS: bad }, VALIDATE_SETTINGS).errors,
-      [`VALIDATE_WINDOW_DAYS must be a whole number from 1 to 365, got "${bad}"`],
+      readNumberSettings({ GRAFANA_VALIDATE_WINDOW_DAYS: bad }, VALIDATE_SETTINGS).errors,
+      [`GRAFANA_VALIDATE_WINDOW_DAYS must be a whole number from 1 to 365, got "${bad}"`],
       bad,
     );
   }
   for (const bad of ["abc", "-1", "1.5", "10001"]) {
     assert.deepEqual(
-      readNumberSettings({ VALIDATE_MAX_STALE: bad }, VALIDATE_SETTINGS).errors,
-      [`VALIDATE_MAX_STALE must be a whole number from 0 to 10000, got "${bad}"`],
+      readNumberSettings({ GRAFANA_VALIDATE_MAX_STALE: bad }, VALIDATE_SETTINGS).errors,
+      [`GRAFANA_VALIDATE_MAX_STALE must be a whole number from 0 to 10000, got "${bad}"`],
       bad,
     );
+  }
+});
+
+test("VALIDATE_SETTINGS: every number the script reads is listed in .env.example", () => {
+  // Regression (#9 review): they were documented in the adapter's README only,
+  // so a .env copied from .env.example never showed them.
+  const example = readFileSync(fileURLToPath(new URL("../../../.env.example", import.meta.url)), "utf8");
+  for (const { name } of VALIDATE_SETTINGS) {
+    assert.match(example, new RegExp(`^${name}=$`, "m"), name);
   }
 });
 
@@ -160,11 +169,11 @@ const runScript = (env) =>
   spawnSync(process.execPath, ["--import", NO_NETWORK, SCRIPT], { env: { PATH: process.env.PATH, ...env }, encoding: "utf8" });
 
 test("validate-customers: a bad setting is refused before GitHub or Loki is asked anything", () => {
-  // Regression: VALIDATE_MAX_STALE=abc exited 0 however many customers were
-  // stale, and VALIDATE_WINDOW_DAYS=30d sent start=NaN to Loki.
+  // Regression: GRAFANA_VALIDATE_MAX_STALE=abc exited 0 however many customers
+  // were stale, and GRAFANA_VALIDATE_WINDOW_DAYS=30d sent start=NaN to Loki.
   for (const [name, raw] of [
-    ["VALIDATE_MAX_STALE", "abc"],
-    ["VALIDATE_WINDOW_DAYS", "30d"],
+    ["GRAFANA_VALIDATE_MAX_STALE", "abc"],
+    ["GRAFANA_VALIDATE_WINDOW_DAYS", "30d"],
     ["GRAFANA_CUSTOMER_MAP_TIMEOUT_MS", "abc"],
   ]) {
     const out = runScript({ ...CONFIGURED, [name]: raw });
@@ -173,16 +182,16 @@ test("validate-customers: a bad setting is refused before GitHub or Loki is aske
     assert.doesNotMatch(out.stderr, /REQUEST/);
   }
   // Missing configuration is reported the same way, all of it at once.
-  const unconfigured = runScript({ VALIDATE_MAX_STALE: "abc" });
+  const unconfigured = runScript({ GRAFANA_VALIDATE_MAX_STALE: "abc" });
   assert.equal(unconfigured.status, 1);
-  assert.match(unconfigured.stderr, /VALIDATE_MAX_STALE must be a whole number/);
+  assert.match(unconfigured.stderr, /GRAFANA_VALIDATE_MAX_STALE must be a whole number/);
   assert.match(unconfigured.stderr, /Grafana is disabled/);
   assert.match(unconfigured.stderr, /GRAFANA_LOGS_DATASOURCE_UID is required/);
   assert.doesNotMatch(unconfigured.stderr, /REQUEST/);
 });
 
 test("validate-customers: the window reaches Loki as a real start time", () => {
-  const out = runScript({ ...CONFIGURED, VALIDATE_WINDOW_DAYS: "7" });
+  const out = runScript({ ...CONFIGURED, GRAFANA_VALIDATE_WINDOW_DAYS: "7" });
   const request = /REQUEST (\S+)/.exec(out.stderr)?.[1];
   assert.ok(request, out.stderr);
   const url = new URL(request);
@@ -233,6 +242,19 @@ test("validate-customers: measures the map GitHub has now, and says when it was 
   assert.match(out.stdout, /map: 3 rows from GitHub \(CSV generated 2026-11-10\)/);
   assert.match(out.stdout, /forward: 2 customers \| fully resolvable: 2/);
   assert.match(out.stderr, /REQUEST https:\/\/api\.github\.com\/repos\/.*\/contents\//);
+});
+
+test("validate-customers: GRAFANA_VALIDATE_MAX_STALE reaches the check", () => {
+  // One customer whose data plane Loki has not seen: under the default
+  // threshold it passes, and with the strict one it fails. Read under any other
+  // name, the threshold would silently stay at its default.
+  const csv = CSV + "globex,cp3333,cp3333-dp0001,europe,az,westeurope,None,None\n";
+  const lenient = runStubbed("ok", CONFIGURED, csv);
+  assert.equal(lenient.status, 0, lenient.stderr);
+  assert.match(lenient.stdout, /with missing namespaces: 1/);
+  const strict = runStubbed("ok", { ...CONFIGURED, GRAFANA_VALIDATE_MAX_STALE: "0" }, csv);
+  assert.equal(strict.status, 1, strict.stdout);
+  assert.match(strict.stderr, /1 customers have missing namespaces \(threshold 0\)/);
 });
 
 test("validate-customers: a CSV without a column the map is read from fails, with nothing measured", () => {

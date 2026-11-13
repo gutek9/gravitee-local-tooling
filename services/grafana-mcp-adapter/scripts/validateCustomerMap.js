@@ -9,8 +9,8 @@ import { describeLeftOut } from "../customerCsv.js";
 // threshold of 0 is the strict setting: any customer with a missing namespace
 // fails the check.
 export const VALIDATE_SETTINGS = [
-  { name: "VALIDATE_WINDOW_DAYS", fallback: 30, min: 1, max: 365 },
-  { name: "VALIDATE_MAX_STALE", fallback: 20, min: 0, max: 10000 },
+  { name: "GRAFANA_VALIDATE_WINDOW_DAYS", fallback: 30, min: 1, max: 365 },
+  { name: "GRAFANA_VALIDATE_MAX_STALE", fallback: 20, min: 0, max: 10000 },
 ];
 
 export function validateCustomerMap({ map, liveNamespaces = [], maxStale = 20 }) {
@@ -35,7 +35,7 @@ export function validateCustomerMap({ map, liveNamespaces = [], maxStale = 20 })
   if (!liveNamespaces.length) {
     errors.push(
       "Loki returned no namespaces for this window, so nothing was validated. " +
-        "Check GRAFANA_LOGS_DATASOURCE_UID and VALIDATE_WINDOW_DAYS.",
+        "Check GRAFANA_LOGS_DATASOURCE_UID and GRAFANA_VALIDATE_WINDOW_DAYS.",
     );
   }
   // Rows of the CSV that could not be used are a fault in the map whatever the

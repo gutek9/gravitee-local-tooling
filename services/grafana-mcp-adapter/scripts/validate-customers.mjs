@@ -37,7 +37,7 @@ if (errors.length) {
   process.exit(1);
 }
 
-const WINDOW_DAYS = values.VALIDATE_WINDOW_DAYS;
+const WINDOW_DAYS = values.GRAFANA_VALIDATE_WINDOW_DAYS;
 const live = await fetchLabelValues(UID, "namespace", { from: `now-${WINDOW_DAYS}d` });
 
 let csv;
@@ -67,7 +67,7 @@ console.log(
 const result = validateCustomerMap({
   map,
   liveNamespaces: live,
-  maxStale: values.VALIDATE_MAX_STALE,
+  maxStale: values.GRAFANA_VALIDATE_MAX_STALE,
 });
 if (result.measured) {
   console.log(`\nforward: ${result.customers} customers | fully resolvable: ${result.full} | with missing namespaces: ${result.stale.length}`);
