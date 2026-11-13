@@ -291,7 +291,10 @@ only when it matches nothing:
   customer's and a shorter cut is another's, with the rest describing one of
   that other's deployments (customers `acme dev` and acme, which has a dev), the
   phrase reads two ways: it is refused with both as `candidates`, unless
-  `control_plane_id` is on only one of them, which picks it.
+  `control_plane_id` is on only one of them, which picks it. Customers whose
+  names differ only in separators (`acme dev`, `acme-dev`) share one whole
+  name: neither is searched by it, even with `control_plane_id`, and the note
+  points to a data plane's full id.
 
 Both routes try every cut of the phrase as a whole name before any as part of
 one. A phrase can still resolve to several deployments when they really are
@@ -346,7 +349,9 @@ alert, pod name or dashboard (`apim-dp-cp1111-dp0001`, `cp1111-dp0001`,
 `cp1111`). The id lookup is always attempted, so pasting a namespace from an
 alert tells you whose it is: when the map gives the id one owner, the note
 names it, and for a data plane whose namespace Loki has not seen in the last 30
-days it adds that the map is probably stale. A blank `query` is refused.
+days it adds that the map is probably stale. A blank `query` is refused. A
+name that reads two ways, or that two customers share once separators are
+ignored, gets a note saying what `grafana_logs_link` accepts to reach one.
 
 It returns, per Gravitee Cloud customer: deployment count, Cockpit
 organizations (`control_plane_ids`, to pass as `control_plane_id`), environments,

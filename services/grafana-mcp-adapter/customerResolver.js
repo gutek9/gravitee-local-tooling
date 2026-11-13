@@ -427,6 +427,27 @@ function resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKn
   return null;
 }
 
+// A phrase that is one customer's whole name and another's name followed by
+// words describing its deployments ("acme dev": the customer acme dev, or
+// acme's dev), and how to pick one: control_plane_id when the two are on
+// different organizations, else a data plane's full id. The same text for
+// grafana_logs_link's refusal and grafana_find_customer's note.
+function twoReadings(rows, phrase, split) {
+  const [whole, other] = [split.core, split.also.core].map((core) => describeCustomer(matchCustomers(rows, core)));
+  const sharedOrg = whole.control_plane_ids.some((id) => other.control_plane_ids.includes(id));
+  return {
+    whole,
+    other,
+    reads:
+      `"${phrase}" reads two ways: the customer ${whole.customer}, or ${other.customer}'s ` +
+      `deployments described by "${split.also.tail.join(" ")}".`,
+    choice: sharedOrg
+      ? "Pass the full id of the data plane you mean."
+      : `Pass control_plane_id to choose (${whole.customer}: ${whole.control_plane_ids.join(", ")}; ` +
+        `${other.customer}: ${other.control_plane_ids.join(", ")}), or the full id of a data plane.`,
+  };
+}
+
 function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamespacesKnown, map, lookupFailure: failure = null }) {
   const byId = resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKnown, map });
   if (byId) return byId;
@@ -444,7 +465,10 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
   let split = splitNameAndTail(map.rows, phrase);
   // Two customers in one phrase: "acme dev" is the customer "acme dev", and
   // acme's dev. A control_plane_id only one of them is on picks it; otherwise
-  // neither is searched, since either could be the other's logs.
+  // neither is searched, since either could be the other's logs. When the
+  // whole name is itself two customers' (names that differ only in
+  // separators), a control_plane_id still picks the other reading; otherwise
+  // resolveCustomerNamespaces refuses the name below, with the way out.
   if (split.also) {
     const readings = [split, { ...split.also, partial: false }];
     const rowsOf = (reading) => matchCustomers(map.rows, reading.core);
@@ -453,9 +477,8 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
       : [];
     if (onId.length === 1) {
       split = onId[0];
-    } else {
-      const [whole, other] = readings.map((reading) => describeCustomer(rowsOf(reading)));
-      const sharedOrg = whole.control_plane_ids.some((id) => other.control_plane_ids.includes(id));
+    } else if (groupByCustomer(rowsOf(split)).size === 1) {
+      const { whole, other, reads, choice } = twoReadings(map.rows, phrase, split);
       return {
         namespaces: [],
         via: "none",
@@ -463,14 +486,9 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
         ambiguous_customer: true,
         ...cappedCandidates([whole, other]),
         note:
-          `"${phrase}" reads two ways: the customer ${whole.customer}, or ${other.customer}'s ` +
-          `deployments described by "${readings[1].tail.join(" ")}". Either could return the other's logs, ` +
-          "so nothing was searched. " +
+          `${reads} Either could return the other's logs, so nothing was searched. ` +
           (controlPlaneId ? `control_plane_id "${controlPlaneId}" is on ${onId.length ? "both" : "neither"} of them. ` : "") +
-          (sharedOrg
-            ? "Pass the full id of the data plane you mean."
-            : `Pass control_plane_id to choose (${whole.customer}: ${whole.control_plane_ids.join(", ")}; ` +
-              `${other.customer}: ${other.control_plane_ids.join(", ")}), or the full id of a data plane.`),
+          choice,
         ...mapFields(map),
       };
     }
@@ -563,7 +581,9 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
         : resolved.reason && resolved.unknown_control_plane
           ? resolved.reason
           : resolved.ambiguous
-            ? `${resolved.reason} control_plane_id "${controlPlaneId}" was not applied to any of them: pass the exact customer name.`
+            ? resolved.same_name
+              ? resolved.reason
+              : `${resolved.reason} control_plane_id "${controlPlaneId}" was not applied to any of them: pass the exact customer name.`
             : `control_plane_id "${controlPlaneId}" only narrows a Gravitee Cloud customer, and "${phrase}" is not one ` +
               "in the customer map. Nothing was searched. Drop control_plane_id, or check the name.";
     return {
@@ -847,6 +867,9 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
   // Ask the map where the name ends, so "acme recette" finds acme. A phrase
   // that reads as two customers ("acme dev") lists both.
   const split = splitNameAndTail(map.rows, needle);
+  // Customers whose whole name the query is: two or more when their names
+  // differ only in separators ("acme dev", "acme-dev").
+  const named = split.partial ? new Map() : groupByCustomer(matchCustomers(map.rows, split.core));
   const groups = groupByCustomer([
     ...matchCustomers(map.rows, split.core),
     ...(split.also ? matchCustomers(map.rows, split.also.core) : []),
@@ -941,6 +964,17 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
         : hostedNamespaces.length || cloudNamespaces.length
           ? `Only namespaces found in Loki by name are listed${cloudNamespaces.length ? "; whose the ones in cloud_namespaces are cannot be said without the map" : ""}.`
           : `No namespace in Loki matched "${query}".`);
+  } else if (named.size > 1) {
+    // This note and the next give what grafana_logs_link accepts for such a
+    // name, not the exact name it refuses.
+    result.note =
+      `"${split.core}" is the name of ${named.size} different Gravitee Cloud customers ` +
+      `(${listNames([...named.keys()].sort())}): their names differ only in spaces, dashes or underscores. ` +
+      "The log tools cannot pick one of them by the name, nor with control_plane_id: pass the full id of one " +
+      "of their data planes (listed in namespaces).";
+  } else if (split.also) {
+    const { reads, choice } = twoReadings(map.rows, needle, split);
+    result.note = `${reads} The log tools refuse the name alone, since either reading could return the other's logs. ${choice}`;
   } else if (cockpit.length > 1) {
     result.note =
       `"${query}" matches ${cockpit.length} different Gravitee Cloud customers. The log tools will not ` +

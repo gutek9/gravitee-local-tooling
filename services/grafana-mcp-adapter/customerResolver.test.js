@@ -1102,6 +1102,80 @@ test("findCustomerMatches: a phrase that reads as two customers lists both", () 
   assert.deepEqual(out.gravitee_cloud_customers.map((c) => c.customer), ["acme", "acme dev"]);
 });
 
+// The "Pass ..." sentence a note ends with: what to pass to pick a customer.
+const choiceIn = (note) => note.slice(note.lastIndexOf("Pass "));
+
+test("findCustomerMatches: a phrase that reads as two customers gives the choice grafana_logs_link accepts", () => {
+  // Regression: the note said "pass one exact customer name", and
+  // grafana_logs_link refuses that name, since it reads two ways.
+  const out = findCustomerMatches({ query: "acme dev", map: TWO_READINGS_MAP, namespaceValues: ACME_DATA_PLANES });
+  assert.equal(
+    out.note,
+    '"acme dev" reads two ways: the customer acme dev, or acme\'s deployments described by "dev". The log tools ' +
+      "refuse the name alone, since either reading could return the other's logs. Pass control_plane_id to choose " +
+      "(acme dev: cp8888; acme: cp1111), or the full id of a data plane.",
+  );
+  const link = resolveClient({ phrase: "acme dev", namespaceValues: ACME_DATA_PLANES, map: TWO_READINGS_MAP });
+  assert.equal(choiceIn(out.note), choiceIn(link.note));
+  // On one organization, only a data plane's full id tells them apart.
+  const sameOrg = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV + ACME_DEV_ROW.replaceAll("cp8888", "cp1111")).rows };
+  const one = findCustomerMatches({ query: "acme dev", map: sameOrg, namespaceValues: ACME_DATA_PLANES });
+  assert.equal(choiceIn(one.note), "Pass the full id of the data plane you mean.");
+});
+
+// Customers "acme dev" and "acme-dev": every spelling of the name is both.
+const SAME_NAME_ROWS =
+  ACME_DEV_ROW + "acme-dev,cp9999,cp9999-dp0001,europe,az,westeurope,None,prod-org-acme-dev.eu-az-westeurope.gateway.gravitee.io\n";
+const SAME_NAME_MAP = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV.split("\n")[0] + "\n" + SAME_NAME_ROWS).rows };
+// The same, plus acme, which has a dev: "acme dev" also reads as acme's dev.
+const SAME_NAME_AND_ACME_MAP = { ...MAP, rows: parseCustomerCsv(CUSTOMERS_CSV + SAME_NAME_ROWS).rows };
+const SAME_NAME_LIVE = ["apim-dp-cp8888-dp0001", "apim-dp-cp9999-dp0001", ...ACME_DATA_PLANES];
+
+test("resolveClient: two customers whose names differ only in separators are refused, pointing to a data plane id", () => {
+  // Regression: the note said "Use the exact customer name" (with a
+  // control_plane_id, "pass the exact customer name"), which was typed.
+  for (const map of [SAME_NAME_MAP, SAME_NAME_AND_ACME_MAP]) {
+    for (const controlPlaneId of [undefined, "cp8888", "cp9999"]) {
+      const label = `${map === SAME_NAME_MAP ? "same name" : "same name + acme"} ${controlPlaneId}`;
+      const out = resolveClient({ phrase: "acme dev", controlPlaneId, namespaceValues: SAME_NAME_LIVE, map });
+      assert.equal(out.refused, true, label);
+      assert.deepEqual(out.namespaces, [], label);
+      assert.deepEqual(out.candidates.map((c) => c.customer), ["acme dev", "acme-dev"], label);
+      assert.match(out.note, /pass the full id of one of their data planes \(grafana_find_customer lists them\)\.$/, label);
+      assert.doesNotMatch(out.note, /exact customer name/, label);
+      // Regression: with acme too, the note described "acme dev" and
+      // "acme-dev" as one customer on both organizations.
+      assert.doesNotMatch(out.note, /cp8888, cp9999/, label);
+    }
+  }
+  // The way the note gives reaches one of them.
+  const byId = resolveClient({ phrase: "cp8888-dp0001", namespaceValues: SAME_NAME_LIVE, map: SAME_NAME_MAP });
+  assert.deepEqual(byId.namespaces, ["apim-dp-cp8888-dp0001"]);
+  // acme's organization still picks the other reading, acme's dev.
+  const acmeDev = resolveClient({ phrase: "acme dev", controlPlaneId: "cp1111", namespaceValues: SAME_NAME_LIVE, map: SAME_NAME_AND_ACME_MAP });
+  assert.deepEqual(acmeDev.namespaces, ["apim-dp-cp1111-dp0002"]);
+});
+
+test("findCustomerMatches: a name two customers share says that only a data plane id reaches one", () => {
+  // Regression: the note said "pass one exact customer name": it matches both.
+  // With acme too, "acme dev" also reads as acme's dev: the shared name is
+  // what the note is about, as in grafana_logs_link's refusal.
+  for (const map of [SAME_NAME_MAP, SAME_NAME_AND_ACME_MAP]) {
+    for (const query of ["acme dev", "acme-dev"]) {
+      const out = findCustomerMatches({ query, map, namespaceValues: SAME_NAME_LIVE });
+      assert.equal(
+        out.note,
+        `"${query}" is the name of 2 different Gravitee Cloud customers (acme dev, acme-dev): their names differ only ` +
+          "in spaces, dashes or underscores. The log tools cannot pick one of them by the name, nor with " +
+          "control_plane_id: pass the full id of one of their data planes (listed in namespaces).",
+        query,
+      );
+      const listed = out.gravitee_cloud_customers.find((c) => c.customer === "acme-dev");
+      assert.deepEqual(listed.namespaces, ["apim-dp-cp9999-dp0001"], query);
+    }
+  }
+});
+
 test("findCustomerMatches: a Cloud id matches a whole segment of any Cloud namespace before part of a longer id", () => {
   // Hosted namespaces are read from their owner's first segment; Cloud ones
   // have none (all start with apim), so an id is any whole segment of them.

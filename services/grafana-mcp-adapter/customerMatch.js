@@ -295,20 +295,32 @@ export function resolveCustomerNamespaces(rows = [], { core, qualifiers = [], co
   const matched = matchCustomers(rows, core);
   if (!matched.length) return { matched: [], namespaces: [], control_plane_namespaces: [] };
 
-  // Hazard 1: refuse to merge distinct customers.
+  // Hazard 1: refuse to merge distinct customers. When the phrase is the whole
+  // name of each (names that differ only in separators: "acme dev" and
+  // "acme-dev"), no spelling of the name picks one, and control_plane_id only
+  // narrows one customer's rows, so the way out is a data plane's full id.
   const groups = groupByCustomer(matched);
   if (groups.size > 1) {
     const candidates = [...groups.values()].map(describeCustomer).sort((a, b) => a.customer.localeCompare(b.customer));
+    const readTheSame = matchCustomersExactly(rows, core).length > 0;
+    const names = listNames(candidates.map((c) => c.customer));
     return {
       matched: [],
       namespaces: [],
       control_plane_namespaces: [],
       ambiguous: true,
+      ...(readTheSame ? { same_name: true } : {}),
       candidates,
       reason:
-        `"${core}" matches ${candidates.length} different customers (${listNames(candidates.map((c) => c.customer))}). ` +
+        (readTheSame
+          ? `"${core}" is the name of ${candidates.length} different customers (${names}): their names differ only ` +
+            "in spaces, dashes or underscores. "
+          : `"${core}" matches ${candidates.length} different customers (${names}). `) +
         "Searching them together would return one customer's logs under another's name, so none of them was searched. " +
-        "Use the exact customer name.",
+        (readTheSame
+          ? "A name cannot pick one of them, nor can control_plane_id: pass the full id of one of their data planes " +
+            "(grafana_find_customer lists them)."
+          : "Use the exact customer name."),
     };
   }
 

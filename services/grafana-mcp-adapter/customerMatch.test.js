@@ -150,10 +150,39 @@ test("resolveCustomerNamespaces: candidates carry enough to choose between them"
   assert.deepEqual(northwind.regions, ["europe"]);
 });
 
-test("resolveCustomerNamespaces: an exact name is never ambiguous", () => {
+test("resolveCustomerNamespaces: an exact name that is one customer's is not ambiguous", () => {
   const out = resolveCustomerNamespaces(parseCustomerCsv(AMBIG).rows, { core: "northwind" });
   assert.equal(out.ambiguous, undefined);
   assert.deepEqual(out.namespaces, ["apim-dp-cp3333-dp0006"]);
+});
+
+const SAME_NAME = `Customer,ControlPlaneId,DataPlaneId,Region,Provider,Cloud Region,Custom DNS,URLs
+acme dev,cp5555,cp5555-dp0001,europe,az,westeurope,None,prod-org-acmedev.eu-az-westeurope.gateway.gravitee.io
+acme-dev,cp6666,cp6666-dp0001,europe,az,westeurope,None,prod-org-acme-dev.eu-az-westeurope.gateway.gravitee.io
+`;
+
+test("resolveCustomerNamespaces: two customers whose names differ only in separators are refused, pointing to a data plane id", () => {
+  // Regression: the refusal said "Use the exact customer name", which is what
+  // was typed, and every spelling of it matches both.
+  const rows = parseCustomerCsv(SAME_NAME).rows;
+  for (const core of ["acme dev", "acme-dev", "acmedev"]) {
+    const out = resolveCustomerNamespaces(rows, { core });
+    assert.equal(out.ambiguous, true, core);
+    assert.deepEqual(out.namespaces, [], core);
+    assert.deepEqual(out.candidates.map((c) => c.customer), ["acme dev", "acme-dev"], core);
+    assert.doesNotMatch(out.reason, /exact customer name/, core);
+    assert.match(out.reason, /their names differ only in spaces, dashes or underscores/, core);
+    assert.match(out.reason, /pass the full id of one of their data planes \(grafana_find_customer lists them\)\.$/, core);
+    // grafana_logs_link reads this to keep its own control_plane_id advice out.
+    assert.equal(out.same_name, true, core);
+  }
+  // A control_plane_id does not pick one: the refusal comes before it.
+  assert.deepEqual(resolveCustomerNamespaces(rows, { core: "acme dev", controlPlaneId: "cp5555" }).namespaces, []);
+  // Part of both names is a fragment, with the fragment's advice.
+  const part = resolveCustomerNamespaces(rows, { core: "acme" });
+  assert.equal(part.ambiguous, true);
+  assert.equal(part.same_name, undefined);
+  assert.match(part.reason, /Use the exact customer name\.$/);
 });
 
 test("resolveCustomerNamespaces: one name over several organizations resolves but says so", () => {
