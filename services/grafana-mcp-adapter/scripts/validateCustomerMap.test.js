@@ -17,25 +17,20 @@ acme,cp1111,cp1111-dp0002,unitedstates,aws,us-east-1,None,dev-org-acme.us-aws-us
 beacon,cp2222,cp2222-dp0001,europe,az,westeurope,None,prod-org-beacon.eu-az-westeurope.gateway.gravitee.io
 `;
 
-const MAP = { rows: parseCustomerCsv(CSV).rows, source: "github" };
+const MAP = { rows: parseCustomerCsv(CSV).rows };
 const ALL_LIVE = ["apim-dp-cp1111-dp0001", "apim-dp-cp1111-dp0002", "apim-dp-cp2222-dp0001", "kestrel-prod"];
 
-test("validateCustomerMap: an unavailable map fails instead of passing with nothing checked", () => {
+test("validateCustomerMap: a map with zero rows fails instead of passing with nothing checked", () => {
   // Regression (#9 review): one live data plane, zero map rows, 100% unmapped,
   // and the script still exited 0.
-  const out = validateCustomerMap({
-    map: { rows: [], source: "unavailable" },
-    liveNamespaces: ["apim-dp-cp1111-dp0001"],
-  });
+  const out = validateCustomerMap({ map: { rows: [] }, liveNamespaces: ["apim-dp-cp1111-dp0001"] });
   assert.equal(out.ok, false);
   assert.equal(out.measured, false);
-  assert.match(out.errors[0], /customer map is unavailable/);
-});
-
-test("validateCustomerMap: a map that loaded with zero rows fails too", () => {
-  const out = validateCustomerMap({ map: { rows: [], source: "bundled_snapshot" }, liveNamespaces: ALL_LIVE });
-  assert.equal(out.ok, false);
-  assert.match(out.errors[0], /customer map is empty \(source: bundled_snapshot\)/);
+  assert.equal(
+    out.errors[0],
+    "The customer CSV has no rows, so nothing was validated: check the file that " +
+      "GRAFANA_CUSTOMER_MAP_REPO and GRAFANA_CUSTOMER_MAP_PATH name.",
+  );
 });
 
 test("validateCustomerMap: no live namespaces from Loki fails, since nothing could be compared", () => {
@@ -65,14 +60,48 @@ test("validateCustomerMap: customers with missing namespaces fail only above the
 
   const above = validateCustomerMap({ map: MAP, liveNamespaces: live, maxStale: 1 });
   assert.equal(above.ok, false);
-  assert.match(above.errors[0], /2 customers have missing namespaces \(threshold 1\)/);
+  // A refresh writes the same rows into the snapshot, so it is not the advice.
+  assert.equal(
+    above.errors[0],
+    "2 customers have missing namespaces (threshold 1). A refresh writes the same rows into the snapshot, " +
+      "so it would not fix them: if those data planes are gone, the CSV needs correcting at its source.",
+  );
+});
+
+test("validateCustomerMap: every customer is measured, also one grafana_logs_link refuses by name", () => {
+  // Regression: a customer was measured through the search for its name, so
+  // one that search refuses had no namespaces and was left out of both counts.
+  // acme shares cp1111-dp0001 with globex, and "acme dev" / "acme-dev" read as
+  // the same name: with the strict threshold the check passed (exit 0) while
+  // acme's dp0002 and both "acme dev" data planes were missing. acme lists
+  // dp0002 on a second row too, which still counts once.
+  const csv =
+    CSV +
+    "acme,cp1111,cp1111-dp0002,unitedstates,aws,us-east-1,None,qa-org-acme.us-aws-us-east-1.gateway.gravitee.io\n" +
+    "globex,cp1111,cp1111-dp0001,unitedstates,aws,us-east-1,None,prod-org-globex.us-aws-us-east-1.gateway.gravitee.io\n" +
+    "acme dev,cp5555,cp5555-dp0001,europe,az,westeurope,None,None\n" +
+    "acme-dev,cp6666,cp6666-dp0001,europe,az,westeurope,None,None\n";
+  const live = ["apim-dp-cp1111-dp0001", "apim-dp-cp2222-dp0001"];
+  const out = validateCustomerMap({ map: { rows: parseCustomerCsv(csv).rows }, liveNamespaces: live, maxStale: 0 });
+  assert.equal(out.customers, 5);
+  assert.equal(out.full + out.stale.length, out.customers);
+  assert.deepEqual(
+    out.stale.map((s) => [s.customer, s.present, s.mapped]),
+    [
+      ["acme dev", 0, 1],
+      ["acme-dev", 0, 1],
+      ["acme", 1, 2],
+    ],
+  );
+  assert.equal(out.ok, false);
+  assert.match(out.errors[0], /^3 customers have missing namespaces \(threshold 0\)/);
 });
 
 test("validateCustomerMap: a data plane listed under two customers fails, whatever the threshold", () => {
   // grafana_logs_link refuses such a data plane, so a map with one is not fit
   // to be refreshed into the snapshot, even with nothing missing.
   const shared = CSV + "globex,cp1111,cp1111-dp0001,unitedstates,aws,us-east-1,None,prod-org-globex.us-aws-us-east-1.gateway.gravitee.io\n";
-  const out = validateCustomerMap({ map: { rows: parseCustomerCsv(shared).rows, source: "github" }, liveNamespaces: ALL_LIVE, maxStale: 10000 });
+  const out = validateCustomerMap({ map: { rows: parseCustomerCsv(shared).rows }, liveNamespaces: ALL_LIVE, maxStale: 10000 });
   assert.equal(out.ok, false);
   assert.equal(out.measured, true);
   assert.match(out.errors.join("\n"), /1 data plane\(s\) listed under more than one customer: cp1111-dp0001 \(acme, globex\)/);
@@ -83,7 +112,7 @@ test("validateCustomerMap: a row of the CSV it cannot use fails after measuring 
   // partly: the map is not fit to be refreshed into the snapshot.
   const csv = CSV + "globex, inc,cp3333,cp3333-dp0001,europe,az,westeurope,None,None\nglobex,cp3333,cp3333 dp0002,europe,az,westeurope,None,None\n";
   const { rows, leftOut } = parseCustomerCsv(csv);
-  const out = validateCustomerMap({ map: { rows, leftOut, source: "github" }, liveNamespaces: ALL_LIVE, maxStale: 10000 });
+  const out = validateCustomerMap({ map: { rows, leftOut }, liveNamespaces: ALL_LIVE, maxStale: 10000 });
   assert.equal(out.ok, false);
   assert.equal(out.measured, true);
   assert.equal(out.full, 2);
@@ -95,9 +124,9 @@ test("validateCustomerMap: a row of the CSV it cannot use fails after measuring 
       "  line 6, globex: the data plane id is not lower-case letters and digits in dash-separated parts",
   );
   // With no usable row at all, nothing is measured, and both are said.
-  const none = validateCustomerMap({ map: { rows: [], leftOut, source: "github" }, liveNamespaces: ALL_LIVE });
+  const none = validateCustomerMap({ map: { rows: [], leftOut }, liveNamespaces: ALL_LIVE });
   assert.equal(none.measured, false);
-  assert.equal(none.errors[0], "No row of the customer map can be used (source: github), so nothing was validated.");
+  assert.equal(none.errors[0], "No row of the customer map can be used, so nothing was validated.");
   assert.match(none.errors[1], /^2 row\(s\) of the customer CSV cannot be used/);
 });
 
@@ -240,8 +269,19 @@ test("validate-customers: measures the map GitHub has now, and says when it was 
   const out = runStubbed("ok", CONFIGURED);
   assert.equal(out.status, 0, out.stderr);
   assert.match(out.stdout, /map: 3 rows from GitHub \(CSV generated 2026-11-10\)/);
-  assert.match(out.stdout, /forward: 2 customers \| fully resolvable: 2/);
+  assert.match(out.stdout, /forward: 2 customers \| with every data plane live: 2/);
   assert.match(out.stderr, /REQUEST https:\/\/api\.github\.com\/repos\/.*\/contents\//);
+});
+
+test("validate-customers: a CSV with no rows fails, with advice that applies", () => {
+  // Regression: it advised checking the token, which had just worked, or
+  // running refresh-customers, which refuses an empty CSV.
+  const out = runStubbed("ok", CONFIGURED, CSV.split("\n")[0] + "\n");
+  assert.equal(out.status, 1, out.stdout);
+  assert.match(out.stdout, /map: 0 rows from GitHub/);
+  assert.match(out.stderr, /The customer CSV has no rows, so nothing was validated: check the file that GRAFANA_CUSTOMER_MAP_REPO/);
+  assert.doesNotMatch(out.stderr, /GITHUB_PERSONAL_ACCESS_TOKEN|refresh-customers/);
+  assert.doesNotMatch(out.stdout, /forward:/);
 });
 
 test("validate-customers: GRAFANA_VALIDATE_MAX_STALE reaches the check", () => {
@@ -273,7 +313,7 @@ test("validate-customers: a row it cannot use is measured around, then fails, na
   const out = runStubbed("ok", CONFIGURED, CSV + "globex,cp3333,cp3333 dp0002,europe,az,westeurope,None,None\n");
   assert.equal(out.status, 1, out.stderr);
   assert.match(out.stdout, /map: 3 rows from GitHub, 1 left out \(CSV generated 2026-11-10\)/);
-  assert.match(out.stdout, /forward: 2 customers \| fully resolvable: 2/);
+  assert.match(out.stdout, /forward: 2 customers \| with every data plane live: 2/);
   assert.match(out.stderr, /^ {2}line 5, globex: the data plane id is not /m);
 });
 

@@ -1,7 +1,7 @@
 // The checks behind `npm run validate-customers`: the customer map measured
 // against the namespaces Loki has actually seen. Pure, no I/O, so the verdict,
 // including its failure paths, can be unit-tested directly.
-import { resolveCustomerNamespaces, dataPlaneNamespace, dataPlaneOwners } from "../customerMatch.js";
+import { dataPlaneNamespace, dataPlaneOwners, groupByCustomer } from "../customerMatch.js";
 import { describeLeftOut } from "../customerCsv.js";
 
 // The script's two numbers, read with readNumberSettings like the map settings:
@@ -19,17 +19,17 @@ export function validateCustomerMap({ map, liveNamespaces = [], maxStale = 20 })
   if (!Number.isInteger(maxStale) || maxStale < 0) {
     throw new Error(`maxStale must be a whole number of 0 or more, got ${maxStale}`);
   }
-  // Nothing to measure is a failure, not a pass. With no map rows (both sources
-  // down, or an empty file) or no live namespaces, every count below is zero,
-  // which would read as "nothing stale" and exit 0 on a check that never ran.
+  // Nothing to measure is a failure, not a pass. With no map rows nothing can
+  // be stale, and with no live namespaces there is nothing to compare with:
+  // either way the threshold would judge a check that never ran.
   const errors = [];
   const leftOut = map.leftOut || [];
-  if (!map.rows.length && leftOut.length) {
-    errors.push(`No row of the customer map can be used (source: ${map.source}), so nothing was validated.`);
-  } else if (map.source === "unavailable" || !map.rows.length) {
+  if (!map.rows.length) {
     errors.push(
-      `The customer map is ${map.source === "unavailable" ? "unavailable" : "empty"} (source: ${map.source}), ` +
-        "so nothing was validated. Check GITHUB_PERSONAL_ACCESS_TOKEN, or run: npm run refresh-customers",
+      leftOut.length
+        ? "No row of the customer map can be used, so nothing was validated."
+        : "The customer CSV has no rows, so nothing was validated: check the file that " +
+            "GRAFANA_CUSTOMER_MAP_REPO and GRAFANA_CUSTOMER_MAP_PATH name.",
     );
   }
   if (!liveNamespaces.length) {
@@ -50,13 +50,17 @@ export function validateCustomerMap({ map, liveNamespaces = [], maxStale = 20 })
     : [];
   if (errors.length) return { ok: false, measured: false, errors: [...errors, ...leftOutErrors] };
 
+  // Each customer is measured on the data planes the map lists under it, not
+  // through what grafana_logs_link would search for its name: a customer that
+  // search refuses (a data plane shared with another customer, a name that
+  // reads the same as another's) can still have data planes that are gone, and
+  // leaving it out would let the threshold pass without it.
   const liveSet = new Set(liveNamespaces);
-  const customers = [...new Set(map.rows.map((r) => r.customer))];
+  const byCustomer = groupByCustomer(map.rows);
   const stale = [];
   let full = 0;
-  for (const customer of customers) {
-    const dps = resolveCustomerNamespaces(map.rows, { core: customer }).namespaces.filter((n) => n.startsWith("apim-dp-"));
-    if (!dps.length) continue;
+  for (const [customer, rows] of byCustomer) {
+    const dps = [...new Set(rows.map((r) => dataPlaneNamespace(r.data_plane_id)))];
     const present = dps.filter((n) => liveSet.has(n));
     if (present.length === dps.length) full++;
     else stale.push({ customer, present: present.length, mapped: dps.length, missing: dps.filter((n) => !liveSet.has(n)) });
@@ -79,7 +83,13 @@ export function validateCustomerMap({ map, liveNamespaces = [], maxStale = 20 })
     ok: !tooStale && !sharedDataPlanes.length && !leftOut.length,
     measured: true,
     errors: [
-      ...(tooStale ? [`${stale.length} customers have missing namespaces (threshold ${maxStale}). Run: npm run refresh-customers`] : []),
+      ...(tooStale
+        ? [
+            `${stale.length} customers have missing namespaces (threshold ${maxStale}). A refresh writes the same ` +
+              "rows into the snapshot, so it would not fix them: if those data planes are gone, the CSV needs " +
+              "correcting at its source.",
+          ]
+        : []),
       ...(sharedDataPlanes.length
         ? [
             `${sharedDataPlanes.length} data plane(s) listed under more than one customer: ` +
@@ -89,7 +99,7 @@ export function validateCustomerMap({ map, liveNamespaces = [], maxStale = 20 })
         : []),
       ...leftOutErrors,
     ],
-    customers: customers.length,
+    customers: byCustomer.size,
     full,
     stale,
     liveDataPlanes: liveDataPlanes.length,

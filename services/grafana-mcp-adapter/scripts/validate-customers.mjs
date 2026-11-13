@@ -57,7 +57,7 @@ try {
   process.exit(1);
 }
 const generatedAt = await fetchGeneratedAt();
-const map = { rows: parsed.rows, leftOut: parsed.leftOut, source: "github" };
+const map = { rows: parsed.rows, leftOut: parsed.leftOut };
 console.log(
   `window: ${WINDOW_DAYS}d | live namespaces: ${live.length} | map: ${map.rows.length} rows from GitHub` +
     `${map.leftOut.length ? `, ${map.leftOut.length} left out` : ""} ` +
@@ -70,7 +70,10 @@ const result = validateCustomerMap({
   maxStale: values.GRAFANA_VALIDATE_MAX_STALE,
 });
 if (result.measured) {
-  console.log(`\nforward: ${result.customers} customers | fully resolvable: ${result.full} | with missing namespaces: ${result.stale.length}`);
+  console.log(
+    `\nforward: ${result.customers} customers | with every data plane live: ${result.full} | ` +
+      `with missing namespaces: ${result.stale.length}`,
+  );
   for (const s of result.stale) {
     console.log(`  ${s.customer}: ${s.present}/${s.mapped} present, missing ${s.missing.join(", ")}`);
   }

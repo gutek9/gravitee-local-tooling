@@ -601,8 +601,8 @@ Coverage:
   resolution reaches the caller, and finding which customers a name or an id
   matches. No network.
 - `scripts/validateCustomerMap.test.js` — the checks behind
-  `npm run validate-customers`, including its failure paths: an unavailable or
-  empty map, or no live namespaces, fails instead of passing with nothing
+  `npm run validate-customers`, including its failure paths: a map with no
+  usable row, or no live namespaces, fails instead of passing with nothing
   checked, and a bad setting stops the script before any request (the script
   is run with `fetch` replaced, so nothing reaches the network).
 - `scripts/refresh-customers.test.js` — `npm run refresh-customers`, run on a temp
