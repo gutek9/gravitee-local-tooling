@@ -38,7 +38,15 @@ if (errors.length) {
 }
 
 const WINDOW_DAYS = values.GRAFANA_VALIDATE_WINDOW_DAYS;
-const live = await fetchLabelValues(UID, "namespace", { from: `now-${WINDOW_DAYS}d` });
+let live;
+try {
+  live = await fetchLabelValues(UID, "namespace", { from: `now-${WINDOW_DAYS}d` });
+} catch (err) {
+  console.error(
+    `Could not read Loki's namespace list: ${err instanceof Error ? err.message : String(err)}. Nothing was validated.`,
+  );
+  process.exit(1);
+}
 
 let csv;
 try {

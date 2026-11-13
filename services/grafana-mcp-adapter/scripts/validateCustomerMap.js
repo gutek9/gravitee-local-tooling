@@ -3,13 +3,14 @@
 // including its failure paths, can be unit-tested directly.
 import { dataPlaneNamespace, dataPlaneOwners, groupByCustomer } from "../customerMatch.js";
 import { describeLeftOut } from "../customerCsv.js";
+import { LOKI_MAX_DAYS_BACK } from "../helpers.js";
 
 // The script's two numbers, read with readNumberSettings like the map settings:
-// empty means the default, anything else must be a whole number in range. A
-// threshold of 0 is the strict setting: any customer with a missing namespace
-// fails the check.
+// empty means the default, anything else must be a whole number in range. The
+// window goes no further back than Loki answers. A threshold of 0 is the
+// strict setting: any customer with a missing namespace fails the check.
 export const VALIDATE_SETTINGS = [
-  { name: "GRAFANA_VALIDATE_WINDOW_DAYS", fallback: 30, min: 1, max: 365 },
+  { name: "GRAFANA_VALIDATE_WINDOW_DAYS", fallback: 30, min: 1, max: LOKI_MAX_DAYS_BACK },
   { name: "GRAFANA_VALIDATE_MAX_STALE", fallback: 20, min: 0, max: 10000 },
 ];
 

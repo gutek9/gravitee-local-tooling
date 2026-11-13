@@ -294,6 +294,28 @@ export function toLokiNs(value, fallbackSecondsAgo, now = Date.now()) {
   return Number.isFinite(ms) ? `${ms * 1e6}` : `${(now - fallbackSecondsAgo * 1000) * 1e6}`;
 }
 
+// How far back Loki answers: it refuses a request whose range is longer than
+// 30 days and an hour (HTTP 400, "the query time range exceeds the limit").
+// Loki's namespace lookup runs from the start of the range to now, so a start
+// further back fails it, whatever the end of the range.
+export const LOKI_MAX_DAYS_BACK = 30;
+
+// Why Loki would refuse a range from `from` to now, or null. Checked before any
+// request: Grafana answers a datasource uid that is not one (a display name
+// with spaces) with HTTP 400 too, so the status alone cannot say which was
+// wrong. An unreadable `from` passes: toLokiNs reads it as an hour ago.
+export function fromProblem(from, now = Date.now()) {
+  const startMs = Number(toLokiNs(from, 60 * 60, now)) / 1e6;
+  if (startMs > now) return `from must not be later than now, got ${JSON.stringify(from)}`;
+  if (startMs < now - LOKI_MAX_DAYS_BACK * 864e5) {
+    return (
+      `from must be within the last ${LOKI_MAX_DAYS_BACK} days (Loki refuses a longer range), ` +
+      `got ${JSON.stringify(from)}`
+    );
+  }
+  return null;
+}
+
 // Classic Levenshtein edit distance (small strings; fine for label matching).
 export function editDistance(a, b) {
   const m = a.length;

@@ -15,6 +15,8 @@ const {
   buildDrilldownUrl,
   buildLineFilterToken,
   toLokiNs,
+  fromProblem,
+  LOKI_MAX_DAYS_BACK,
   editDistance,
   rankClientSuggestions,
   SERVICE_NAME_SEARCH_SCOPE,
@@ -466,6 +468,27 @@ test("toLokiNs: epoch ms passes through (converted to ns)", () => {
 
 test("toLokiNs: unparseable value falls back", () => {
   assert.equal(toLokiNs("garbage", 60, NOW), `${(NOW - 60 * 1000) * 1e6}`);
+});
+
+test("fromProblem: a start Loki answers passes", () => {
+  // An empty or unreadable from passes: toLokiNs reads it as an hour ago.
+  for (const from of ["now", "now-1h", "now-30d", "now-720h", String(NOW - 30 * 86_400_000), "", "garbage"]) {
+    assert.equal(fromProblem(from, NOW), null, from);
+  }
+});
+
+test("fromProblem: a start later than now or more than 30 days ago is refused", () => {
+  // Regression: from=now-60d reached Loki, and the HTTP 400 it gave the
+  // namespace lookup was answered with advice to check the datasource uid and
+  // the token.
+  assert.equal(LOKI_MAX_DAYS_BACK, 30);
+  for (const from of ["now-31d", "now-721h", "now-400d", String(NOW - 30 * 86_400_000 - 1)]) {
+    assert.equal(
+      fromProblem(from, NOW),
+      `from must be within the last 30 days (Loki refuses a longer range), got ${JSON.stringify(from)}`,
+    );
+  }
+  assert.equal(fromProblem(String(NOW + 1), NOW), `from must not be later than now, got "${NOW + 1}"`);
 });
 
 // ---------------------------------------------------------------------------

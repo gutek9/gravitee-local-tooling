@@ -14,6 +14,8 @@ import {
 import {
   summarizeQueryResult,
   buildLogsQuery,
+  fromProblem,
+  LOKI_MAX_DAYS_BACK,
 } from "./helpers.js";
 import { fetchMatchingStreams } from "./lokiDiscovery.js";
 import { linksForStreams, explainNoStreams } from "./logsLinks.js";
@@ -223,7 +225,16 @@ registerTool(
       .default("drilldown")
       .describe("Link format: 'drilldown' (Logs Drilldown app, per-namespace; default) or 'explore' (raw LogQL Explore)."),
     control_plane_id: z.string().optional().describe("Narrow to one Cockpit organization when a customer name spans several (see grafana_find_customer)."),
-    from: z.string().default("now-1h").describe("Range start, e.g. 'now-1h', 'now-6h', or epoch ms."),
+    // Refused before Loki is asked, so the caller reads why (see
+    // resolveNamespaces, which refuses it too).
+    from: z
+      .string()
+      .superRefine((value, ctx) => {
+        const problem = fromProblem(value);
+        if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
+      })
+      .default("now-1h")
+      .describe(`Range start, e.g. 'now-1h', 'now-6h', or epoch ms. At most ${LOKI_MAX_DAYS_BACK} days back ('now-${LOKI_MAX_DAYS_BACK}d').`),
     to: z.string().default("now").describe("Range end, e.g. 'now' or epoch ms."),
   },
   async ({ client, component, line_filter, link_style = "drilldown", control_plane_id, from = "now-1h", to = "now" }) =>

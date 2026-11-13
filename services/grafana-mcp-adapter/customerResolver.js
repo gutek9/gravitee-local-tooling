@@ -8,6 +8,7 @@ import { matchNamespaces, matchNamespacesAnySegment, matchNamespacesPhrase } fro
 import { fetchLabelValues } from "./lokiDiscovery.js";
 import { loadCustomerMap } from "./customerMapLoader.js";
 import { log, RESTART_HINT } from "./grafanaClient.js";
+import { fromProblem, LOKI_MAX_DAYS_BACK } from "./helpers.js";
 import {
   splitNameAndTail,
   resolveCustomerNamespaces,
@@ -225,6 +226,10 @@ export async function resolveNamespaces(client, { datasourceUid, from, controlPl
   // Nothing to resolve is not "both sources found nothing" (the tool schema
   // already refuses a blank client).
   if (!phrase) throw new Error("client is required");
+  // A range Loki refuses gets the HTTP 400 a malformed datasource uid also
+  // gets, and the advice for that 400 can only point at the uid and the token.
+  const rangeProblem = fromProblem(from);
+  if (rangeProblem) throw new Error(rangeProblem);
 
   const { namespaceValues, failure } = await namespaceList(datasourceUid, from);
   const map = await loadCustomerMap();
@@ -835,8 +840,9 @@ export function resolutionReport(resolution = {}) {
 const ID_SHAPED = /^(apim-(dp|cp)-[0-9a-z-]+|[0-9a-z]+(-[0-9a-z]+)+)$/i;
 
 // How far back grafana_find_customer looks for live namespaces: a deployment
-// absent over that window is taken as gone, not merely quiet.
-const FIND_WINDOW_DAYS = 30;
+// absent over that window is taken as gone, not merely quiet. As far back as
+// Loki answers.
+const FIND_WINDOW_DAYS = LOKI_MAX_DAYS_BACK;
 
 // A Gravitee Cloud customer's and matched_by_id's own lists, capped by
 // max_results like the answer's. A customer's shared and unattributed data

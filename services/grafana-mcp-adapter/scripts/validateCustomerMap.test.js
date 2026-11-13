@@ -155,10 +155,12 @@ test("VALIDATE_SETTINGS: the script's numbers are read like the map settings", (
   });
   // 0 is the strict threshold: fail on any customer with a missing namespace.
   assert.equal(readNumberSettings({ GRAFANA_VALIDATE_MAX_STALE: "0" }, VALIDATE_SETTINGS).values.GRAFANA_VALIDATE_MAX_STALE, 0);
-  for (const bad of ["abc", "30d", "0", "-5", "1.5", "366"]) {
+  // The window goes no further back than Loki answers.
+  assert.equal(readNumberSettings({ GRAFANA_VALIDATE_WINDOW_DAYS: "30" }, VALIDATE_SETTINGS).values.GRAFANA_VALIDATE_WINDOW_DAYS, 30);
+  for (const bad of ["abc", "30d", "0", "-5", "1.5", "31"]) {
     assert.deepEqual(
       readNumberSettings({ GRAFANA_VALIDATE_WINDOW_DAYS: bad }, VALIDATE_SETTINGS).errors,
-      [`GRAFANA_VALIDATE_WINDOW_DAYS must be a whole number from 1 to 365, got "${bad}"`],
+      [`GRAFANA_VALIDATE_WINDOW_DAYS must be a whole number from 1 to 30, got "${bad}"`],
       bad,
     );
   }
@@ -199,10 +201,12 @@ const runScript = (env) =>
 
 test("validate-customers: a bad setting is refused before GitHub or Loki is asked anything", () => {
   // Regression: GRAFANA_VALIDATE_MAX_STALE=abc exited 0 however many customers
-  // were stale, and GRAFANA_VALIDATE_WINDOW_DAYS=30d sent start=NaN to Loki.
+  // were stale, GRAFANA_VALIDATE_WINDOW_DAYS=30d sent start=NaN to Loki, and
+  // GRAFANA_VALIDATE_WINDOW_DAYS=31 got an HTTP 400 from it.
   for (const [name, raw] of [
     ["GRAFANA_VALIDATE_MAX_STALE", "abc"],
     ["GRAFANA_VALIDATE_WINDOW_DAYS", "30d"],
+    ["GRAFANA_VALIDATE_WINDOW_DAYS", "31"],
     ["GRAFANA_CUSTOMER_MAP_TIMEOUT_MS", "abc"],
   ]) {
     const out = runScript({ ...CONFIGURED, [name]: raw });
@@ -217,6 +221,27 @@ test("validate-customers: a bad setting is refused before GitHub or Loki is aske
   assert.match(unconfigured.stderr, /Grafana is disabled/);
   assert.match(unconfigured.stderr, /GRAFANA_LOGS_DATASOURCE_UID is required/);
   assert.doesNotMatch(unconfigured.stderr, /REQUEST/);
+});
+
+test("validate-customers: Loki failing fails with its reason, not a stack trace", () => {
+  // Regression: an error from Loki (here a 401) was thrown out of the script,
+  // which ended with a stack trace instead of saying nothing was validated.
+  const lokiRefuses = `data:text/javascript,${encodeURIComponent(
+    'globalThis.fetch = async (url) => { process.stderr.write("REQUEST " + url + "\\n"); ' +
+      'return { ok: false, status: 401, text: async () => "", headers: { get: () => null } }; };',
+  )}`;
+  const out = spawnSync(process.execPath, ["--import", lokiRefuses, SCRIPT], {
+    env: { PATH: process.env.PATH, ...CONFIGURED },
+    encoding: "utf8",
+  });
+  assert.equal(out.status, 1, out.stderr);
+  assert.match(
+    out.stderr,
+    /^Could not read Loki's namespace list: Grafana GET \/datasources\/proxy\/uid\/logs-uid\/loki\/api\/v1\/label\/namespace\/values failed with HTTP 401\. Nothing was validated\.$/m,
+  );
+  assert.doesNotMatch(out.stderr, /^\s+at /m);
+  // Loki is asked first, so GitHub never is.
+  assert.doesNotMatch(out.stderr, /REQUEST https:\/\/api\.github\.com/);
 });
 
 test("validate-customers: the window reaches Loki as a real start time", () => {

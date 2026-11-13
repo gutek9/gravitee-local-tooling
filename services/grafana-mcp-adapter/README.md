@@ -80,7 +80,8 @@ with `from`/`to`. When nothing matches on the `service_name` path, it returns
 close `service_name` values as `suggestions`, so typos like `kestrl → kestrel`
 surface. They come from outside Gravitee Cloud namespaces only, like the search
 itself. A blank `client` is refused: with nothing to narrow by, it would match
-every stream in Loki.
+every stream in Loki. So is a `from` later than now or more than 30 days ago,
+before Loki is asked: Loki refuses a longer range.
 
 The response also says how the customer was found:
 
@@ -572,7 +573,7 @@ anything else must be a whole number in range:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `GRAFANA_VALIDATE_WINDOW_DAYS` | `30` | How many days back a namespace counts as live. 1 to 365. |
+| `GRAFANA_VALIDATE_WINDOW_DAYS` | `30` | How many days back a namespace counts as live. 1 to 30: Loki refuses a longer window. |
 | `GRAFANA_VALIDATE_MAX_STALE` | `20` | How many customers may have missing namespaces before it fails. 0 to 10000; 0 fails on any. |
 
 ## Testing

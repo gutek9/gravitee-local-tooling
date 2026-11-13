@@ -240,6 +240,22 @@ test("tool schemas: a blank client or query is refused before the handler runs",
   assert.equal(find.safeParse({ query: " acme " }).data.query, "acme");
 });
 
+test("tool schemas: grafana_logs_link refuses a from Loki would refuse, before the handler runs", () => {
+  // Regression: from=now-60d reached Loki's namespace lookup, and its HTTP 400
+  // was answered with advice to check GRAFANA_LOGS_DATASOURCE_UID and
+  // GRAFANA_TOKEN, which were fine.
+  const logs = toolInputSchemas.grafana_logs_link;
+  for (const from of ["now-31d", "now-60d", String(Date.now() + 3_600_000)]) {
+    const out = logs.safeParse({ client: "acme", from });
+    assert.equal(out.success, false, from);
+    assert.match(out.error.issues[0].message, /^from must /, from);
+  }
+  for (const from of [undefined, "now-1h", "now-30d"]) {
+    assert.equal(logs.safeParse({ client: "acme", from }).success, true, String(from));
+  }
+  assert.equal(logs.safeParse({ client: "acme" }).data.from, "now-1h");
+});
+
 test("startup: an enabled adapter warms the customer map from GitHub", async () => {
   // The control for server.disabled.test.js: the same check sees the request
   // when Grafana is enabled, so "no request" there is not an artefact.
@@ -275,6 +291,17 @@ test("grafana_logs_link: a blank client that reaches the handler never queries /
       assert.ok(!calls.some((u) => u.includes(SERIES)), "Loki /series must not be queried");
     },
   );
+});
+
+test("grafana_logs_link: a from Loki would refuse that reaches the handler asks Loki nothing", async () => {
+  // Called directly the schema is skipped. Regression: from=now-60d got an HTTP
+  // 400 from Loki, answered with advice to check the datasource uid and token.
+  await withLokiStub({ [NS_VALUES]: ["kestrel-prod"] }, async (calls) => {
+    for (const from of ["now-60d", String(Date.now() + 3_600_000)]) {
+      await assert.rejects(tools.grafana_logs_link({ client: "kestrel", from }, {}), /from must /);
+    }
+    assert.deepEqual(calls, []);
+  });
 });
 
 test("grafana_logs_link: a word no namespace carries is refused, listing the namespaces that exist", async () => {
