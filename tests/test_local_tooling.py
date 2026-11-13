@@ -302,6 +302,56 @@ class LocalToolingTest(unittest.TestCase):
             grafana_config_errors({"GRAFANA_ENABLED": "false", "GRAFANA_CUSTOMER_MAP_TIMEOUT_MS": "abc"}), []
         )
 
+    def test_grafana_warns_without_github_token(self) -> None:
+        """Without the token the adapter starts, but cannot read the customer map
+        from GitHub. Regression: doctor's only line about it named the GitHub MCP
+        server, and a token of spaces alone, which the adapter reads as no token,
+        got no line at all."""
+        from local_tooling.grafana import grafana_config_errors, grafana_config_warnings
+
+        base = {
+            "GRAFANA_ENABLED": "true",
+            "GRAFANA_BASE_URL": "https://grafana.example.com",
+            "GRAFANA_TOKEN": "glsa_x",
+            "GRAFANA_LOGS_DATASOURCE_UID": "grafanacloud-logs",
+        }
+
+        for token in [None, "", "   "]:
+            env = dict(base) if token is None else {**base, "GITHUB_PERSONAL_ACCESS_TOKEN": token}
+            warnings = grafana_config_warnings(env)
+            self.assertEqual(len(warnings), 1, repr(token))
+            self.assertIn("cannot read the Gravitee Cloud customer map from GitHub", warnings[0])
+            # A warning, not an error: the adapter still starts.
+            self.assertEqual(grafana_config_errors(env), [], repr(token))
+
+        self.assertEqual(grafana_config_warnings({**base, "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_x"}), [])
+        # Disabled -> the adapter does not use the token.
+        self.assertEqual(grafana_config_warnings({"GRAFANA_ENABLED": "false"}), [])
+
+    def test_doctor_warns_grafana_without_github_token_and_does_not_fail(self) -> None:
+        cli = load_cli()
+        env = {
+            "GRAFANA_ENABLED": "true",
+            "GRAFANA_BASE_URL": "https://grafana.example.com",
+            "GRAFANA_TOKEN": "glsa_x",
+            "GRAFANA_LOGS_DATASOURCE_UID": "grafanacloud-logs",
+            "GITHUB_PERSONAL_ACCESS_TOKEN": "   ",
+            "VDB_API_PORT": "8000",
+        }
+        with mock.patch.object(cli, "docker_compose_available", return_value=(True, "ok")), mock.patch.object(
+            cli, "docker_daemon_running", return_value=(True, "running")
+        ), mock.patch.object(cli, "command_exists", return_value=True), mock.patch.object(
+            cli, "check_port", return_value=True
+        ), mock.patch.object(
+            cli, "health", return_value={"status": "ok", "documents": 0}
+        ), mock.patch(
+            "builtins.print"
+        ) as mocked_print:
+            cli.doctor(env)
+
+        output = "\n".join(str(call.args[0]) for call in mocked_print.call_args_list if call.args)
+        self.assertIn("the Grafana adapter cannot read the Gravitee Cloud customer map from GitHub", output)
+
     def test_customer_map_number_limits_match_the_adapter(self) -> None:
         """Same table as "readNumberSettings: every setting has an upper bound" in
         services/grafana-mcp-adapter/customerMapLoader.test.js. doctor must accept

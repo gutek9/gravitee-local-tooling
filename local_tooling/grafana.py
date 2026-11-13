@@ -43,6 +43,21 @@ def grafana_config_errors(env: dict[str, str]) -> list[str]:
     return errors
 
 
+def grafana_config_warnings(env: dict[str, str]) -> list[str]:
+    # What doctor reports without failing: the adapter starts, but answers less.
+    if not grafana_enabled(env):
+        return []
+    warnings: list[str] = []
+    # Trimmed, as the adapter's GitHub client reads it.
+    if not env.get("GITHUB_PERSONAL_ACCESS_TOKEN", "").strip():
+        warnings.append(
+            "GITHUB_PERSONAL_ACCESS_TOKEN is empty; the Grafana adapter cannot read the Gravitee Cloud "
+            "customer map from GitHub, so it finds Cloud customers by name only through a snapshot "
+            "built into its image, if there is one"
+        )
+    return warnings
+
+
 # The customer map's numeric settings: (name, minimum, maximum). Empty means the
 # adapter's default; anything else must be a whole number in range. The adapter
 # (customerMapLoader.js) has the same table and refuses to load the map with a

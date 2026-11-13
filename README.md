@@ -215,7 +215,9 @@ The read-only Grafana MCP adapter is disabled by default. To enable it, set
 `GRAFANA_ENABLED=true`, `GRAFANA_BASE_URL`, a read-only service account
 `GRAFANA_TOKEN`, and `GRAFANA_LOGS_DATASOURCE_UID` (the uid of the Loki
 datasource holding your logs) in `.env`. `doctor` checks that they are set, and
-the adapter is not started while one is missing. Rerun `setup` with your usual
+the adapter is not started while one is missing. The adapter cannot read the
+Gravitee Cloud customer map from GitHub without `GITHUB_PERSONAL_ACCESS_TOKEN`:
+`doctor` warns, and the adapter still starts. Rerun `setup` with your usual
 `--agents` and `--repo` values to add the adapter to agent configuration, then
 restart the agent. It exposes datasource queries and links to matching logs. See
 the [Grafana adapter guide](services/grafana-mcp-adapter/README.md) for the

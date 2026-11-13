@@ -36,6 +36,7 @@ from local_tooling.env import load_env
 from local_tooling.manifest import default_profile, generate_manifest, index_repo
 from local_tooling.grafana import (
     grafana_config_errors,
+    grafana_config_warnings,
     grafana_enabled,
     require_grafana_config,
 )
@@ -124,6 +125,7 @@ def doctor(env: dict[str, str]) -> None:
         grafana_errors = grafana_config_errors(env)
         if grafana_errors:
             warnings.extend(grafana_errors)
+        warnings.extend(grafana_config_warnings(env))
     if warnings:
         print("Warnings:")
         for warning in warnings:
