@@ -7,10 +7,10 @@
 //   reverse  - live data planes the map does not know about at all
 // Run it to get numbers instead of an impression.
 //
-// It measures the map as GitHub has it now, read the way refresh-customers reads
-// it, and never the bundled snapshot: a fallback measured as if it were the map
-// would pass the very check meant to catch an outdated one, and
-// GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH names a path inside the container, not here.
+// It measures the map as GitHub has it now, read the way refresh-customers
+// reads it, and never the bundled snapshot: a fallback measured as if it were
+// the map would pass the very check meant to catch an outdated one, and
+// GRAFANA_CUSTOMER_MAP_SNAPSHOT_PATH is a path in the container, not here.
 import { parseCustomerCsv } from "../customerCsv.js";
 import { fetchCustomerCsv, fetchGeneratedAt, readNumberSettings } from "../customerMapLoader.js";
 import { requireConfig } from "../grafanaClient.js";

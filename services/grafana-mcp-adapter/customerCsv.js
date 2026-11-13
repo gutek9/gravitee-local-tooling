@@ -78,7 +78,7 @@ const TRIAL_ID_RE = new RegExp(`^(${TRIAL_ID_PATTERN})-`, "i");
 // namespaces; Region, Provider and URLs (where the environment is read) are
 // what a qualifier such as `acme prod` narrows by. A CSV without one of them
 // cannot be read as the map: every row would lack that field (without URLs,
-// `acme prod` was refused as if acme had no prod).
+// `acme prod` would be refused as if acme had no prod).
 export const REQUIRED_COLUMNS = ["Customer", "ControlPlaneId", "DataPlaneId", "Region", "Provider", "URLs"];
 
 // A data plane id is what follows `apim-dp-` in a Kubernetes namespace name:
@@ -127,9 +127,9 @@ export const describeLeftOut = ({ line, customer, problem }) =>
 // Turn the CSV into the minimum needed to resolve a customer to namespaces.
 // Returns the rows that can be used, and the ones left out, each with the line
 // it starts on, its customer when the row has the header's number of fields,
-// and why. Only blank lines are skipped without a word: a customer on a row left
-// out resolves only partly, or not at all, and the caller says so. Throws when
-// the CSV is empty or lacks a column the map is read from.
+// and why. Only blank lines are skipped without a word: a customer on a row
+// left out resolves only partly, or not at all, and the caller says so. Throws
+// when the CSV is empty or lacks a column the map is read from.
 export function parseCustomerCsv(text = "") {
   const [head, ...body] = csvRows(text);
   if (!head) throw new Error("the customer CSV is empty");

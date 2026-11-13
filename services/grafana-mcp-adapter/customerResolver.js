@@ -876,9 +876,9 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
   ]);
   const owners = dataPlaneOwners(map.rows);
   const cockpit = [...groups.values()]
-    // The same namespaces grafana_logs_link searches for this customer, except
-    // a data plane the map lists under another customer too: flagged here, and
-    // grafana_logs_link refuses it.
+    // The customer's namespaces, from namespacesOf as grafana_logs_link gets
+    // them. A data plane the map lists under another customer too is flagged
+    // here: grafana_logs_link refuses any search that includes it.
     .map((rows) => {
       const shared = [...new Set(rows.map((r) => r.data_plane_id))]
         .map((id) => ({ data_plane_id: id, customers: owners.get(id.toLowerCase()) }))

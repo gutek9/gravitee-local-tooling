@@ -33,14 +33,14 @@ function readsFromOwner(phraseWords, segments) {
   return false;
 }
 
-const distinct =(namespaceValues) => [...new Set((namespaceValues || []).filter(Boolean))];
+const distinct = (namespaceValues) => [...new Set((namespaceValues || []).filter(Boolean))];
 
 // The namespaces the phrase names exactly: the whole namespace, or else every
-// word as whole segments of it, starting with its owner's. The whole name comes
-// first because names nest: `orbit-plt-live` is a prefix of `orbit-plt-live-ap`,
-// and namespaces exist that are called just `prod` or `dev`. Asking for one must
-// not return its siblings; a customer name alone (`acme`) still returns all of
-// that customer's namespaces.
+// word as whole segments of it, starting with its owner's. The whole name
+// comes first because names nest: `orbit-plt-live` is a prefix of
+// `orbit-plt-live-ap`, and namespaces exist that are called just `prod` or
+// `dev`. Asking for one must not return its siblings; a customer name alone
+// (`acme`) still returns all of that customer's namespaces.
 function matchNamespacesExactly(namespaceValues, phrase, reads = readsFromOwner) {
   const phraseWords = words(phrase);
   if (!phraseWords.length) return [];

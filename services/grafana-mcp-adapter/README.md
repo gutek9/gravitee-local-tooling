@@ -127,25 +127,25 @@ The response also says how the customer was found:
   name. A data plane (`apim-dp-cp1111-dp0001` or `cp1111-dp0001`) is searched
   alone, with its customer when the map knows it; when only Loki knows it,
   `owner_unknown` says whose it is cannot be told. One the map lists under more
-  than one customer is refused, naming them all (`matched_by_id.customers`):
-  whose logs it holds cannot be said. A control plane (`cp1111`) is
-  refused: its namespace is shared by every customer on that organization. Pass
-  the customer's name with `control_plane_id` instead. A trial is named by its
-  control-plane id (`trial-tt0001`) and resolves as that customer. A trial's
-  control-plane namespace (`apim-cp-trial-tt0001`) hosts only that trial, so it
-  is searched alone, like a data plane, with `control_plane_is_single_tenant`;
-  when the map does not list the trial or cannot be read, only if Loki has
-  it, with `owner_unknown`. A data
-  plane's own id alone (`dp0001`) is refused, listing the data planes that carry
-  it (`data_planes`, with their customer when the map knows it, or `customers`
-  when it lists several, which is never searched): pass the full namespace of
-  the one you mean.
+  than one customer is refused, naming them (`matched_by_id.customers`, at most
+  ten; the note says how many): whose logs it holds cannot be said. A control
+  plane (`cp1111`) is refused: its namespace is shared by every customer on that
+  organization. Pass the customer's name with `control_plane_id` instead. A
+  trial is named by its control-plane id (`trial-tt0001`) and resolves as that
+  customer. A trial's control-plane namespace (`apim-cp-trial-tt0001`) hosts
+  only that trial, so it is searched alone, like a data plane, with
+  `control_plane_is_single_tenant`; when the map does not list the trial or
+  cannot be read, only if Loki has it, with `owner_unknown`. A data plane's own
+  id alone (`dp0001`) is refused, listing the data planes that carry it
+  (`data_planes`, with their customer when the map knows it, or `customers` when
+  it lists several, which is never searched): pass the full namespace of the
+  one you mean.
 - `shared_data_planes`, `shared_data_planes_truncated` — what `client` would
   search includes a data plane the map lists under more than one customer
-  (`data_plane_id`, `customers`; at most ten, with how many were left out). Its logs
-  cannot be said to be either's, so nothing is searched, hosted namespaces
-  included, whatever `control_plane_id` says. The note names the customer's other
-  data planes, which can be searched by their id.
+  (`data_plane_id`, `customers`; at most ten data planes, with how many were
+  left out). Its logs cannot be said to be either's, so nothing is searched,
+  hosted namespaces included, whatever `control_plane_id` says. The note names
+  the customer's other data planes, which can be searched by their id.
 - `spans_multiple_organizations`, `organizations_note` — one name, several Cockpit
   organizations. Pass `control_plane_id` to narrow to one.
 - `refused`, `unknown_control_plane`, `requested_control_plane_id` — the
@@ -335,8 +335,8 @@ follow from reading names off namespaces, and one from that search:
   `prod`) also finds other customers' services whose names contain it
   (`kestrel` finds `kestrelcorp-gateway`).
 - The namespace route does not look for a second reading the way the map
-  route does: `acme dev` is acme's whole namespace `acme-dev`, even when another
-  hosted owner is called `acmedev` (`acmedev-prod`), and only acme's is searched.
+  route does: with another hosted owner called `acmedev` (`acmedev-prod`),
+  `acme dev` is still acme's namespace `acme-dev`, the only one searched.
 
 ### `grafana_find_customer`
 
@@ -354,30 +354,31 @@ name that reads two ways, or that two customers share once separators are
 ignored, gets a note saying what `grafana_logs_link` accepts to reach one.
 
 It returns, per Gravitee Cloud customer: deployment count, Cockpit
-organizations (`control_plane_ids`, to pass as `control_plane_id`), environments,
-regions, the exact namespaces `grafana_logs_link` searches for it (its data
-planes, plus a trial's own control plane, flagged `control_plane_is_single_tenant`),
-and the shared control-plane
-namespaces. A data plane the map also lists under another customer is flagged in
-`shared_data_planes`, and `grafana_logs_link` refuses any search that includes
-it; an id the map lists under several customers names them
-(`matched_by_id.customers`). Hosted customers come back as `hosted_namespaces`. Gravitee Cloud
-namespaces whose name matches (`apim-dp-*`, `apim-cp-*`, for example every data
-plane on `cp1111`) come back apart as `cloud_namespaces`: their name carries
-ids, not the owner, so look one up by its full id. Data planes that
-are live on a customer's control plane but missing from the map are listed as
+organizations (`control_plane_ids`, to pass as `control_plane_id`),
+environments, regions, its namespaces (its data planes, plus a trial's own
+control plane, flagged `control_plane_is_single_tenant`) and the shared
+control-plane namespaces. A data plane the map also lists under another
+customer is flagged in `shared_data_planes`, and `grafana_logs_link` refuses
+any search that includes it; an id the map lists under several customers names
+them (`matched_by_id.customers`). Hosted customers come back as
+`hosted_namespaces`. Gravitee Cloud namespaces whose name matches (`apim-dp-*`,
+`apim-cp-*`, for example every data plane on `cp1111`) come back apart as
+`cloud_namespaces`: their name carries ids, not the owner, so look one up by
+its full id. Data planes that are live on a customer's control plane but
+missing from the map are listed as
 `unattributed_namespaces_on_same_control_plane`: a control plane is shared, so
 they may belong to another customer and are never searched as this one.
 `max_results` (default 20, at most 50) caps every list in the answer, each
 customer's own lists and `matched_by_id`'s included. A count next to each list
-(`<list>_truncated`; `gravitee_cloud_truncated` and `unattributed_truncated` for
-the customers and their unattributed data planes) says how many were left out,
-0 when none were. A note names at most ten, then "and N more". When
-Loki does not return its namespace list, `namespace_lookup_failed` says hosted
+(`<list>_truncated`; `gravitee_cloud_truncated` and `unattributed_truncated`
+for the customers and their unattributed data planes) says how many were left
+out, 0 when none were. A note names at most ten, then "and N more". When Loki
+does not return its namespace list, `namespace_lookup_failed` says hosted
 namespaces and unattributed data planes could not be checked, rather than
-reporting that none matched, and `namespace_lookup_note` says why. Likewise, when the customer map cannot be read, the
-note says Gravitee Cloud customers and ids were not checked (`map_warning` says
-why), rather than that none matched.
+reporting that none matched, and `namespace_lookup_note` says why. Likewise,
+when the customer map cannot be read, the note says Gravitee Cloud customers
+and ids were not checked (`map_warning` says why), rather than that none
+matched.
 
 ## Setup
 

@@ -1,6 +1,6 @@
-// Regenerate the bundled customer snapshot used when GitHub is unreachable. How
-// to run it, and how a new snapshot reaches the adapter: README, "The customer
-// snapshot is never committed". In short, from this directory:
+// Regenerate the snapshot the adapter falls back to when the map cannot be
+// read from GitHub. How to run it and how a new one reaches the adapter:
+// README, "The customer snapshot is never committed". From this directory:
 //
 //   node --env-file=../../.env scripts/refresh-customers.mjs [--out FILE]
 //

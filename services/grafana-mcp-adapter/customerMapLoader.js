@@ -1,9 +1,9 @@
 // Where the Gravitee Cloud customer map comes from.
 //
 // Fetched from GitHub at runtime so it is current, with a bundled snapshot as a
-// fallback for when GitHub is unreachable. Which source answered is always
-// reported: resolving a customer against stale data without saying so is exactly
-// the kind of quiet wrongness this adapter exists to avoid.
+// fallback for when the map cannot be read from GitHub. Which source answered
+// is always reported: resolving a customer against stale data without saying
+// so is exactly the kind of quiet wrongness this adapter exists to avoid.
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -335,8 +335,9 @@ export function resetCustomerMapCache() {
 // than landing in the middle of someone's first query. Fire-and-forget: a failure
 // here is not fatal, the next call falls back to the snapshot as usual.
 export function warmCustomerMap() {
-  // An unreachable map resolves as unavailable, so what throws here is a bad
-  // setting. Logged so it shows at startup, not only on the first map tool call.
+  // A map that cannot be read from GitHub falls back to the snapshot, or
+  // resolves as unavailable, so what throws here is a bad setting. Logged so
+  // it shows at startup, not only on the first map tool call.
   loadCustomerMap().catch((err) => {
     log("error", "Customer map not loaded", { error: err instanceof Error ? err.message : String(err) });
   });
