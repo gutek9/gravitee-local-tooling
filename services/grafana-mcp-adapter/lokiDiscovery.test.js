@@ -7,7 +7,7 @@ process.env.GRAFANA_ENABLED = "true";
 process.env.GRAFANA_BASE_URL = "https://g.example.com";
 process.env.GRAFANA_TOKEN = "glsa_test";
 
-const { fetchMatchingStreams, fetchLabelValues, suggestClients } = await import("./lokiDiscovery.js");
+const { fetchMatchingStreams, fetchLabelValues, suggestClients, describeLookupFailure } = await import("./lokiDiscovery.js");
 
 // Answer every request with Loki's `{ status, data }` (or an HTTP error when
 // `status` is not 200) and record the URLs requested.
@@ -89,5 +89,22 @@ test("suggestClients: asks only for the values a service_name search can reach",
 test("suggestClients: a failed call gives no suggestions instead of failing the tool", async () => {
   await withFetch({ status: 502 }, async () => {
     assert.deepEqual(await suggestClients("logs-uid", "kestrl", { from: "now-1h" }), []);
+  });
+});
+
+test("describeLookupFailure: a retry can help only for a timeout, a network error, 408, 429 or a 5xx", () => {
+  const httpError = (status) => Object.assign(new Error(`Grafana GET /x failed with HTTP ${status}`), { status });
+  for (const status of [408, 429, 500, 502, 503, 504]) {
+    assert.equal(describeLookupFailure(httpError(status)).retryable, true, `HTTP ${status}`);
+  }
+  for (const status of [400, 401, 403, 404]) {
+    assert.equal(describeLookupFailure(httpError(status)).retryable, false, `HTTP ${status}`);
+  }
+  assert.equal(describeLookupFailure(httpError(404)).reason, "Grafana GET /x failed with HTTP 404");
+  // No status: fetch's own errors, a dropped connection or the client's timeout.
+  assert.deepEqual(describeLookupFailure(new TypeError("fetch failed")), { reason: "fetch failed", retryable: true });
+  assert.deepEqual(describeLookupFailure(new DOMException("This operation was aborted", "AbortError")), {
+    reason: "This operation was aborted",
+    retryable: true,
   });
 });

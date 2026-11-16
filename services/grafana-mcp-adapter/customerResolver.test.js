@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { parseCustomerCsv } from "./customerCsv.js";
-import { resolveClient, findCustomerMatches, describeLookupFailure } from "./customerResolver.js";
+import { resolveClient, findCustomerMatches } from "./customerResolver.js";
 import { resolutionReport } from "./customerResponses.js";
 
 // Made-up Gravitee Cloud customers, with the real CSV header (same names as
@@ -230,23 +230,6 @@ test("resolveClient: nothing found with a source down is refused, not left to a 
   assert.deepEqual(resolve("dp0002", null).matched_by_id.data_planes, [
     { namespace: "apim-dp-cp1111-dp0002", customer: "acme" },
   ]);
-});
-
-test("describeLookupFailure: a retry can help only for a timeout, a network error, 408, 429 or a 5xx", () => {
-  const httpError = (status) => Object.assign(new Error(`Grafana GET /x failed with HTTP ${status}`), { status });
-  for (const status of [408, 429, 500, 502, 503, 504]) {
-    assert.equal(describeLookupFailure(httpError(status)).retryable, true, `HTTP ${status}`);
-  }
-  for (const status of [400, 401, 403, 404]) {
-    assert.equal(describeLookupFailure(httpError(status)).retryable, false, `HTTP ${status}`);
-  }
-  assert.equal(describeLookupFailure(httpError(404)).reason, "Grafana GET /x failed with HTTP 404");
-  // No status: fetch's own errors, a dropped connection or the client's timeout.
-  assert.deepEqual(describeLookupFailure(new TypeError("fetch failed")), { reason: "fetch failed", retryable: true });
-  assert.deepEqual(describeLookupFailure(new DOMException("This operation was aborted", "AbortError")), {
-    reason: "This operation was aborted",
-    retryable: true,
-  });
 });
 
 test("resolveClient: a failed Loki lookup gives its reason, and retry advice only when a retry can help", () => {

@@ -5,9 +5,9 @@
 // and findCustomer() only fetch that data (Loki's namespace values and the
 // customer map) first, and log why Loki's list could not be read.
 import { matchNamespaces, matchNamespacesAnySegment, matchNamespacesPhrase } from "./namespaceMatch.js";
-import { fetchLabelValues } from "./lokiDiscovery.js";
+import { namespaceList } from "./lokiDiscovery.js";
 import { loadCustomerMap } from "./customerMapLoader.js";
-import { log, RESTART_HINT } from "./grafanaClient.js";
+import { RESTART_HINT } from "./grafanaClient.js";
 import { fromProblem, LOKI_MAX_DAYS_BACK } from "./helpers.js";
 import {
   splitNameAndTail,
@@ -134,31 +134,6 @@ function scopeToOneCustomer({ phrase, found, split, mapMatched, controlPlaneId, 
     partialOf: partialFromLabel ? "namespace names" : "name",
     asked: found.partial ? found.name : split.core,
   };
-}
-
-// Why Loki's namespace list could not be read, and whether trying again can
-// help: a timeout or a dropped connection (fetch's own error, no status), 408,
-// 429 or a 5xx may pass; any other HTTP status (a wrong datasource uid, a token
-// without access) will not. The reason is the error's message: the HTTP
-// client's gives method, path and status, never the token or the response body.
-export function describeLookupFailure(err) {
-  const status = err?.status;
-  return {
-    reason: err instanceof Error ? err.message : String(err),
-    retryable: status === undefined || status === 408 || status === 429 || status >= 500,
-  };
-}
-
-// Loki's namespace list, or null and why it could not be read. The failure is
-// logged too: it changes every answer until it is fixed.
-async function namespaceList(datasourceUid, from) {
-  try {
-    return { namespaceValues: await fetchLabelValues(datasourceUid, "namespace", { from }), failure: null };
-  } catch (err) {
-    const failure = describeLookupFailure(err);
-    log("warn", "Loki namespace lookup failed", { error: failure.reason, retryable: failure.retryable });
-    return { namespaceValues: null, failure };
-  }
 }
 
 // Resolve a free-text client to the namespaces holding its logs, by two routes:

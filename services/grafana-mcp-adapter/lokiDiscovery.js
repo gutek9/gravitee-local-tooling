@@ -1,7 +1,7 @@
 // What Loki has, read without pulling any log lines: the values a label takes,
 // and the label sets of the streams a selector matches. Every call goes through
 // grafanaDatasourceProxyGet, so the read-only check in grafanaClient.js covers it.
-import { grafanaDatasourceProxyGet } from "./grafanaClient.js";
+import { grafanaDatasourceProxyGet, log } from "./grafanaClient.js";
 import { toLokiNs, rankClientSuggestions, SERVICE_NAME_SEARCH_SCOPE } from "./helpers.js";
 
 // Discover which log streams match a selector WITHOUT pulling any log lines.
@@ -47,4 +47,29 @@ export async function suggestClients(uid, client, { from } = {}) {
     return [];
   }
   return rankClientSuggestions(values, client);
+}
+
+// Why Loki's namespace list could not be read, and whether trying again can
+// help: a timeout or a dropped connection (fetch's own error, no status), 408,
+// 429 or a 5xx may pass; any other HTTP status (a wrong datasource uid, a token
+// without access) will not. The reason is the error's message: the HTTP
+// client's gives method, path and status, never the token or the response body.
+export function describeLookupFailure(err) {
+  const status = err?.status;
+  return {
+    reason: err instanceof Error ? err.message : String(err),
+    retryable: status === undefined || status === 408 || status === 429 || status >= 500,
+  };
+}
+
+// Loki's namespace list, or null and why it could not be read. The failure is
+// logged too: it changes every answer until it is fixed.
+export async function namespaceList(datasourceUid, from) {
+  try {
+    return { namespaceValues: await fetchLabelValues(datasourceUid, "namespace", { from }), failure: null };
+  } catch (err) {
+    const failure = describeLookupFailure(err);
+    log("warn", "Loki namespace lookup failed", { error: failure.reason, retryable: failure.retryable });
+    return { namespaceValues: null, failure };
+  }
 }
