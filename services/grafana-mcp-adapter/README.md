@@ -114,9 +114,10 @@ The response also says how the customer was found:
   `zeta-beac-prod`), nothing is searched at all
   (`refused`): a `service_name` match across all of Loki would search the same
   ambiguous fragment. Each candidate says its `kind` (`gravitee_cloud` or
-  `hosted`); a Cloud one also has the same `deployments`, `control_plane_ids`,
-  `envs` and `regions` as in `grafana_find_customer`. At most ten are listed.
-  Pass the exact name.
+  `hosted`); a Cloud one also has its `deployments` count and its
+  `control_plane_ids`, `envs` and `regions`, at most ten of each, with
+  `<list>_truncated` as in `grafana_find_customer`. At most ten candidates are
+  listed. Pass the exact name.
 - `similar_names_not_searched`, `customer_note` — names that only contain the
   one asked for, while another customer has it as a whole name: `acme` searches
   the Cloud customer acme, not the hosted `acmecorp-*`. Name one to search it.

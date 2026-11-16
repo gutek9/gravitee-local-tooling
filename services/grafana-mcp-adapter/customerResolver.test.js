@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { parseCustomerCsv } from "./customerCsv.js";
 import { resolveClient } from "./customerResolver.js";
-import { resolutionReport } from "./customerResponses.js";
+import { cappedCandidates, resolutionReport } from "./customerResponses.js";
 import { findCustomerMatches } from "./customerSearch.js";
 
 // Made-up Gravitee Cloud customers, with the real CSV header (same names as
@@ -374,6 +374,73 @@ test("resolveClient: candidates are capped, and say how many were left out", () 
   assert.equal(out.candidates.length, 10);
   assert.equal(out.candidates_truncated, 2);
   assert.match(out.note, /zed09 and 2 more\)/);
+});
+
+test("cappedCandidates: each candidate names at most ten of each list, and says how many were left out", () => {
+  // Regression: two customers on 100 organizations each made grafana_logs_link
+  // refuse with all 200 ids in its candidates.
+  const twelve = (prefix) => Array.from({ length: 12 }, (_, i) => `${prefix}${String(i).padStart(2, "0")}`);
+  const cloud = (customer) => ({
+    customer,
+    kind: "gravitee_cloud",
+    deployments: 12,
+    control_plane_ids: twelve(`cp${customer}`),
+    envs: twelve("env"),
+    regions: twelve("region"),
+  });
+  const hosted = { customer: "aaa", kind: "hosted", namespace_count: 3 };
+  const small = { ...cloud("bbb"), deployments: 1, control_plane_ids: ["cpbbb00"], envs: ["prod"], regions: ["europe"] };
+  const out = cappedCandidates([hosted, small, ...twelve("c").map(cloud)]);
+  assert.equal(out.candidates.length, 10);
+  assert.equal(out.candidates_truncated, 4);
+  // A hosted candidate has no list: unchanged.
+  assert.deepEqual(out.candidates[0], hosted);
+  // Nothing left out still says so, as grafana_find_customer does.
+  assert.deepEqual(out.candidates[1], { ...small, control_plane_ids_truncated: 0, envs_truncated: 0, regions_truncated: 0 });
+  for (const candidate of out.candidates.slice(2)) {
+    assert.equal(candidate.deployments, 12, candidate.customer);
+    for (const key of ["control_plane_ids", "envs", "regions"]) {
+      assert.deepEqual(candidate[key], cloud(candidate.customer)[key].slice(0, 10), `${candidate.customer}.${key}`);
+      assert.equal(candidate[`${key}_truncated`], 2, `${candidate.customer}.${key}_truncated`);
+    }
+  }
+});
+
+test("resolveClient: every refusal with candidates names at most ten ids per candidate", () => {
+  // The four routes that return candidates: a name that reads two ways, an
+  // ambiguous name, the same with control_plane_id, and part of a name shared
+  // by a hosted and a Cloud customer.
+  const rows = (customer, first, env) =>
+    Array.from({ length: 12 }, (_, i) => {
+      const cp = `cp${first + i}`;
+      return `${customer},${cp},${cp}-dp0001,europe,az,westeurope,None,${env}-org-x.eu-az-westeurope.gateway.gravitee.io`;
+    });
+  const csv = [
+    ...rows("acme dev", 7000, "prod"),
+    ...rows("acme", 7100, "dev"),
+    ...rows("yank0x", 7200, "prod"),
+    ...rows("yank1x", 7300, "prod"),
+    ...rows("zulu", 7400, "prod"),
+  ];
+  const map = { ...MAP, rows: parseCustomerCsv(`${CUSTOMERS_CSV.split("\n")[0]}\n${csv.join("\n")}\n`).rows };
+  const routes = {
+    "two readings": resolveClient({ phrase: "acme dev", namespaceValues: [], map }),
+    "ambiguous name": resolveClient({ phrase: "yank", namespaceValues: [], map }),
+    "with control_plane_id": resolveClient({ phrase: "yank", namespaceValues: [], map, controlPlaneId: "cp7200" }),
+    "hosted and Cloud": resolveClient({ phrase: "zul", namespaceValues: ["zulucorp-prod"], map }),
+  };
+  assert.match(routes["two readings"].note, /reads two ways/);
+  assert.equal(routes["with control_plane_id"].unknown_control_plane, true);
+  assert.ok(routes["hosted and Cloud"].candidates.some((c) => c.kind === "hosted"));
+  for (const [route, out] of Object.entries(routes)) {
+    assert.equal(out.refused, true, route);
+    const cloud = out.candidates.filter((c) => c.kind === "gravitee_cloud");
+    assert.ok(cloud.length, route);
+    for (const c of cloud) {
+      assert.equal(c.control_plane_ids.length, 10, `${route}: ${c.customer}`);
+      assert.equal(c.control_plane_ids_truncated, 2, `${route}: ${c.customer}`);
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------
