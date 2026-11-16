@@ -598,8 +598,8 @@ Coverage:
   actually sends (one GET to `api.github.com`, token, headers, encoded path), and
   that a missing token, a bad path segment or a missing timeout sends nothing.
 - `lokiDiscovery.test.js` / `logsLinks.test.js` — the Loki reads behind
-  `grafana_logs_link` (`fetch` stubbed) and the links it builds from the matched
-  streams.
+  `grafana_logs_link` (`fetch` stubbed), whether a failed one is worth
+  retrying, and the links it builds from the matched streams.
 - `customerCsv.test.js` / `customerMatch.test.js` — the Gravitee Cloud customer
   map: CSV parsing (the columns it needs, rows left out with their line), name
   and id lookup, and resolving a customer to namespaces, on made-up rows with
