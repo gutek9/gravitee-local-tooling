@@ -15,6 +15,7 @@ const {
   buildDrilldownUrl,
   buildLineFilterToken,
   toLokiNs,
+  toEpochMs,
   fromProblem,
   LOKI_MAX_DAYS_BACK,
   editDistance,
@@ -468,6 +469,15 @@ test("toLokiNs: epoch ms passes through (converted to ns)", () => {
 
 test("toLokiNs: unparseable value falls back", () => {
   assert.equal(toLokiNs("garbage", 60, NOW), `${(NOW - 60 * 1000) * 1e6}`);
+});
+
+test("toEpochMs: the start in ms, without going through ns", () => {
+  assert.equal(toEpochMs("now", 0, NOW), NOW);
+  assert.equal(toEpochMs("now-30d", 0, NOW), NOW - 30 * 86_400_000);
+  assert.equal(toEpochMs("now-15m", 0, NOW), NOW - 15 * 60_000);
+  assert.equal(toEpochMs(String(NOW), 0, NOW), NOW);
+  assert.equal(toEpochMs("", 3600, NOW), NOW - 3_600_000);
+  assert.equal(toEpochMs("garbage", 60, NOW), NOW - 60_000);
 });
 
 test("fromProblem: a start Loki answers passes", () => {
