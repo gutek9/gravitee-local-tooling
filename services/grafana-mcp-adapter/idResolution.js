@@ -1,6 +1,8 @@
 // A client that is an id rather than a customer name, as an alert or a pod name
 // shows it: what it names, and whether that is searched alone or refused.
-// resolveById returns null when the phrase is not an id.
+// resolveById returns null when the phrase is not an id; resolveDataPlaneId,
+// asked once the name search left nothing to search, when it is no data
+// plane's id.
 import {
   sameName,
   listNames,
@@ -10,6 +12,7 @@ import {
   controlPlaneNamespace,
   namespacesOf,
   isTrialControlPlane,
+  dataPlanesWithId,
 } from "./customerMatch.js";
 import { deploymentOf, mapFields } from "./customerResponses.js";
 
@@ -184,6 +187,49 @@ export function resolveById({ phrase, controlPlaneId, namespaceValues, liveNames
         ? `${dataPlane} is in neither the customer map nor Loki in this range. Nothing was searched.`
         : `${lookup.id} is not in the customer map, and Loki did not return its namespace list. Nothing was searched.`,
     );
+  }
+  return null;
+}
+
+// A data plane's own id typed as client (`dp0001`, the last segment of
+// `apim-dp-<cp>-<dp>`): refused, naming the data planes with that id, in the
+// map or in Loki, and whose they are when the map says. Returns null when
+// the phrase is no data plane's id.
+export function resolveDataPlaneId({ phrase, namespaceValues, map }) {
+  const dataPlanes = dataPlanesWithId(map.rows, namespaceValues, phrase);
+  if (dataPlanes.length) {
+    // One the map lists under several customers is never searched, so it is
+    // named as such rather than offered as a full namespace to pass.
+    const named = dataPlanes.map((d) =>
+      d.customer
+        ? `${d.namespace} (${d.customer})`
+        : d.customers
+          ? `${d.namespace} (listed for ${listNames(d.customers)}, so never searched)`
+          : d.namespace,
+    );
+    const searchable = dataPlanes.filter((d) => !d.customers).length;
+    return {
+      namespaces: [],
+      via: "none",
+      refused: true,
+      matched_by_id: {
+        kind: "data_plane_id_only",
+        id: phrase.toLowerCase(),
+        data_planes: dataPlanes.slice(0, MAX_NAMES),
+        ...(dataPlanes.length > MAX_NAMES ? { data_planes_truncated: dataPlanes.length - MAX_NAMES } : {}),
+      },
+      note:
+        (dataPlanes.length === 1
+          ? `"${phrase}" is the id of data plane ${named[0]}. `
+          : `"${phrase}" is the id of ${dataPlanes.length} data planes: ${listNames(named)}. `) +
+        "Nothing was searched" +
+        (!searchable
+          ? "."
+          : dataPlanes.length === 1
+            ? ": pass the full namespace to search that data plane."
+            : ": pass the full namespace of the one you mean."),
+      ...mapFields(map),
+    };
   }
   return null;
 }
