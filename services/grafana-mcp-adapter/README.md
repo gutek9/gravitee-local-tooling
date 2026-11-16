@@ -373,9 +373,9 @@ they may belong to another customer and are never searched as this one.
 customer's own lists and `matched_by_id`'s included. A count next to each list
 (`<list>_truncated`; `gravitee_cloud_truncated` and `unattributed_truncated`
 for the customers and their unattributed data planes) says how many were left
-out, 0 when none were. A note names at most ten, then "and N more". When Loki
-does not return its namespace list, `namespace_lookup_failed` says hosted
-namespaces and unattributed data planes could not be checked, rather than
+out, 0 when none were. A note names at most ten of any list, then "and N more".
+When Loki does not return its namespace list, `namespace_lookup_failed` says
+hosted namespaces and unattributed data planes could not be checked, rather than
 reporting that none matched, and `namespace_lookup_note` says why. Likewise,
 when the customer map cannot be read, the note says Gravitee Cloud customers
 and ids were not checked (`map_warning` says why), rather than that none

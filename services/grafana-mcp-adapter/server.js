@@ -350,7 +350,7 @@ registerTool(
       .optional()
       .describe(
         "Caps every list in the answer, each customer's own lists and matched_by_id's included. A count " +
-          "next to each list (*_truncated) says how many were left out; a note names at most 10.",
+          "next to each list (*_truncated) says how many were left out; a note names at most 10 of any list.",
       ),
   },
   async ({ query, max_results = 20 }) =>
