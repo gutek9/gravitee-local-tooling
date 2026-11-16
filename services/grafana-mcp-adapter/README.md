@@ -608,9 +608,9 @@ Coverage:
   fallback (a malformed snapshot is none), the unavailable case, caching.
   GitHub is stubbed and the snapshot is a temp file, never a real one.
 - `customerResolver.test.js` — resolving a client through both routes (label and
-  customer map) from given namespace values and map rows, what of that
-  resolution reaches the caller (`customerResponses.js`), and finding which
-  customers a name or an id matches. No network.
+  customer map) or as an id (`idResolution.js`) from given namespace values and
+  map rows, what of that resolution reaches the caller (`customerResponses.js`),
+  and finding which customers a name or an id matches. No network.
 - `scripts/validateCustomerMap.test.js` — the checks behind
   `npm run validate-customers`, including its failure paths: a map with no
   usable row, or no live namespaces, fails instead of passing with nothing
