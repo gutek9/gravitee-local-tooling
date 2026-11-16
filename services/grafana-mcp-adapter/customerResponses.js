@@ -43,10 +43,15 @@ export function mapFields(map) {
   return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined && value !== null));
 }
 
-// At most MAX_NAMES candidates, and how many were left out.
+// A Cloud candidate's own lists (a hosted one has none).
+const CANDIDATE_LISTS = ["control_plane_ids", "envs", "regions"];
+
+// At most MAX_NAMES candidates, and how many were left out; each one's lists
+// at most MAX_NAMES too, with `<list>_truncated` (0 when none were left out),
+// the fields grafana_find_customer gives.
 export function cappedCandidates(candidates = []) {
   return {
-    candidates: candidates.slice(0, MAX_NAMES),
+    candidates: candidates.slice(0, MAX_NAMES).map((c) => cappedLists(c, MAX_NAMES, CANDIDATE_LISTS)),
     ...(candidates.length > MAX_NAMES ? { candidates_truncated: candidates.length - MAX_NAMES } : {}),
   };
 }

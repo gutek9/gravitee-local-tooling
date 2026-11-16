@@ -1103,15 +1103,21 @@ test("grafana_find_customer: max_results reaches each customer's own lists", asy
   });
 });
 
-test("grafana_find_customer: max_results=1 bounds a two-readings note too", async () => {
-  // Regression: with two customers on 100 organizations each, the lists were
-  // capped, but the note named all 200 control planes.
+// Two customers on 100 organizations each, where "acme dev" reads two ways:
+// the customer acme dev (cp8000-cp8099), or acme's dev (cp1000-cp1099).
+function twoReadingsOn100Organizations() {
   const rows = (customer, first, env) =>
     Array.from({ length: 100 }, (_, i) => {
       const cp = `cp${first + i}`;
       return `${customer},${cp},${cp}-dp0001,europe,az,westeurope,None,${env}-org-x.eu-az-westeurope.gateway.gravitee.io\n`;
     }).join("");
-  const csv = `${CUSTOMERS_CSV.split("\n")[0]}\n${rows("acme dev", 8000, "prod")}${rows("acme", 1000, "dev")}`;
+  return `${CUSTOMERS_CSV.split("\n")[0]}\n${rows("acme dev", 8000, "prod")}${rows("acme", 1000, "dev")}`;
+}
+
+test("grafana_find_customer: max_results=1 bounds a two-readings note too", async () => {
+  // Regression: with two customers on 100 organizations each, the lists were
+  // capped, but the note named all 200 control planes.
+  const csv = twoReadingsOn100Organizations();
   await withLokiStub(
     { [NS_VALUES]: [] },
     async () => {
@@ -1124,6 +1130,28 @@ test("grafana_find_customer: max_results=1 bounds a two-readings note too", asyn
       assert.equal(link.note.slice(link.note.lastIndexOf("Pass ")), out.note.slice(out.note.lastIndexOf("Pass ")));
     },
     { csv },
+  );
+});
+
+test("grafana_logs_link: a two-readings refusal names at most ten ids of each candidate", async () => {
+  // Regression: the note named ten ids of each customer, but `candidates` still
+  // carried all 200.
+  await withLokiStub(
+    { [NS_VALUES]: [] },
+    async () => {
+      const out = await callTool("grafana_logs_link", { client: "acme dev" });
+      assert.equal(out.refused, true);
+      assert.deepEqual(
+        out.candidates.map((c) => [c.customer, c.control_plane_ids, c.control_plane_ids_truncated]),
+        [
+          ["acme dev", Array.from({ length: 10 }, (_, i) => `cp${8000 + i}`), 90],
+          ["acme", Array.from({ length: 10 }, (_, i) => `cp${1000 + i}`), 90],
+        ],
+      );
+      // Only the first ten ids of each customer, anywhere in the answer.
+      assert.equal(new Set(JSON.stringify(out).match(/cp\d{4}/g)).size, 20);
+    },
+    { csv: twoReadingsOn100Organizations() },
   );
 });
 
