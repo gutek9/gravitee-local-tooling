@@ -1,28 +1,36 @@
 // Resolving a free-text client to the namespaces holding its logs, for
 // grafana_logs_link, by combining two routes: the namespace label and the
-// customer map. An id typed as client (idResolution.js), which route's matches
-// count (customerScope.js) and the parts its answers are built from
-// (customerResponses.js) each have their own module. resolveClient() decides
-// from data it is given, so it can be unit-tested directly; resolveNamespaces()
-// checks the client and the range, then fetches that data (Loki's namespace
-// values and the customer map) and logs why Loki's list could not be read.
+// customer map. resolveFromRoutes() keeps the decisions and their order; an
+// id typed as client (idResolution.js), which route's matches count
+// (customerScope.js) and the answers to a name (resolutionAnswers.js) each
+// have their own module. resolveClient() decides from data it is given, so it
+// can be unit-tested directly; resolveNamespaces() checks the client and the
+// range, then fetches that data: Loki's namespace values (namespaceList, in
+// lokiDiscovery.js, logs why they could not be read) and the customer map.
 import { matchNamespacesPhrase } from "./namespaceMatch.js";
 import { namespaceList } from "./lokiDiscovery.js";
 import { loadCustomerMap } from "./customerMapLoader.js";
-import { RESTART_HINT } from "./grafanaClient.js";
 import { fromProblem } from "./helpers.js";
 import {
   splitNameAndTail,
   resolveCustomerNamespaces,
   matchCustomers,
   groupByCustomer,
-  listNames,
-  MAX_NAMES,
   isCloudNamespace,
 } from "./customerMatch.js";
-import { deploymentOf, cappedList, mapFields, cappedCandidates, twoReadings } from "./customerResponses.js";
 import { resolveById, resolveDataPlaneId } from "./idResolution.js";
 import { scopeToOneCustomer } from "./customerScope.js";
+import {
+  twoReadingsRefusal,
+  scopeRefusal,
+  sharedDataPlaneRefusal,
+  unknownWordsRefusal,
+  controlPlaneRefusal,
+  ambiguousAnswer,
+  sourcesDownRefusal,
+  nothingFound,
+  resolvedAnswer,
+} from "./resolutionAnswers.js";
 
 // What a map answer set aside contributes.
 const NOTHING = { matched: [], namespaces: [], control_plane_namespaces: [] };
@@ -107,19 +115,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
     if (onId.length === 1) {
       split = onId[0];
     } else if (groupByCustomer(rowsOf(split)).size === 1) {
-      const { whole, other, reads, choice } = twoReadings(map.rows, phrase, split);
-      return {
-        namespaces: [],
-        via: "none",
-        refused: true,
-        ambiguous_customer: true,
-        ...cappedCandidates([whole, other]),
-        note:
-          `${reads} Either could return the other's logs, so nothing was searched. ` +
-          (controlPlaneId ? `control_plane_id "${controlPlaneId}" is on ${onId.length ? "both" : "neither"} of them. ` : "") +
-          choice,
-        ...mapFields(map),
-      };
+      return twoReadingsRefusal({ phrase, split, controlPlaneId, onId, map });
     }
   }
   const scope = scopeToOneCustomer({
@@ -131,15 +127,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
     labelSearched: !found.tail.length && !controlPlaneId,
     bothAnswered: liveNamespacesKnown && map.source !== "unavailable",
   });
-  if (scope.refusal) {
-    return {
-      namespaces: [],
-      via: "none",
-      refused: true,
-      ...scope.refusal,
-      ...mapFields(map),
-    };
-  }
+  if (scope.refusal) return scopeRefusal({ scope, map });
   const label = scope.useLabel ? found : { ...found, namespaces: [] };
   // The label route only counts when it matched every word typed. Namespaces it
   // found by dropping trailing words ignore those words: "acme dev" has no
@@ -159,42 +147,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
   // A data plane the map gives two owners is refused here, before the two
   // routes' answers are combined: hosted namespaces included, since the map is
   // wrong about this customer, and a control_plane_id cannot make it right.
-  if (resolved.shared_data_planes) {
-    return {
-      namespaces: [],
-      via: "none",
-      refused: true,
-      ...cappedList(resolved.shared_data_planes, MAX_NAMES, "shared_data_planes", "shared_data_planes_truncated"),
-      note: resolved.reason,
-      ...mapFields(map),
-    };
-  }
-
-  // Words that narrow neither route are refused, not dropped: both routes found
-  // the customer only by ignoring them, so searching either would return more
-  // than was asked for. What exists is listed so the caller can retry. The
-  // likeliest such word is a component typed into the client ("lumen prod
-  // gateway"), so the note says where it belongs.
-  const componentHint = "If it names a component (gateway, api, ui...), pass it as component instead.";
-  const refuseUnknownWords = () => {
-    const labelPart = label.tail.length && skipped.length
-      ? `"${label.tail.join(" ")}" is in none of the namespaces found for "${label.name}" (${listNames(skipped)}).`
-      : "";
-    return {
-      namespaces: [],
-      via: "none",
-      refused: true,
-      unknown_qualifiers: resolved.unknown_qualifiers || label.tail,
-      ...(resolved.unknown_qualifiers
-        ? { known_environments: resolved.known_environments, known_regions: resolved.known_regions }
-        : {}),
-      ...(skipped.length ? { skipped_namespaces: skipped } : {}),
-      note: resolved.unknown_qualifiers
-        ? [labelPart, resolved.reason, componentHint].filter(Boolean).join(" ")
-        : `${labelPart} Nothing was searched. Retry without it, or with one of those namespaces. ${componentHint}`,
-      ...mapFields(map),
-    };
-  };
+  if (resolved.shared_data_planes) return sharedDataPlaneRefusal({ resolved, map });
 
   // control_plane_id only ever narrows. If it selected nothing from the map —
   // an id that is not this customer's, a customer the map does not have, or a
@@ -202,30 +155,8 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
   // without it: the label route, or the caller's service_name fallback, would
   // return logs the id was meant to exclude.
   if (controlPlaneId && !resolved.namespaces.length) {
-    if (resolved.unknown_qualifiers) return refuseUnknownWords();
-    const note =
-      map.source === "unavailable"
-        ? `control_plane_id "${controlPlaneId}" could not be applied: the customer map could not be read (map_warning says why), ` +
-          `so "${phrase}" could not be looked up in it. Nothing was searched. Retry once the map can be read.`
-        : resolved.reason && resolved.unknown_control_plane
-          ? resolved.reason
-          : resolved.ambiguous
-            ? resolved.same_name
-              ? resolved.reason
-              : `${resolved.reason} control_plane_id "${controlPlaneId}" was not applied to any of them: pass the exact customer name.`
-            : `control_plane_id "${controlPlaneId}" only narrows a Gravitee Cloud customer, and "${phrase}" is not one ` +
-              "in the customer map. Nothing was searched. Drop control_plane_id, or check the name.";
-    return {
-      namespaces: [],
-      via: "none",
-      refused: true,
-      unknown_control_plane: true,
-      requested_control_plane_id: controlPlaneId,
-      control_plane_ids: resolved.control_plane_ids || [],
-      ...(resolved.ambiguous ? { ambiguous_customer: true, ...cappedCandidates(resolved.candidates) } : {}),
-      note,
-      ...mapFields(map),
-    };
+    if (resolved.unknown_qualifiers) return unknownWordsRefusal({ label, skipped, resolved, map });
+    return controlPlaneRefusal({ phrase, controlPlaneId, resolved, map });
   }
 
   // An ambiguous fragment contributes NOTHING from the map rather than merging
@@ -237,22 +168,9 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
   // With no hosted namespace either, the resolution is refused: falling back to
   // a service_name match across all of Loki would search the very fragment the
   // caller was just told was too ambiguous to search.
-  if (resolved.ambiguous) {
-    return {
-      namespaces: byLabel,
-      via: byLabel.length ? "namespace_label" : "none",
-      ...(byLabel.length ? {} : { refused: true }),
-      ambiguous_customer: true,
-      ...cappedCandidates(resolved.candidates),
-      ...(skipped.length ? { skipped_namespaces: skipped } : {}),
-      note: byLabel.length
-        ? `${resolved.reason} Only the namespaces named after "${label.name}" (${listNames(byLabel)}) were searched.`
-        : resolved.reason,
-      ...mapFields(map),
-    };
-  }
+  if (resolved.ambiguous) return ambiguousAnswer({ byLabel, label, skipped, resolved, map });
 
-  if (!namespaces.length && (resolved.unknown_qualifiers || skipped.length)) return refuseUnknownWords();
+  if (!namespaces.length && (resolved.unknown_qualifiers || skipped.length)) return unknownWordsRefusal({ label, skipped, resolved, map });
 
   if (!namespaces.length) {
     // A data plane's own id (`dp0001`) names no customer and no namespace, but
@@ -268,115 +186,21 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
     // another customer's logs. A stale snapshot did answer, and says how old.
     const mapUnavailable = map.source === "unavailable";
     if (!liveNamespacesKnown || mapUnavailable) {
-      const lokiReason = failure ? ` (${failure.reason})` : "";
-      const failed =
-        !liveNamespacesKnown && mapUnavailable
-          ? `Neither Loki's namespace list${lokiReason} nor the customer map could be read, so "${phrase}" could ` +
-            "not be matched to any customer"
-          : !liveNamespacesKnown
-            ? `Loki did not return its namespace list${lokiReason}, so "${phrase}" could not be matched to a ` +
-              "customer's namespaces"
-            : `The customer map could not be read and no hosted namespace is called "${phrase}", so whether it is a ` +
-              "Gravitee Cloud customer cannot be checked";
-      // A Loki failure a retry will not fix says what to check instead. When
-      // the map is down too, its own reason is in map_warning.
-      const lokiWillNotPass = !liveNamespacesKnown && failure && !failure.retryable;
-      const checkLoki =
-        "check GRAFANA_LOGS_DATASOURCE_UID (the datasource's uid, not its display name) and GRAFANA_TOKEN in .env";
-      return {
-        namespaces: [],
-        via: "none",
-        refused: true,
-        note:
-          `${failed}. Nothing was searched: a service_name search alone could return another customer's logs. ` +
-          (lokiWillNotPass
-            ? (mapUnavailable
-                ? `A retry will not fix Loki's part: ${checkLoki}; map_warning says why the map could not be read. `
-                : `A retry will not fix this: ${checkLoki}. `) + RESTART_HINT
-            : !mapUnavailable
-              ? "Retry in a moment."
-              : liveNamespacesKnown
-                ? "Retry once the map can be read (map_warning says why), or pass a data plane's full namespace " +
-                  "(apim-dp-...), which is searched without the map."
-                : "Retry once both can be read (map_warning says why the map could not)."),
-        ...mapFields(map),
-      };
+      return sourcesDownRefusal({ phrase, liveNamespacesKnown, mapUnavailable, failure, map });
     }
-    return {
-      namespaces: [],
-      via: "none",
-      ...mapFields(map),
-    };
+    return nothingFound({ map });
   }
 
-  const via =
-    byLabel.length && resolved.namespaces.length
-      ? "namespace_label+customer_map"
-      : byLabel.length
-        ? "namespace_label"
-        : "customer_map";
-
-  // The map is not complete or eternally fresh: some live data planes are absent
-  // from it, and some customers' mapped ids no longer exist because their
-  // deployment was recreated. A mapped namespace that Loki has never heard of in
-  // this range would otherwise produce a confident "no logs for this customer" —
-  // a false negative dressed as an answer. Flag it instead.
-  const liveNamespaces = new Set(namespaceValues);
-  const absent = liveNamespacesKnown ? resolved.namespaces.filter((n) => !liveNamespaces.has(n)) : [];
-
-  return {
+  return resolvedAnswer({
     namespaces,
-    via,
-    ...(skipped.length
-      ? {
-          skipped_namespaces: skipped,
-          skipped_namespaces_note: label.tail.length
-            ? `Found for "${label.name}" but not for "${label.tail.join(" ")}", so not searched. ` +
-              "Name one of them to search it."
-            : `Found for "${label.name}", but a hosted namespace is on no Cockpit organization, so ` +
-              `control_plane_id "${controlPlaneId}" leaves it out. Drop control_plane_id to search it.`,
-        }
-      : {}),
-    ...(absent.length ? { mapped_namespaces_absent_in_range: absent } : {}),
-    // Names that only contain the one asked for, set aside because another
-    // customer has it as a whole name. Said, so a caller who meant one of them
-    // knows to name it.
-    ...(scope.setAside.length
-      ? {
-          similar_names_not_searched: scope.setAside.slice(0, MAX_NAMES),
-          note:
-            `${listNames(scope.setAside.map((c) => c.customer))} only partly ` +
-            `${scope.setAside.length > 1 ? "match" : "matches"} "${scope.exactName}", ` +
-            `which is another customer's whole name, so ${scope.setAside.length > 1 ? "they were" : "it was"} ` +
-            "not searched. Use the full name to search one.",
-        }
-      : {}),
-    ...(scope.partialName
-      ? {
-          partial_name_match: true,
-          note:
-            `"${scope.asked}" is not a whole customer name: it matches only part of ` +
-            `${scope.partialName}'s ${scope.partialOf}, so it was searched as ${scope.partialName}. ` +
-            "Use the full name if another customer was meant.",
-        }
-      : {}),
-    // Reported even when only the namespace label answered: a customer can be
-    // hosted and on Cloud at once, so with an unavailable or stale map this
-    // result may be missing its Cloud deployments, and the caller must know.
-    ...mapFields(map),
-    label_namespaces: byLabel,
-    matched_deployments: resolved.matched.map(deploymentOf),
-    env_filter_applied: resolved.env_filter_applied,
-    control_plane_ids: resolved.control_plane_ids,
-    ...(resolved.spans_multiple_organizations
-      ? { spans_multiple_organizations: true, organizations_note: resolved.organizations_note }
-      : {}),
-    // Control-plane namespaces are SHARED by every customer on that control
-    // plane, so they are never searched implicitly under one customer's name.
-    // Reported so the caller knows they exist and can ask for them explicitly.
-    // A trial's own control plane is not among them: it is searched, and the
-    // flag says why a control-plane namespace is in the answer.
-    shared_control_plane_namespaces: resolved.control_plane_namespaces,
-    ...(resolved.control_plane_is_single_tenant ? { control_plane_is_single_tenant: true } : {}),
-  };
+    byLabel,
+    skipped,
+    label,
+    resolved,
+    scope,
+    controlPlaneId,
+    namespaceValues,
+    liveNamespacesKnown,
+    map,
+  });
 }
