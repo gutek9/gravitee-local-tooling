@@ -1117,6 +1117,26 @@ test("findCustomerMatches: a phrase that reads as two customers gives the choice
   assert.equal(choiceIn(one.note), "Pass the full id of the data plane you mean.");
 });
 
+test("findCustomerMatches: a two-readings note names at most ten organizations of each customer", () => {
+  // Regression: the note named every control plane of both customers, so
+  // max_results capped the answer's lists but not its note.
+  const rows = (customer, prefix, env) =>
+    Array.from({ length: 12 }, (_, i) => {
+      const cp = `${prefix}${10 + i}`;
+      return `${customer},${cp},${cp}-dp0001,europe,az,westeurope,None,${env}-org-x.eu-az-westeurope.gateway.gravitee.io\n`;
+    }).join("");
+  const csv = `${CUSTOMERS_CSV.split("\n")[0]}\n${rows("acme dev", "cq", "prod")}${rows("acme", "cp", "dev")}`;
+  const map = { ...MAP, rows: parseCustomerCsv(csv).rows };
+  const out = findCustomerMatches({ query: "acme dev", map, maxResults: 1 });
+  assert.equal(
+    choiceIn(out.note),
+    "Pass control_plane_id to choose (acme dev: cq10, cq11, cq12, cq13, cq14, cq15, cq16, cq17, cq18, cq19 and 2 more; " +
+      "acme: cp10, cp11, cp12, cp13, cp14, cp15, cp16, cp17, cp18, cp19 and 2 more), or the full id of a data plane.",
+  );
+  // grafana_logs_link refuses the name with the same choice.
+  assert.equal(choiceIn(resolveClient({ phrase: "acme dev", namespaceValues: [], map }).note), choiceIn(out.note));
+});
+
 // Customers "acme dev" and "acme-dev": every spelling of the name is both.
 const SAME_NAME_ROWS =
   ACME_DEV_ROW + "acme-dev,cp9999,cp9999-dp0001,europe,az,westeurope,None,prod-org-acme-dev.eu-az-westeurope.gateway.gravitee.io\n";

@@ -436,7 +436,8 @@ function resolveById({ phrase, controlPlaneId, namespaceValues, liveNamespacesKn
 // words describing its deployments ("acme dev": the customer acme dev, or
 // acme's dev), and how to pick one: control_plane_id when the two are on
 // different organizations, else a data plane's full id. The same text for
-// grafana_logs_link's refusal and grafana_find_customer's note.
+// grafana_logs_link's refusal and grafana_find_customer's note. A customer can
+// be on many organizations, so at most ten of each customer's ids are named.
 function twoReadings(rows, phrase, split) {
   const [whole, other] = [split.core, split.also.core].map((core) => describeCustomer(matchCustomers(rows, core)));
   const sharedOrg = whole.control_plane_ids.some((id) => other.control_plane_ids.includes(id));
@@ -448,8 +449,8 @@ function twoReadings(rows, phrase, split) {
       `deployments described by "${split.also.tail.join(" ")}".`,
     choice: sharedOrg
       ? "Pass the full id of the data plane you mean."
-      : `Pass control_plane_id to choose (${whole.customer}: ${whole.control_plane_ids.join(", ")}; ` +
-        `${other.customer}: ${other.control_plane_ids.join(", ")}), or the full id of a data plane.`,
+      : `Pass control_plane_id to choose (${whole.customer}: ${listNames(whole.control_plane_ids)}; ` +
+        `${other.customer}: ${listNames(other.control_plane_ids)}), or the full id of a data plane.`,
   };
 }
 
@@ -938,7 +939,8 @@ export function findCustomerMatches({ query, map, namespaceValues: givenValues =
 
   // max_results caps every list, each with how many were left out: a customer
   // with many deployments or a control plane with many customers must not make
-  // the answer unbounded. The notes below read the whole lists.
+  // the answer unbounded. The notes below read the whole lists, but name at
+  // most ten of any list (listNames), so they stay bounded too.
   const customers = cappedList(cockpit, maxResults, "gravitee_cloud_customers", "gravitee_cloud_truncated");
   customers.gravitee_cloud_customers = customers.gravitee_cloud_customers.map((entry) =>
     cappedLists(entry, maxResults, CUSTOMER_LISTS),

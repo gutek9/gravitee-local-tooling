@@ -1081,6 +1081,30 @@ test("grafana_find_customer: max_results reaches each customer's own lists", asy
   });
 });
 
+test("grafana_find_customer: max_results=1 bounds a two-readings note too", async () => {
+  // Regression: with two customers on 100 organizations each, the lists were
+  // capped, but the note named all 200 control planes.
+  const rows = (customer, first, env) =>
+    Array.from({ length: 100 }, (_, i) => {
+      const cp = `cp${first + i}`;
+      return `${customer},${cp},${cp}-dp0001,europe,az,westeurope,None,${env}-org-x.eu-az-westeurope.gateway.gravitee.io\n`;
+    }).join("");
+  const csv = `${CUSTOMERS_CSV.split("\n")[0]}\n${rows("acme dev", 8000, "prod")}${rows("acme", 1000, "dev")}`;
+  await withLokiStub(
+    { [NS_VALUES]: [] },
+    async () => {
+      const out = await callTool("grafana_find_customer", { query: "acme dev", max_results: 1 });
+      assert.match(out.note, /\(acme dev: cp8000, [^;]*, cp8009 and 90 more; acme: cp1000, [^)]*, cp1009 and 90 more\)/);
+      // Only the first ten ids of each customer, anywhere in the answer.
+      assert.equal(new Set(JSON.stringify(out).match(/cp\d{4}/g)).size, 20);
+      // grafana_logs_link refuses the name with the same bounded choice.
+      const link = await callTool("grafana_logs_link", { client: "acme dev" });
+      assert.equal(link.note.slice(link.note.lastIndexOf("Pass ")), out.note.slice(out.note.lastIndexOf("Pass ")));
+    },
+    { csv },
+  );
+});
+
 test("grafana_find_customer: an unmapped data plane on the customer's control plane is reported, not claimed", async () => {
   // dp9999 is live on acme's control plane but the map does not attribute it.
   // A control plane is shared, so it may be someone else's: reported apart,
