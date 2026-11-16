@@ -256,6 +256,18 @@ test("tool schemas: grafana_logs_link refuses a from Loki would refuse, before t
   assert.equal(logs.safeParse({ client: "acme" }).data.from, "now-1h");
 });
 
+test("tool schemas: grafana_logs_link takes a from exactly 30 days back at a clock that refused it", (t) => {
+  // Regression: at this clock now-30d was refused as more than 30 days back,
+  // because the start went through a Number in ns, which cannot hold it
+  // exactly. With the real clock it failed about 1 run in 8.
+  const now = 1_794_590_000_002;
+  t.mock.method(Date, "now", () => now);
+  const logs = toolInputSchemas.grafana_logs_link;
+  for (const from of ["now-30d", "now-720h", String(now - 30 * 86_400_000)]) {
+    assert.equal(logs.safeParse({ client: "acme", from }).success, true, from);
+  }
+});
+
 test("startup: an enabled adapter warms the customer map from GitHub", async () => {
   // The control for server.disabled.test.js: the same check sees the request
   // when Grafana is enabled, so "no request" there is not an artefact.
@@ -302,6 +314,23 @@ test("grafana_logs_link: a from Loki would refuse that reaches the handler asks 
     }
     assert.deepEqual(calls, []);
   });
+});
+
+test("grafana_logs_link: a from exactly 30 days back reaches Loki at a clock that refused it", async (t) => {
+  // Called directly the schema is skipped and resolveNamespaces checks the
+  // range again. Regression: at this clock it refused now-30d before asking
+  // Loki.
+  const now = 1_794_590_000_002;
+  t.mock.method(Date, "now", () => now);
+  await withLokiStub(
+    { [NS_VALUES]: ["kestrel-prod"], [SERIES]: [stream("kestrel-prod", "graviteeio-apim-kestrel-prod-gateway")] },
+    async (calls) => {
+      const out = await callTool("grafana_logs_link", { client: "kestrel", from: "now-30d" });
+      assert.deepEqual(out.resolved_namespaces, ["kestrel-prod"]);
+      const lookup = new URL(calls.find((u) => u.includes(NS_VALUES)));
+      assert.equal(lookup.searchParams.get("start"), `${now - 30 * 86_400_000}000000`);
+    },
+  );
 });
 
 test("grafana_logs_link: a word no namespace carries is refused, listing the namespaces that exist", async () => {

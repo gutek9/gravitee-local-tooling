@@ -308,9 +308,11 @@ export const LOKI_MAX_DAYS_BACK = 30;
 // Why Loki would refuse a range from `from` to now, or null. Checked before any
 // request: Grafana answers a datasource uid that is not one (a display name
 // with spaces) with HTTP 400 too, so the status alone cannot say which was
-// wrong. An unreadable `from` passes: toLokiNs reads it as an hour ago.
+// wrong. An unreadable `from` passes: it is read as an hour ago. Compared in
+// ms: a date in ns does not fit a Number exactly, so read back from ns a start
+// exactly 30 days back can land just before the cutoff.
 export function fromProblem(from, now = Date.now()) {
-  const startMs = Number(toLokiNs(from, 60 * 60, now)) / 1e6;
+  const startMs = toEpochMs(from, 60 * 60, now);
   if (startMs > now) return `from must not be later than now, got ${JSON.stringify(from)}`;
   if (startMs < now - LOKI_MAX_DAYS_BACK * 864e5) {
     return (

@@ -501,6 +501,21 @@ test("fromProblem: a start later than now or more than 30 days ago is refused", 
   assert.equal(fromProblem(String(NOW + 1), NOW), `from must not be later than now, got "${NOW + 1}"`);
 });
 
+test("fromProblem: exactly 30 days back passes and 1 ms more is refused, at 1,024 clocks in a row", () => {
+  // Regression: the start went to ns and back through a Number, which cannot
+  // hold it exactly, so at 1 clock value in 8 a start exactly 30 days back
+  // read as slightly earlier and was refused (now-30d at 1794590000002).
+  const base = 1_794_590_000_000;
+  for (let now = base; now < base + 1024; now++) {
+    const cutoff = now - 30 * 86_400_000;
+    for (const from of ["now-30d", "now-720h", String(cutoff)]) {
+      assert.equal(fromProblem(from, now), null, `${from} at ${now}`);
+    }
+    const oneMsMore = String(cutoff - 1);
+    assert.match(fromProblem(oneMsMore, now), /^from must be within the last 30 days/, `${oneMsMore} at ${now}`);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // editDistance
 // ---------------------------------------------------------------------------
