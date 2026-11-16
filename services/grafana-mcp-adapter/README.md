@@ -611,7 +611,7 @@ Coverage:
   customer map), which of their matches count (`customerScope.js`), or as an id
   (`idResolution.js`), from given namespace values and map rows; what of that
   resolution reaches the caller (`customerResponses.js`); and finding which
-  customers a name or an id matches. No network.
+  customers a name or an id matches (`customerSearch.js`). No network.
 - `scripts/validateCustomerMap.test.js` — the checks behind
   `npm run validate-customers`, including its failure paths: a map with no
   usable row, or no live namespaces, fails instead of passing with nothing

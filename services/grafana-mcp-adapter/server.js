@@ -20,8 +20,9 @@ import {
 import { fetchMatchingStreams } from "./lokiDiscovery.js";
 import { linksForStreams, explainNoStreams } from "./logsLinks.js";
 import { warmCustomerMap } from "./customerMapLoader.js";
-import { resolveNamespaces, findCustomer } from "./customerResolver.js";
+import { resolveNamespaces } from "./customerResolver.js";
 import { resolutionReport } from "./customerResponses.js";
+import { findCustomer } from "./customerSearch.js";
 
 // Loki datasource uid for the logs tools. Required — deliberately NOT defaulted:
 // a uid that is correct for one Grafana org is a silent, plausible failure in
