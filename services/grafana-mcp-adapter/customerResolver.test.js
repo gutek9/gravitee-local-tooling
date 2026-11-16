@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { parseCustomerCsv } from "./customerCsv.js";
-import { resolveClient, resolutionReport, findCustomerMatches, describeLookupFailure } from "./customerResolver.js";
+import { resolveClient, findCustomerMatches, describeLookupFailure } from "./customerResolver.js";
+import { resolutionReport } from "./customerResponses.js";
 
 // Made-up Gravitee Cloud customers, with the real CSV header (same names as
 // server.test.js, plus one customer on two organizations).
