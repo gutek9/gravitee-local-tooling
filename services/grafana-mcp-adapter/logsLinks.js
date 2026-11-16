@@ -3,6 +3,7 @@
 // pure; only the service_name suggestions for an empty result ask Loki.
 import { buildExploreUrl, buildDrilldownUrl, buildExactLogsQuery } from "./helpers.js";
 import { suggestClients } from "./lokiDiscovery.js";
+import { listNames } from "./customerMatch.js";
 
 // The links for the streams /series matched.
 //
@@ -55,7 +56,7 @@ export async function explainNoStreams({ namespaces = [], absentNamespaces = [],
   if (absentNamespaces.length) {
     return {
       note:
-        `No log streams matched, and ${absentNamespaces.length} of the mapped namespace(s) (${absentNamespaces.join(", ")}) do not ` +
+        `No log streams matched, and ${absentNamespaces.length} of the mapped namespace(s) (${listNames(absentNamespaces)}) do not ` +
         "appear in Loki for this range at all. That usually means the customer map is stale — the deployment was " +
         "recreated under a new id — rather than that the customer has no logs. Check grafana_find_customer, or " +
         "widen from/to in case the deployment is simply dormant.",
@@ -63,7 +64,7 @@ export async function explainNoStreams({ namespaces = [], absentNamespaces = [],
   }
   if (namespaces.length) {
     return {
-      note: `No log streams in this range for namespace(s) ${namespaces.join(", ")}. Try widening from/to or relaxing component/env.`,
+      note: `No log streams in this range for namespace(s) ${listNames(namespaces)}. Try widening from/to or relaxing component/env.`,
     };
   }
   const suggestions = await suggestClients(datasourceUid, client, { from });

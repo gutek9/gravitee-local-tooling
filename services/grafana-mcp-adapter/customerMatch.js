@@ -347,7 +347,7 @@ export function resolveCustomerNamespaces(rows = [], { core, qualifiers = [], co
       known_regions: knownRegions,
       reason:
         `"${quals.join(" ")}" does not describe any deployment of ${matched[0].customer} ` +
-        `(environments: ${knownEnvironments.join(", ") || "none listed"}; regions: ${knownRegions.join(", ") || "none listed"}). ` +
+        `(environments: ${listNames(knownEnvironments) || "none listed"}; regions: ${listNames(knownRegions) || "none listed"}). ` +
         "Nothing was searched. Retry without it, or with one of those.",
     };
   }
@@ -372,9 +372,9 @@ export function resolveCustomerNamespaces(rows = [], { core, qualifiers = [], co
       reason: ownsIt
         ? `"${controlPlaneId}" is one of ${matched[0].customer}'s Cockpit organizations, but none of the ` +
           `deployments matching "${quals.join(" ")}" is on it ` +
-          `(those are on: ${valid.join(", ")}). Nothing was searched.`
+          `(those are on: ${listNames(valid)}). Nothing was searched.`
         : `"${controlPlaneId}" is not one of ${matched[0].customer}'s Cockpit organizations ` +
-          `(${valid.join(", ")}). Nothing was searched.`,
+          `(${listNames(valid)}). Nothing was searched.`,
     };
   }
   const finalRows = cpFiltered;
@@ -394,7 +394,7 @@ export function resolveCustomerNamespaces(rows = [], { core, qualifiers = [], co
       control_plane_namespaces: [],
       shared_data_planes: shared.map((r) => ({ data_plane_id: r.data_plane_id, customers: ownersOf(r) })),
       reason:
-        `The customer map lists ${listNames(shared.map((r) => `${r.data_plane_id} (${ownersOf(r).join(", ")})`))} ` +
+        `The customer map lists ${listNames(shared.map((r) => `${r.data_plane_id} (${listNames(ownersOf(r))})`))} ` +
         `under more than one customer, so whose logs ${shared.length > 1 ? "they hold" : "it holds"} cannot be said. ` +
         "Nothing was searched." +
         (others.length ? ` ${matched[0].customer}'s other data planes can be searched by id: ${listNames(others)}.` : ""),
@@ -421,7 +421,7 @@ export function resolveCustomerNamespaces(rows = [], { core, qualifiers = [], co
           spans_multiple_organizations: true,
           organizations_note:
             `"${core}" resolves to ${namespaces.length} deployments across ${orgs.length} separate Cockpit ` +
-            `organizations (control planes: ${orgs.join(", ")}). They share a name but are distinct tenants. ` +
+            `organizations (control planes: ${listNames(orgs)}). They share a name but are distinct tenants. ` +
             "Pass control_plane_id, or add an env word, to narrow to one.",
         }
       : {}),
