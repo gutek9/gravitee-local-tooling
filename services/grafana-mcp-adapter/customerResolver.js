@@ -19,10 +19,9 @@ import {
   listNames,
   MAX_NAMES,
   isCloudNamespace,
-  dataPlanesWithId,
 } from "./customerMatch.js";
 import { deploymentOf, cappedList, mapFields, cappedCandidates, twoReadings } from "./customerResponses.js";
-import { resolveById } from "./idResolution.js";
+import { resolveById, resolveDataPlaneId } from "./idResolution.js";
 import { scopeToOneCustomer } from "./customerScope.js";
 
 // What a map answer set aside contributes.
@@ -260,41 +259,8 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
     // Cloud service names carry it, so the service_name search would reach that
     // data plane (or several sharing the id) without saying whose. Checked only
     // now, so a customer actually called like that is still found by name.
-    const dataPlanes = dataPlanesWithId(map.rows, namespaceValues, phrase);
-    if (dataPlanes.length) {
-      // One the map lists under several customers is never searched, so it is
-      // named as such rather than offered as a full namespace to pass.
-      const named = dataPlanes.map((d) =>
-        d.customer
-          ? `${d.namespace} (${d.customer})`
-          : d.customers
-            ? `${d.namespace} (listed for ${listNames(d.customers)}, so never searched)`
-            : d.namespace,
-      );
-      const searchable = dataPlanes.filter((d) => !d.customers).length;
-      return {
-        namespaces: [],
-        via: "none",
-        refused: true,
-        matched_by_id: {
-          kind: "data_plane_id_only",
-          id: phrase.toLowerCase(),
-          data_planes: dataPlanes.slice(0, MAX_NAMES),
-          ...(dataPlanes.length > MAX_NAMES ? { data_planes_truncated: dataPlanes.length - MAX_NAMES } : {}),
-        },
-        note:
-          (dataPlanes.length === 1
-            ? `"${phrase}" is the id of data plane ${named[0]}. `
-            : `"${phrase}" is the id of ${dataPlanes.length} data planes: ${listNames(named)}. `) +
-          "Nothing was searched" +
-          (!searchable
-            ? "."
-            : dataPlanes.length === 1
-              ? ": pass the full namespace to search that data plane."
-              : ": pass the full namespace of the one you mean."),
-        ...mapFields(map),
-      };
-    }
+    const byDataPlaneId = resolveDataPlaneId({ phrase, namespaceValues, map });
+    if (byDataPlaneId) return byDataPlaneId;
     // The service_name search is the last resort for a customer with no
     // namespace of its own (one living in a shared `prod`), and only once both
     // sources answered: with Loki's namespace list or the map missing, finding
