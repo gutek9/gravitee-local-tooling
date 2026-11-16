@@ -278,20 +278,25 @@ export function buildDrilldownUrl({ namespace, serviceNames = [], datasourceUid,
   return `${BASE_URL}/a/grafana-lokiexplore-app/explore/namespace/${encodeURIComponent(namespace)}/logs?${p.toString()}`;
 }
 
-// Resolve Grafana-style relative ranges ("now-15m") to ns epoch for Loki's
-// query_range. Absolute epoch-ms strings/numbers pass through. Loki wants ns.
-export function toLokiNs(value, fallbackSecondsAgo, now = Date.now()) {
-  if (value === undefined || value === null || value === "") return `${(now - fallbackSecondsAgo * 1000) * 1e6}`;
+// Resolve Grafana-style relative ranges ("now-15m") to epoch ms. Absolute
+// epoch-ms strings/numbers pass through.
+export function toEpochMs(value, fallbackSecondsAgo, now = Date.now()) {
+  if (value === undefined || value === null || value === "") return now - fallbackSecondsAgo * 1000;
   const m = /^now(?:-(\d+)([smhd]))?$/.exec(String(value).trim());
   if (m) {
-    if (!m[1]) return `${now * 1e6}`;
+    if (!m[1]) return now;
     const n = Number(m[1]);
     const unit = { s: 1e3, m: 6e4, h: 36e5, d: 864e5 }[m[2]];
-    return `${(now - n * unit) * 1e6}`;
+    return now - n * unit;
   }
   // Assume epoch ms.
   const ms = Number(value);
-  return Number.isFinite(ms) ? `${ms * 1e6}` : `${(now - fallbackSecondsAgo * 1000) * 1e6}`;
+  return Number.isFinite(ms) ? ms : now - fallbackSecondsAgo * 1000;
+}
+
+// The same instant in ns epoch, as Loki's query_range takes it.
+export function toLokiNs(value, fallbackSecondsAgo, now = Date.now()) {
+  return `${toEpochMs(value, fallbackSecondsAgo, now) * 1e6}`;
 }
 
 // How far back Loki answers: it refuses a request whose range is longer than
