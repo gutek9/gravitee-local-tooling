@@ -1137,6 +1137,39 @@ test("findCustomerMatches: a two-readings note names at most ten organizations o
   assert.equal(choiceIn(resolveClient({ phrase: "acme dev", namespaceValues: [], map }).note), choiceIn(out.note));
 });
 
+// A text naming a list of more than ten: its first ten, how many more, and
+// none past them.
+function assertNamesFirstTen(text, list) {
+  assert.ok(list.length > 10, `only ${list.length} items`);
+  assert.ok(text.includes(`${list.slice(0, 10).join(", ")} and ${list.length - 10} more`), text);
+  for (const item of list.slice(10)) assert.ok(!text.includes(item), `${item} named in: ${text}`);
+}
+
+test("resolveClient: a refusal names at most ten items of any list", () => {
+  // Regression: these notes named every namespace or owner, however many.
+  const header = `${CUSTOMERS_CSV.split("\n")[0]}\n`;
+  const row = (customer, dp) =>
+    `${customer},cp1111,${dp},europe,az,westeurope,None,prod-org-x.eu-az-westeurope.gateway.gravitee.io\n`;
+  // A data plane's own id, the map listing that data plane under 12 customers.
+  const owners = Array.from({ length: 12 }, (_, i) => row(`ow${1000 + i}`, "cp1111-dp0001")).join("");
+  const sharedMap = { ...MAP, rows: parseCustomerCsv(header + owners).rows };
+  const byOwnId = resolveClient({ phrase: "dp0001", namespaceValues: ["apim-dp-cp1111-dp0001"], map: sharedMap });
+  assertNamesFirstTen(byOwnId.note, byOwnId.matched_by_id.data_planes[0].customers);
+
+  // 12 hosted namespaces named after zeta.
+  const zeta = Array.from({ length: 12 }, (_, i) => `zeta-ns${1000 + i}`);
+  const unknownWord = resolveClient({ phrase: "zeta staging", namespaceValues: zeta, map: MAP });
+  assertNamesFirstTen(unknownWord.note, unknownWord.skipped_namespaces);
+  // Searched by name, while the map's matches for the fragment are ambiguous.
+  const twoCloud = {
+    ...MAP,
+    rows: parseCustomerCsv(header + row("zetaone", "cp1111-dp0001") + row("zetatwo", "cp1111-dp0002")).rows,
+  };
+  const searched = resolveClient({ phrase: "zeta", namespaceValues: zeta, map: twoCloud });
+  assert.deepEqual(searched.namespaces, zeta);
+  assertNamesFirstTen(searched.note, searched.namespaces);
+});
+
 // Customers "acme dev" and "acme-dev": every spelling of the name is both.
 const SAME_NAME_ROWS =
   ACME_DEV_ROW + "acme-dev,cp9999,cp9999-dp0001,europe,az,westeurope,None,prod-org-acme-dev.eu-az-westeurope.gateway.gravitee.io\n";

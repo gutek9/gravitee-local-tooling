@@ -555,7 +555,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
   const componentHint = "If it names a component (gateway, api, ui...), pass it as component instead.";
   const refuseUnknownWords = () => {
     const labelPart = label.tail.length && skipped.length
-      ? `"${label.tail.join(" ")}" is in none of the namespaces found for "${label.name}" (${skipped.join(", ")}).`
+      ? `"${label.tail.join(" ")}" is in none of the namespaces found for "${label.name}" (${listNames(skipped)}).`
       : "";
     return {
       namespaces: [],
@@ -623,7 +623,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
       ...cappedCandidates(resolved.candidates),
       ...(skipped.length ? { skipped_namespaces: skipped } : {}),
       note: byLabel.length
-        ? `${resolved.reason} Only the namespaces named after "${label.name}" (${byLabel.join(", ")}) were searched.`
+        ? `${resolved.reason} Only the namespaces named after "${label.name}" (${listNames(byLabel)}) were searched.`
         : resolved.reason,
       ...mapFields(map),
     };
@@ -644,7 +644,7 @@ function resolveFromRoutes({ phrase, controlPlaneId, namespaceValues, liveNamesp
         d.customer
           ? `${d.namespace} (${d.customer})`
           : d.customers
-            ? `${d.namespace} (listed for ${d.customers.join(", ")}, so never searched)`
+            ? `${d.namespace} (listed for ${listNames(d.customers)}, so never searched)`
             : d.namespace,
       );
       const searchable = dataPlanes.filter((d) => !d.customers).length;

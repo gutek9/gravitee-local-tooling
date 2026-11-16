@@ -87,3 +87,13 @@ test("explainNoStreams: resolved namespaces mean a quiet range, and Loki is not 
     globalThis.fetch = origFetch;
   }
 });
+
+test("explainNoStreams: a note names at most ten namespaces, then how many more", async () => {
+  // Regression: both notes named every namespace, however many.
+  const namespaces = Array.from({ length: 12 }, (_, i) => `apim-dp-cp1111-dp${1000 + i}`);
+  const firstTen = `${namespaces.slice(0, 10).join(", ")} and 2 more`;
+  const absent = await explainNoStreams({ ...RANGE, namespaces, absentNamespaces: namespaces, client: "acme" });
+  assert.ok(absent.note.includes(`12 of the mapped namespace(s) (${firstTen}) do not appear`), absent.note);
+  const quiet = await explainNoStreams({ ...RANGE, namespaces, client: "acme" });
+  assert.ok(quiet.note.includes(`for namespace(s) ${firstTen}. Try`), quiet.note);
+});

@@ -429,6 +429,47 @@ test("resolveCustomerNamespaces: an environment and a region narrow together", (
   assert.deepEqual(out.unknown_qualifiers, ["prod", "europe"]);
 });
 
+// A text naming a list of more than ten: its first ten, how many more, and
+// none past them.
+function assertNamesFirstTen(text, list) {
+  assert.ok(list.length > 10, `only ${list.length} items`);
+  assert.ok(text.includes(`${list.slice(0, 10).join(", ")} and ${list.length - 10} more`), text);
+  for (const item of list.slice(10)) assert.ok(!text.includes(item), `${item} named in: ${text}`);
+}
+
+test("resolveCustomerNamespaces: a reason names at most ten items of any list", () => {
+  // Regression: these reasons named every organization, environment, region or
+  // owner the map had for the customer.
+  const row = (customer, cp, { env = "prod", region = "europe", provider = "az" } = {}) =>
+    `${customer},${cp},${cp}-dp0001,${region},${provider},westeurope,None,${env}-org-x.eu-az-westeurope.gateway.gravitee.io\n`;
+  const header = `${CSV.split("\n")[0]}\n`;
+  const twelve = (f) => Array.from({ length: 12 }, (_, i) => f(1000 + i)).join("");
+  // acme on 12 organizations on az, each with its own environment and region,
+  // and on one more, on aws.
+  const rows = parseCustomerCsv(
+    header +
+      twelve((n) => row("acme", `cp${n}`, { env: `en${n}`, region: `re${n}` })) +
+      row("acme", "cz0001", { provider: "aws" }),
+  ).rows;
+
+  const all = resolveCustomerNamespaces(rows, { core: "acme" });
+  assertNamesFirstTen(all.organizations_note, all.control_plane_ids);
+  const notAcmes = resolveCustomerNamespaces(rows, { core: "acme", controlPlaneId: "cz9999" });
+  assertNamesFirstTen(notAcmes.reason, notAcmes.control_plane_ids);
+  const notOnIt = resolveCustomerNamespaces(rows, { core: "acme", qualifiers: ["az"], controlPlaneId: "cz0001" });
+  assert.match(notOnIt.reason, /those are on: /);
+  assertNamesFirstTen(notOnIt.reason, notOnIt.control_plane_ids);
+  const unknownWord = resolveCustomerNamespaces(rows, { core: "acme", qualifiers: ["staging"] });
+  assertNamesFirstTen(unknownWord.reason, unknownWord.known_environments);
+  assertNamesFirstTen(unknownWord.reason, unknownWord.known_regions);
+
+  // One data plane the map lists under acme and 11 others.
+  const others = twelve((n) => (n < 1011 ? row(`ow${n}`, "cp1111") : ""));
+  const shared = parseCustomerCsv(header + row("acme", "cp1111") + others).rows;
+  const out = resolveCustomerNamespaces(shared, { core: "acme" });
+  assertNamesFirstTen(out.reason, out.shared_data_planes[0].customers);
+});
+
 test("isCloudNamespace: data and control planes, in any case, and nothing else", () => {
   for (const n of ["apim-dp-cp1111-dp0001", "apim-cp-cp1111", "APIM-DP-cp1111-dp0001", "apim-dp-trial-tt0001-dp0011"]) {
     assert.equal(isCloudNamespace(n), true, n);
