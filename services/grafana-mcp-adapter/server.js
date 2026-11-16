@@ -236,7 +236,10 @@ registerTool(
         if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
       })
       .default("now-1h")
-      .describe(`Range start, e.g. 'now-1h', 'now-6h', or epoch ms. At most ${LOKI_MAX_DAYS_BACK} days back ('now-${LOKI_MAX_DAYS_BACK}d').`),
+      .describe(
+        `Range start: 'now', 'now-<n>' followed by s, m, h or d (e.g. 'now-6h'), or epoch ms. ` +
+          `At most ${LOKI_MAX_DAYS_BACK} days back ('now-${LOKI_MAX_DAYS_BACK}d').`,
+      ),
     to: z.string().default("now").describe("Range end, e.g. 'now' or epoch ms."),
   },
   async ({ client, component, line_filter, link_style = "drilldown", control_plane_id, from = "now-1h", to = "now" }) =>

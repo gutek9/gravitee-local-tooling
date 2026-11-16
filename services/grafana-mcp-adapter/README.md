@@ -81,8 +81,9 @@ close `service_name` values as `suggestions`, so typos like `kestrl → kestrel`
 surface. They come from outside Gravitee Cloud namespaces only, like the search
 itself. A blank `client` is refused: with nothing to narrow by, it would match
 every stream in Loki. So is a `from` later than now or more than 30 days ago,
-before Loki is asked: Loki refuses a longer range. A note names at most ten of
-any list, then "and N more".
+before Loki is asked: Loki refuses a longer range. `from` takes `now`,
+`now-<n>` followed by `s`, `m`, `h` or `d`, or epoch ms; any other `from` is
+refused too. A note names at most ten of any list, then "and N more".
 
 The response also says how the customer was found:
 

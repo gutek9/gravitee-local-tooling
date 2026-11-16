@@ -256,6 +256,17 @@ test("tool schemas: grafana_logs_link refuses a from Loki would refuse, before t
   assert.equal(logs.safeParse({ client: "acme" }).data.from, "now-1h");
 });
 
+test("tool schemas: grafana_logs_link refuses a from it cannot read, before the handler runs", () => {
+  // Regression: now-9w passed: Loki was asked about the last hour, while the
+  // link handed Grafana nine weeks.
+  const logs = toolInputSchemas.grafana_logs_link;
+  for (const from of ["now-9w", "now-2M", "now-1y", "garbage", ""]) {
+    const out = logs.safeParse({ client: "acme", from });
+    assert.equal(out.success, false, from);
+    assert.match(out.error.issues[0].message, /^from must be 'now', /, from);
+  }
+});
+
 test("tool schemas: grafana_logs_link takes a from exactly 30 days back at a clock that refused it", (t) => {
   // Regression: at this clock now-30d was refused as more than 30 days back,
   // because the start went through a Number in ns, which cannot hold it
@@ -311,6 +322,17 @@ test("grafana_logs_link: a from Loki would refuse that reaches the handler asks 
   await withLokiStub({ [NS_VALUES]: ["kestrel-prod"] }, async (calls) => {
     for (const from of ["now-60d", String(Date.now() + 3_600_000)]) {
       await assert.rejects(tools.grafana_logs_link({ client: "kestrel", from }, {}), /from must /);
+    }
+    assert.deepEqual(calls, []);
+  });
+});
+
+test("grafana_logs_link: a from it cannot read that reaches the handler asks Loki nothing", async () => {
+  // Called directly the schema is skipped. Regression: now-9w asked Loki about
+  // the last hour, while the link handed Grafana nine weeks.
+  await withLokiStub({ [NS_VALUES]: ["kestrel-prod"] }, async (calls) => {
+    for (const from of ["now-9w", ""]) {
+      await assert.rejects(tools.grafana_logs_link({ client: "kestrel", from }, {}), /from must be 'now', /);
     }
     assert.deepEqual(calls, []);
   });

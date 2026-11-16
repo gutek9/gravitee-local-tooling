@@ -278,10 +278,10 @@ export function buildDrilldownUrl({ namespace, serviceNames = [], datasourceUid,
   return `${BASE_URL}/a/grafana-lokiexplore-app/explore/namespace/${encodeURIComponent(namespace)}/logs?${p.toString()}`;
 }
 
-// Resolve Grafana-style relative ranges ("now-15m") to epoch ms. Absolute
-// epoch-ms strings/numbers pass through.
-export function toEpochMs(value, fallbackSecondsAgo, now = Date.now()) {
-  if (value === undefined || value === null || value === "") return now - fallbackSecondsAgo * 1000;
+// The instant `value` names, in epoch ms: Grafana-style "now" or "now-<n>" in
+// s, m, h or d, or epoch ms. Null when it names none of them, except that
+// Number() reads null and a blank string as 0, the epoch.
+function readEpochMs(value, now) {
   const m = /^now(?:-(\d+)([smhd]))?$/.exec(String(value).trim());
   if (m) {
     if (!m[1]) return now;
@@ -291,7 +291,14 @@ export function toEpochMs(value, fallbackSecondsAgo, now = Date.now()) {
   }
   // Assume epoch ms.
   const ms = Number(value);
-  return Number.isFinite(ms) ? ms : now - fallbackSecondsAgo * 1000;
+  return Number.isFinite(ms) ? ms : null;
+}
+
+// Resolve Grafana-style relative ranges ("now-15m") to epoch ms. Absolute
+// epoch-ms strings/numbers pass through.
+export function toEpochMs(value, fallbackSecondsAgo, now = Date.now()) {
+  if (value === undefined || value === null || value === "") return now - fallbackSecondsAgo * 1000;
+  return readEpochMs(value, now) ?? now - fallbackSecondsAgo * 1000;
 }
 
 // The same instant in ns epoch, as Loki's query_range takes it.
@@ -308,11 +315,21 @@ export const LOKI_MAX_DAYS_BACK = 30;
 // Why Loki would refuse a range from `from` to now, or null. Checked before any
 // request: Grafana answers a datasource uid that is not one (a display name
 // with spaces) with HTTP 400 too, so the status alone cannot say which was
-// wrong. An unreadable `from` passes: it is read as an hour ago. Compared in
-// ms: a date in ns does not fit a Number exactly, so read back from ns a start
+// wrong. An unreadable `from` is refused too: Loki would be asked about the
+// last hour, while the link hands Grafana `from` as given. Compared in ms: a
+// date in ns does not fit a Number exactly, so read back from ns a start
 // exactly 30 days back can land just before the cutoff.
 export function fromProblem(from, now = Date.now()) {
-  const startMs = toEpochMs(from, 60 * 60, now);
+  // Not given: the default, an hour ago.
+  if (from === undefined) return null;
+  // Null or blank names no start, though readEpochMs reads it as the epoch.
+  const startMs = String(from ?? "").trim() ? readEpochMs(from, now) : null;
+  if (startMs === null) {
+    return (
+      `from must be 'now', 'now-<n>' followed by s, m, h or d (e.g. 'now-6h'), or epoch ms, ` +
+      `at most ${LOKI_MAX_DAYS_BACK} days back, got ${JSON.stringify(from)}`
+    );
+  }
   if (startMs > now) return `from must not be later than now, got ${JSON.stringify(from)}`;
   if (startMs < now - LOKI_MAX_DAYS_BACK * 864e5) {
     return (
