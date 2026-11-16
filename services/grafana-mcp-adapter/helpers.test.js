@@ -481,9 +481,23 @@ test("toEpochMs: the start in ms, without going through ns", () => {
 });
 
 test("fromProblem: a start Loki answers passes", () => {
-  // An empty or unreadable from passes: toLokiNs reads it as an hour ago.
-  for (const from of ["now", "now-1h", "now-30d", "now-720h", String(NOW - 30 * 86_400_000), "", "garbage"]) {
-    assert.equal(fromProblem(from, NOW), null, from);
+  // A from that is not given passes: it is the default, an hour ago.
+  for (const from of ["now", "now-1h", "now-30d", "now-720h", String(NOW - 30 * 86_400_000), undefined]) {
+    assert.equal(fromProblem(from, NOW), null, String(from));
+  }
+});
+
+test("fromProblem: a from it cannot read is refused, naming the forms it reads", () => {
+  // Regression: now-9w passed: Loki was asked about the last hour, while the
+  // link handed Grafana nine weeks.
+  const unreadable = ["now-9w", "now-2M", "now-1y", "now+1h", "now-1.5h", "2026-11-01T00:00:00Z", "garbage", "", "   ", null];
+  for (const from of unreadable) {
+    assert.equal(
+      fromProblem(from, NOW),
+      "from must be 'now', 'now-<n>' followed by s, m, h or d (e.g. 'now-6h'), or epoch ms, " +
+        `at most 30 days back, got ${JSON.stringify(from)}`,
+      String(from),
+    );
   }
 });
 
