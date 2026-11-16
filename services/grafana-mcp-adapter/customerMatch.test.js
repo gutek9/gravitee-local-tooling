@@ -367,6 +367,12 @@ test("listNames: lists at most ten names and says how many more there are", () =
   const names = Array.from({ length: 12 }, (_, i) => `c${i}`);
   assert.equal(listNames(names.slice(0, 3)), "c0, c1, c2");
   assert.equal(listNames(names), "c0, c1, c2, c3, c4, c5, c6, c7, c8, c9 and 2 more");
+  // At the limit and one past it, and the empty list callers fall back from
+  // with `||`.
+  assert.equal(listNames(names.slice(0, 10)), "c0, c1, c2, c3, c4, c5, c6, c7, c8, c9");
+  assert.equal(listNames(names.slice(0, 11)), "c0, c1, c2, c3, c4, c5, c6, c7, c8, c9 and 1 more");
+  assert.equal(listNames(names.slice(0, 1)), "c0");
+  assert.equal(listNames([]), "");
 });
 
 test("matchCustomers: separators do not count", () => {
